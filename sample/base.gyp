@@ -81,6 +81,16 @@
       ],
     },
     {
+      'target_name': 'worker_pool',
+      'type': 'executable',
+      'sources': [
+        'worker_pool/main.cc',
+      ],
+      'dependencies': [
+        '../base/base.gyp:base',
+      ],
+    },
+    {
       'target_name': 'platform_thread',
       'type': 'executable',
       'sources': [
