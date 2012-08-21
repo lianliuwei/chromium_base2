@@ -5,6 +5,7 @@
       'type': 'none',
       'dependencies': [
         '../base/base.gyp:*',
+        '../sample/base.gyp:*'
       ],
     }, # target_name: All
   ], # conditions
