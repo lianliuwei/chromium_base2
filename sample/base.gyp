@@ -112,14 +112,18 @@
     },
   	{
       'target_name': 'testing',
-      'type': 'executable',
+      'type': '<(gtest_target_type)',
       'sources': [
 	    # Infrastructure files.
         'testing/run_all_unittests.cc',
         'testing/gtest_unittest.cc',
       ],
       'dependencies': [
-        '../testing/gtest.gyp:gtest',
+        '../base/base.gyp:base',
+        '../base//base.gyp:test_support_base',
+        #'third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
+        '../testing/gmock.gyp:gmock',
+        '../testing/gtest.gyp:gtest',        
       ],
     },
 	  {
