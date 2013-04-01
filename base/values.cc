@@ -5,8 +5,10 @@
 #include "base/values.h"
 
 #include <algorithm>
+#include <ostream>
 
 #include "base/float_util.h"
+#include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/string_util.h"
 #include "base/utf_string_conversions.h"
@@ -16,11 +18,11 @@ namespace {
 // Make a deep copy of |node|, but don't include empty lists or dictionaries
 // in the copy. It's possible for this function to return NULL and it
 // expects |node| to always be non-NULL.
-Value* CopyWithoutEmptyChildren(Value* node) {
+Value* CopyWithoutEmptyChildren(const Value* node) {
   DCHECK(node);
   switch (node->GetType()) {
     case Value::TYPE_LIST: {
-      ListValue* list = static_cast<ListValue*>(node);
+      const ListValue* list = static_cast<const ListValue*>(node);
       ListValue* copy = new ListValue;
       for (ListValue::const_iterator it = list->begin(); it != list->end();
            ++it) {
@@ -36,16 +38,12 @@ Value* CopyWithoutEmptyChildren(Value* node) {
     }
 
     case Value::TYPE_DICTIONARY: {
-      DictionaryValue* dict = static_cast<DictionaryValue*>(node);
+      const DictionaryValue* dict = static_cast<const DictionaryValue*>(node);
       DictionaryValue* copy = new DictionaryValue;
-      for (DictionaryValue::key_iterator it = dict->begin_keys();
-           it != dict->end_keys(); ++it) {
-        Value* child = NULL;
-        bool rv = dict->GetWithoutPathExpansion(*it, &child);
-        DCHECK(rv);
-        Value* child_copy = CopyWithoutEmptyChildren(child);
+      for (DictionaryValue::Iterator it(*dict); !it.IsAtEnd(); it.Advance()) {
+        Value* child_copy = CopyWithoutEmptyChildren(&it.value());
         if (child_copy)
-          copy->SetWithoutPathExpansion(*it, child_copy);
+          copy->SetWithoutPathExpansion(it.key(), child_copy);
       }
       if (!copy->empty())
         return copy;
@@ -66,7 +64,7 @@ class ValueEquals {
   // Pass the value against which all consecutive calls of the () operator will
   // compare their argument to. This Value object must not be destroyed while
   // the ValueEquals is  in use.
-  ValueEquals(const Value* first) : first_(first) { }
+  explicit ValueEquals(const Value* first) : first_(first) { }
 
   bool operator ()(const Value* second) const {
     return first_->Equals(second);
@@ -172,7 +170,13 @@ bool Value::Equals(const Value* a, const Value* b) {
   return a->Equals(b);
 }
 
-Value::Value(Type type) : type_(type) {
+Value::Value(Type type) : type_(type) {}
+
+Value::Value(const Value& that) : type_(that.type_) {}
+
+Value& Value::operator=(const Value& that) {
+  type_ = that.type_;
+  return *this;
 }
 
 ///////////////////// FundamentalValue ////////////////////
@@ -298,33 +302,31 @@ bool StringValue::Equals(const Value* other) const {
 
 ///////////////////// BinaryValue ////////////////////
 
-BinaryValue::~BinaryValue() {
-  DCHECK(buffer_);
-  if (buffer_)
-    delete[] buffer_;
+BinaryValue::BinaryValue()
+    : Value(TYPE_BINARY),
+      size_(0) {
 }
 
-// static
-BinaryValue* BinaryValue::Create(char* buffer, size_t size) {
-  if (!buffer)
-    return NULL;
+BinaryValue::BinaryValue(scoped_ptr<char[]> buffer, size_t size)
+    : Value(TYPE_BINARY),
+      buffer_(buffer.Pass()),
+      size_(size) {
+}
 
-  return new BinaryValue(buffer, size);
+BinaryValue::~BinaryValue() {
 }
 
 // static
 BinaryValue* BinaryValue::CreateWithCopiedBuffer(const char* buffer,
                                                  size_t size) {
-  if (!buffer)
-    return NULL;
-
   char* buffer_copy = new char[size];
   memcpy(buffer_copy, buffer, size);
-  return new BinaryValue(buffer_copy, size);
+  scoped_ptr<char[]> scoped_buffer_copy(buffer_copy);
+  return new BinaryValue(scoped_buffer_copy.Pass(), size);
 }
 
 BinaryValue* BinaryValue::DeepCopy() const {
-  return CreateWithCopiedBuffer(buffer_, size_);
+  return CreateWithCopiedBuffer(buffer_.get(), size_);
 }
 
 bool BinaryValue::Equals(const Value* other) const {
@@ -333,14 +335,7 @@ bool BinaryValue::Equals(const Value* other) const {
   const BinaryValue* other_binary = static_cast<const BinaryValue*>(other);
   if (other_binary->size_ != size_)
     return false;
-  return !memcmp(buffer_, other_binary->buffer_, size_);
-}
-
-BinaryValue::BinaryValue(char* buffer, size_t size)
-  : Value(TYPE_BINARY),
-    buffer_(buffer),
-    size_(size) {
-  DCHECK(buffer_);
+  return !memcmp(GetBuffer(), other_binary->GetBuffer(), size_);
 }
 
 ///////////////////// DictionaryValue ////////////////////
@@ -439,6 +434,31 @@ void DictionaryValue::SetWithoutPathExpansion(const std::string& key,
     delete ins_res.first->second;
     ins_res.first->second = in_value;
   }
+}
+
+void DictionaryValue::SetBooleanWithoutPathExpansion(
+    const std::string& path, bool in_value) {
+  SetWithoutPathExpansion(path, CreateBooleanValue(in_value));
+}
+
+void DictionaryValue::SetIntegerWithoutPathExpansion(
+    const std::string& path, int in_value) {
+  SetWithoutPathExpansion(path, CreateIntegerValue(in_value));
+}
+
+void DictionaryValue::SetDoubleWithoutPathExpansion(
+    const std::string& path, double in_value) {
+  SetWithoutPathExpansion(path, CreateDoubleValue(in_value));
+}
+
+void DictionaryValue::SetStringWithoutPathExpansion(
+    const std::string& path, const std::string& in_value) {
+  SetWithoutPathExpansion(path, CreateStringValue(in_value));
+}
+
+void DictionaryValue::SetStringWithoutPathExpansion(
+    const std::string& path, const string16& in_value) {
+  SetWithoutPathExpansion(path, CreateStringValue(in_value));
 }
 
 bool DictionaryValue::Get(
@@ -606,6 +626,15 @@ bool DictionaryValue::GetWithoutPathExpansion(const std::string& key,
       const_cast<const Value**>(out_value));
 }
 
+bool DictionaryValue::GetBooleanWithoutPathExpansion(const std::string& key,
+                                                     bool* out_value) const {
+  const Value* value;
+  if (!GetWithoutPathExpansion(key, &value))
+    return false;
+
+  return value->GetAsBoolean(out_value);
+}
+
 bool DictionaryValue::GetIntegerWithoutPathExpansion(const std::string& key,
                                                      int* out_value) const {
   const Value* value;
@@ -727,35 +756,24 @@ DictionaryValue* DictionaryValue::DeepCopyWithoutEmptyChildren() {
 }
 
 void DictionaryValue::MergeDictionary(const DictionaryValue* dictionary) {
-  for (DictionaryValue::key_iterator key(dictionary->begin_keys());
-       key != dictionary->end_keys(); ++key) {
-    const Value* merge_value;
-    if (dictionary->GetWithoutPathExpansion(*key, &merge_value)) {
-      // Check whether we have to merge dictionaries.
-      if (merge_value->IsType(Value::TYPE_DICTIONARY)) {
-        DictionaryValue* sub_dict;
-        if (GetDictionaryWithoutPathExpansion(*key, &sub_dict)) {
-          sub_dict->MergeDictionary(
-              static_cast<const DictionaryValue*>(merge_value));
-          continue;
-        }
+  for (DictionaryValue::Iterator it(*dictionary); !it.IsAtEnd(); it.Advance()) {
+    const Value* merge_value = &it.value();
+    // Check whether we have to merge dictionaries.
+    if (merge_value->IsType(Value::TYPE_DICTIONARY)) {
+      DictionaryValue* sub_dict;
+      if (GetDictionaryWithoutPathExpansion(it.key(), &sub_dict)) {
+        sub_dict->MergeDictionary(
+            static_cast<const DictionaryValue*>(merge_value));
+        continue;
       }
-      // All other cases: Make a copy and hook it up.
-      SetWithoutPathExpansion(*key, merge_value->DeepCopy());
     }
+    // All other cases: Make a copy and hook it up.
+    SetWithoutPathExpansion(it.key(), merge_value->DeepCopy());
   }
 }
 
 void DictionaryValue::Swap(DictionaryValue* other) {
   dictionary_.swap(other->dictionary_);
-}
-
-DictionaryValue::key_iterator::key_iterator(ValueMap::const_iterator itr) {
-  itr_ = itr;
-}
-
-DictionaryValue::key_iterator::key_iterator(const key_iterator& rhs) {
-  itr_ = rhs.itr_;
 }
 
 DictionaryValue::Iterator::Iterator(const DictionaryValue& target)
@@ -780,21 +798,17 @@ bool DictionaryValue::Equals(const Value* other) const {
 
   const DictionaryValue* other_dict =
       static_cast<const DictionaryValue*>(other);
-  key_iterator lhs_it(begin_keys());
-  key_iterator rhs_it(other_dict->begin_keys());
-  while (lhs_it != end_keys() && rhs_it != other_dict->end_keys()) {
-    const Value* lhs;
-    const Value* rhs;
-    if (*lhs_it != *rhs_it ||
-        !GetWithoutPathExpansion(*lhs_it, &lhs) ||
-        !other_dict->GetWithoutPathExpansion(*rhs_it, &rhs) ||
-        !lhs->Equals(rhs)) {
+  Iterator lhs_it(*this);
+  Iterator rhs_it(*other_dict);
+  while (!lhs_it.IsAtEnd() && !rhs_it.IsAtEnd()) {
+    if (lhs_it.key() != rhs_it.key() ||
+        !lhs_it.value().Equals(&rhs_it.value())) {
       return false;
     }
-    ++lhs_it;
-    ++rhs_it;
+    lhs_it.Advance();
+    rhs_it.Advance();
   }
-  if (lhs_it != end_keys() || rhs_it != other_dict->end_keys())
+  if (!lhs_it.IsAtEnd() || !rhs_it.IsAtEnd())
     return false;
 
   return true;
@@ -971,18 +985,52 @@ bool ListValue::Remove(const Value& value, size_t* index) {
   return false;
 }
 
-void ListValue::Erase(iterator iter, Value** out_value) {
+ListValue::iterator ListValue::Erase(iterator iter, Value** out_value) {
   if (out_value)
     *out_value = *iter;
   else
     delete *iter;
 
-  list_.erase(iter);
+  return list_.erase(iter);
 }
 
 void ListValue::Append(Value* in_value) {
   DCHECK(in_value);
   list_.push_back(in_value);
+}
+
+void ListValue::AppendBoolean(bool in_value) {
+  Append(CreateBooleanValue(in_value));
+}
+
+void ListValue::AppendInteger(int in_value) {
+  Append(CreateIntegerValue(in_value));
+}
+
+void ListValue::AppendDouble(double in_value) {
+  Append(CreateDoubleValue(in_value));
+}
+
+void ListValue::AppendString(const std::string& in_value) {
+  Append(CreateStringValue(in_value));
+}
+
+void ListValue::AppendString(const string16& in_value) {
+  Append(CreateStringValue(in_value));
+}
+
+void ListValue::AppendStrings(const std::vector<std::string>& in_values) {
+  for (std::vector<std::string>::const_iterator it = in_values.begin();
+       it != in_values.end(); ++it) {
+    AppendString(*it);
+  }
+}
+
+void ListValue::AppendStrings(const std::vector<string16>& in_values) {
+  for (std::vector<string16>::const_iterator it = in_values.begin();
+       it != in_values.end(); ++it) {
+    AppendString(*it);
+  }
 }
 
 bool ListValue::AppendIfNotPresent(Value* in_value) {
@@ -1055,6 +1103,14 @@ bool ListValue::Equals(const Value* other) const {
 }
 
 ValueSerializer::~ValueSerializer() {
+}
+
+std::ostream& operator<<(std::ostream& out, const Value& value) {
+  std::string json;
+  JSONWriter::WriteWithOptions(&value,
+                               JSONWriter::OPTIONS_PRETTY_PRINT,
+                               &json);
+  return out << json;
 }
 
 }  // namespace base

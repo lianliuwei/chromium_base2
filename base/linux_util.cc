@@ -132,9 +132,7 @@ static const int kDistroSize = 128 + 1;
 // We use this static string to hold the Linux distro info. If we
 // crash, the crash handler code will send this in the crash dump.
 char g_linux_distro[kDistroSize] =
-#if defined(OS_CHROMEOS) && defined(USE_AURA)
-    "CrOS Aura";
-#elif defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS)
     "CrOS";
 #elif defined(OS_ANDROID)
     "Android";
@@ -279,7 +277,7 @@ pid_t FindThreadIDWithSyscall(pid_t pid, const std::string& expected_data,
   }
   closedir(task);
 
-  scoped_array<char> syscall_data(new char[expected_data.length()]);
+  scoped_ptr<char[]> syscall_data(new char[expected_data.length()]);
   for (std::vector<pid_t>::const_iterator
        i = tids.begin(); i != tids.end(); ++i) {
     const pid_t current_tid = *i;

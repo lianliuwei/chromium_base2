@@ -13,14 +13,12 @@
 #include <mach/mach_vm.h>
 #include <mach/shared_region.h>
 #include <mach/task.h>
-#include <mach-o/dyld.h>
 #include <mach-o/nlist.h>
 #include <malloc/malloc.h>
 #import <objc/runtime.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/event.h>
-#include <sys/mman.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -29,15 +27,16 @@
 #include <string>
 
 #include "base/debug/debugger.h"
-#include "base/eintr_wrapper.h"
 #include "base/file_util.h"
 #include "base/hash_tables.h"
+#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
+#include "base/mac/scoped_mach_port.h"
+#include "base/posix/eintr_wrapper.h"
 #include "base/string_util.h"
 #include "base/sys_info.h"
-#include "base/sys_string_conversions.h"
-#include "base/time.h"
+#include "base/threading/thread_local.h"
 #include "third_party/apple_apsl/CFBase.h"
 #include "third_party/apple_apsl/malloc.h"
 #include "third_party/mach_override/mach_override.h"
@@ -447,13 +446,10 @@ double ProcessMetrics::GetCPUUsage() {
   if (time_delta == 0)
     return 0;
 
-  // We add time_delta / 2 so the result is rounded.
-  double cpu = static_cast<double>((system_time_delta * 100.0) / time_delta);
-
   last_system_time_ = task_time;
   last_time_ = time;
 
-  return cpu;
+  return static_cast<double>(system_time_delta * 100.0) / time_delta;
 }
 
 mach_port_t ProcessMetrics::TaskForPid(ProcessHandle process) const {
@@ -469,7 +465,7 @@ mach_port_t ProcessMetrics::TaskForPid(ProcessHandle process) const {
 
 // Bytes committed by the system.
 size_t GetSystemCommitCharge() {
-  host_name_port_t host = mach_host_self();
+  base::mac::ScopedMachPort host(mach_host_self());
   mach_msg_type_number_t count = HOST_VM_INFO_COUNT;
   vm_statistics_data_t data;
   kern_return_t kr = host_statistics(host, HOST_VM_INFO,
@@ -566,20 +562,65 @@ class ScopedClearErrno {
   DISALLOW_COPY_AND_ASSIGN(ScopedClearErrno);
 };
 
+// Combines ThreadLocalBoolean with AutoReset.  It would be convenient
+// to compose ThreadLocalPointer<bool> with base::AutoReset<bool>, but that
+// would require allocating some storage for the bool.
+class ThreadLocalBooleanAutoReset {
+ public:
+  ThreadLocalBooleanAutoReset(ThreadLocalBoolean* tlb, bool new_value)
+      : scoped_tlb_(tlb),
+        original_value_(tlb->Get()) {
+    scoped_tlb_->Set(new_value);
+  }
+  ~ThreadLocalBooleanAutoReset() {
+    scoped_tlb_->Set(original_value_);
+  }
+
+ private:
+  ThreadLocalBoolean* scoped_tlb_;
+  bool original_value_;
+
+  DISALLOW_COPY_AND_ASSIGN(ThreadLocalBooleanAutoReset);
+};
+
+base::LazyInstance<ThreadLocalBoolean>::Leaky
+    g_unchecked_malloc = LAZY_INSTANCE_INITIALIZER;
+
+// NOTE(shess): This is called when the malloc library noticed that the heap
+// is fubar.  Avoid calls which will re-enter the malloc library.
 void CrMallocErrorBreak() {
   g_original_malloc_error_break();
 
   // Out of memory is certainly not heap corruption, and not necessarily
   // something for which the process should be terminated. Leave that decision
-  // to the OOM killer.
-  if (errno == ENOMEM)
+  // to the OOM killer.  The EBADF case comes up because the malloc library
+  // attempts to log to ASL (syslog) before calling this code, which fails
+  // accessing a Unix-domain socket because of sandboxing.
+  if (errno == ENOMEM || (errno == EBADF && g_unchecked_malloc.Get().Get()))
     return;
 
   // A unit test checks this error message, so it needs to be in release builds.
-  LOG(ERROR) <<
-      "Terminating process due to a potential for future heap corruption";
-  int* volatile death_ptr = NULL;
-  *death_ptr = 0xf00bad;
+  char buf[1024] =
+      "Terminating process due to a potential for future heap corruption: "
+      "errno=";
+  char errnobuf[] = {
+    '0' + ((errno / 100) % 10),
+    '0' + ((errno / 10) % 10),
+    '0' + (errno % 10),
+    '\000'
+  };
+  COMPILE_ASSERT(ELAST <= 999, errno_too_large_to_encode);
+  strlcat(buf, errnobuf, sizeof(buf));
+  RAW_LOG(ERROR, buf);
+
+  // Crash by writing to NULL+errno to allow analyzing errno from
+  // crash dump info (setting a breakpad key would re-enter the malloc
+  // library).  Max documented errno in intro(2) is actually 102, but
+  // it really just needs to be "small" to stay on the right vm page.
+  const int kMaxErrno = 256;
+  char* volatile death_ptr = NULL;
+  death_ptr += std::min(errno, kMaxErrno);
+  *death_ptr = '!';
 }
 
 }  // namespace
@@ -590,6 +631,12 @@ void EnableTerminationOnHeapCorruption() {
   // by AddressSanitizer.
   return;
 #endif
+
+  // Only override once, otherwise CrMallocErrorBreak() will recurse
+  // to itself.
+  if (g_original_malloc_error_break)
+    return;
+
   malloc_error_break_t malloc_error_break = LookUpMallocErrorBreak();
   if (!malloc_error_break) {
     DLOG(WARNING) << "Could not find malloc_error_break";
@@ -610,6 +657,62 @@ void EnableTerminationOnHeapCorruption() {
 namespace {
 
 bool g_oom_killer_enabled;
+
+// Starting with Mac OS X 10.7, the zone allocators set up by the system are
+// read-only, to prevent them from being overwritten in an attack. However,
+// blindly unprotecting and reprotecting the zone allocators fails with
+// GuardMalloc because GuardMalloc sets up its zone allocator using a block of
+// memory in its bss. Explicit saving/restoring of the protection is required.
+//
+// This function takes a pointer to a malloc zone, de-protects it if necessary,
+// and returns (in the out parameters) a region of memory (if any) to be
+// re-protected when modifications are complete. This approach assumes that
+// there is no contention for the protection of this memory.
+void DeprotectMallocZone(ChromeMallocZone* default_zone,
+                         mach_vm_address_t* reprotection_start,
+                         mach_vm_size_t* reprotection_length,
+                         vm_prot_t* reprotection_value) {
+  mach_port_t unused;
+  *reprotection_start = reinterpret_cast<mach_vm_address_t>(default_zone);
+  struct vm_region_basic_info_64 info;
+  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+  kern_return_t result =
+      mach_vm_region(mach_task_self(),
+                     reprotection_start,
+                     reprotection_length,
+                     VM_REGION_BASIC_INFO_64,
+                     reinterpret_cast<vm_region_info_t>(&info),
+                     &count,
+                     &unused);
+  CHECK(result == KERN_SUCCESS);
+
+  result = mach_port_deallocate(mach_task_self(), unused);
+  CHECK(result == KERN_SUCCESS);
+
+  // Does the region fully enclose the zone pointers? Possibly unwarranted
+  // simplification used: using the size of a full version 8 malloc zone rather
+  // than the actual smaller size if the passed-in zone is not version 8.
+  CHECK(*reprotection_start <=
+            reinterpret_cast<mach_vm_address_t>(default_zone));
+  mach_vm_size_t zone_offset = reinterpret_cast<mach_vm_size_t>(default_zone) -
+      reinterpret_cast<mach_vm_size_t>(*reprotection_start);
+  CHECK(zone_offset + sizeof(ChromeMallocZone) <= *reprotection_length);
+
+  if (info.protection & VM_PROT_WRITE) {
+    // No change needed; the zone is already writable.
+    *reprotection_start = 0;
+    *reprotection_length = 0;
+    *reprotection_value = VM_PROT_NONE;
+  } else {
+    *reprotection_value = info.protection;
+    result = mach_vm_protect(mach_task_self(),
+                             *reprotection_start,
+                             *reprotection_length,
+                             false,
+                             info.protection | VM_PROT_WRITE);
+    CHECK(result == KERN_SUCCESS);
+  }
+}
 
 // === C malloc/calloc/valloc/realloc/posix_memalign ===
 
@@ -770,8 +873,7 @@ void oom_killer_new() {
 // === Core Foundation CFAllocators ===
 
 bool CanGetContextForCFAllocator() {
-  return !base::mac::
-      IsOSDangerouslyLaterThanMountainLionForUseByCFAllocatorReplacement();
+  return !base::mac::IsOSLaterThanMountainLion_DontCallThis();
 }
 
 CFAllocatorContext* ContextForCFAllocator(CFAllocatorRef allocator) {
@@ -836,16 +938,13 @@ id oom_killer_allocWithZone(id self, SEL _cmd, NSZone* zone)
 
 }  // namespace
 
-malloc_zone_t* GetPurgeableZone() {
-  // malloc_default_purgeable_zone only exists on >= 10.6. Use dlsym to grab it
-  // at runtime because it may not be present in the SDK used for compilation.
-  typedef malloc_zone_t* (*malloc_default_purgeable_zone_t)(void);
-  malloc_default_purgeable_zone_t malloc_purgeable_zone =
-      reinterpret_cast<malloc_default_purgeable_zone_t>(
-          dlsym(RTLD_DEFAULT, "malloc_default_purgeable_zone"));
-  if (malloc_purgeable_zone)
-    return malloc_purgeable_zone();
-  return NULL;
+void* UncheckedMalloc(size_t size) {
+  if (g_old_malloc) {
+    ScopedClearErrno clear_errno;
+    ThreadLocalBooleanAutoReset flag(g_unchecked_malloc.Pointer(), true);
+    return g_old_malloc(malloc_default_zone(), size);
+  }
+  return malloc(size);
 }
 
 void EnableTerminationOnOutOfMemory() {
@@ -874,34 +973,27 @@ void EnableTerminationOnOutOfMemory() {
   // Don't do anything special on OOM for the malloc zones replaced by
   // AddressSanitizer, as modifying or protecting them may not work correctly.
 
-  // See http://trac.webkit.org/changeset/53362/trunk/Tools/DumpRenderTree/mac
-  bool zone_allocators_protected = base::mac::IsOSLionOrLater();
-
   ChromeMallocZone* default_zone =
       reinterpret_cast<ChromeMallocZone*>(malloc_default_zone());
   ChromeMallocZone* purgeable_zone =
-      reinterpret_cast<ChromeMallocZone*>(GetPurgeableZone());
+      reinterpret_cast<ChromeMallocZone*>(malloc_default_purgeable_zone());
 
-  vm_address_t page_start_default = 0;
-  vm_address_t page_start_purgeable = 0;
-  vm_size_t len_default = 0;
-  vm_size_t len_purgeable = 0;
-  if (zone_allocators_protected) {
-    page_start_default = reinterpret_cast<vm_address_t>(default_zone) &
-        static_cast<vm_size_t>(~(getpagesize() - 1));
-    len_default = reinterpret_cast<vm_address_t>(default_zone) -
-        page_start_default + sizeof(ChromeMallocZone);
-    mprotect(reinterpret_cast<void*>(page_start_default), len_default,
-             PROT_READ | PROT_WRITE);
+  mach_vm_address_t default_reprotection_start = 0;
+  mach_vm_size_t default_reprotection_length = 0;
+  vm_prot_t default_reprotection_value = VM_PROT_NONE;
+  DeprotectMallocZone(default_zone,
+                      &default_reprotection_start,
+                      &default_reprotection_length,
+                      &default_reprotection_value);
 
-    if (purgeable_zone) {
-      page_start_purgeable = reinterpret_cast<vm_address_t>(purgeable_zone) &
-          static_cast<vm_size_t>(~(getpagesize() - 1));
-      len_purgeable = reinterpret_cast<vm_address_t>(purgeable_zone) -
-          page_start_purgeable + sizeof(ChromeMallocZone);
-      mprotect(reinterpret_cast<void*>(page_start_purgeable), len_purgeable,
-               PROT_READ | PROT_WRITE);
-    }
+  mach_vm_address_t purgeable_reprotection_start = 0;
+  mach_vm_size_t purgeable_reprotection_length = 0;
+  vm_prot_t purgeable_reprotection_value = VM_PROT_NONE;
+  if (purgeable_zone) {
+    DeprotectMallocZone(purgeable_zone,
+                        &purgeable_reprotection_start,
+                        &purgeable_reprotection_length,
+                        &purgeable_reprotection_value);
   }
 
   // Default zone
@@ -953,13 +1045,24 @@ void EnableTerminationOnOutOfMemory() {
     }
   }
 
-  if (zone_allocators_protected) {
-    mprotect(reinterpret_cast<void*>(page_start_default), len_default,
-             PROT_READ);
-    if (purgeable_zone) {
-      mprotect(reinterpret_cast<void*>(page_start_purgeable), len_purgeable,
-               PROT_READ);
-    }
+  // Restore protection if it was active.
+
+  if (default_reprotection_start) {
+    kern_return_t result = mach_vm_protect(mach_task_self(),
+                                           default_reprotection_start,
+                                           default_reprotection_length,
+                                           false,
+                                           default_reprotection_value);
+    CHECK(result == KERN_SUCCESS);
+  }
+
+  if (purgeable_reprotection_start) {
+    kern_return_t result = mach_vm_protect(mach_task_self(),
+                                           purgeable_reprotection_start,
+                                           purgeable_reprotection_length,
+                                           false,
+                                           purgeable_reprotection_value);
+    CHECK(result == KERN_SUCCESS);
   }
 #endif
 
@@ -1160,14 +1263,14 @@ void WaitForChildToDie(pid_t child, int timeout) {
       // Keep track of the elapsed time to be able to restart kevent if it's
       // interrupted.
       TimeDelta remaining_delta = TimeDelta::FromSeconds(timeout);
-      Time deadline = Time::Now() + remaining_delta;
+      TimeTicks deadline = TimeTicks::Now() + remaining_delta;
       result = -1;
       struct kevent event = {0};
       while (remaining_delta.InMilliseconds() > 0) {
         const struct timespec remaining_timespec = remaining_delta.ToTimeSpec();
         result = kevent(kq, NULL, 0, &event, 1, &remaining_timespec);
         if (result == -1 && errno == EINTR) {
-          remaining_delta = deadline - Time::Now();
+          remaining_delta = deadline - TimeTicks::Now();
           result = 0;
         } else {
           break;

@@ -35,7 +35,7 @@ class ConditionVariableTest : public PlatformTest {
   const TimeDelta kSixtyMs;
   const TimeDelta kOneHundredMs;
 
-  explicit ConditionVariableTest()
+  ConditionVariableTest()
       : kZeroMs(TimeDelta::FromMilliseconds(0)),
         kTenMs(TimeDelta::FromMilliseconds(10)),
         kThirtyMs(TimeDelta::FromMilliseconds(30)),
@@ -129,7 +129,7 @@ class WorkQueue : public PlatformThread::Delegate {
 
   const int thread_count_;
   int waiting_thread_count_;
-  scoped_array<PlatformThreadHandle> thread_handles_;
+  scoped_ptr<PlatformThreadHandle[]> thread_handles_;
   std::vector<int> assignment_history_;  // Number of assignment per worker.
   std::vector<int> completion_history_;  // Number of completions per worker.
   int thread_started_counter_;  // Used to issue unique id to workers.

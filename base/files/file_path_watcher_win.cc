@@ -5,8 +5,8 @@
 #include "base/files/file_path_watcher.h"
 
 #include "base/bind.h"
-#include "base/file_path.h"
 #include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop_proxy.h"
@@ -14,7 +14,6 @@
 #include "base/win/object_watcher.h"
 
 namespace base {
-namespace files {
 
 namespace {
 
@@ -22,11 +21,14 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
                             public base::win::ObjectWatcher::Delegate,
                             public MessageLoop::DestructionObserver {
  public:
-  FilePathWatcherImpl() : delegate_(NULL), handle_(INVALID_HANDLE_VALUE) {}
+  FilePathWatcherImpl()
+      : handle_(INVALID_HANDLE_VALUE),
+        recursive_watch_(false) {}
 
   // FilePathWatcher::PlatformDelegate overrides.
   virtual bool Watch(const FilePath& path,
-                     FilePathWatcher::Delegate* delegate) OVERRIDE;
+                     bool recursive,
+                     const FilePathWatcher::Callback& callback) OVERRIDE;
   virtual void Cancel() OVERRIDE;
 
   // Deletion of the FilePathWatcher will call Cancel() to dispose of this
@@ -40,11 +42,13 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
  private:
   virtual ~FilePathWatcherImpl() {}
 
-  // Setup a watch handle for directory |dir|. Returns true if no fatal error
-  // occurs. |handle| will receive the handle value if |dir| is watchable,
-  // otherwise INVALID_HANDLE_VALUE.
-  static bool SetupWatchHandle(const FilePath& dir, HANDLE* handle)
-      WARN_UNUSED_RESULT;
+  // Setup a watch handle for directory |dir|. Set |recursive| to true to watch
+  // the directory sub trees. Returns true if no fatal error occurs. |handle|
+  // will receive the handle value if |dir| is watchable, otherwise
+  // INVALID_HANDLE_VALUE.
+  static bool SetupWatchHandle(const FilePath& dir,
+                               bool recursive,
+                               HANDLE* handle) WARN_UNUSED_RESULT;
 
   // (Re-)Initialize the watch handle.
   bool UpdateWatch() WARN_UNUSED_RESULT;
@@ -55,10 +59,10 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
   // Cleans up and stops observing the |message_loop_| thread.
   void CancelOnMessageLoopThread() OVERRIDE;
 
-  // Delegate to notify upon changes.
-  scoped_refptr<FilePathWatcher::Delegate> delegate_;
+  // Callback to notify upon changes.
+  FilePathWatcher::Callback callback_;
 
-  // Path we're supposed to watch (passed to delegate).
+  // Path we're supposed to watch (passed to callback).
   FilePath target_;
 
   // Handle for FindFirstChangeNotification.
@@ -66,6 +70,9 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
 
   // ObjectWatcher to watch handle_ for events.
   base::win::ObjectWatcher watcher_;
+
+  // Set to true to watch the sub trees of the specified directory file path.
+  bool recursive_watch_;
 
   // Keep track of the last modified time of the file.  We use nulltime
   // to represent the file not existing.
@@ -79,12 +86,14 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
 };
 
 bool FilePathWatcherImpl::Watch(const FilePath& path,
-                                FilePathWatcher::Delegate* delegate) {
+                                bool recursive,
+                                const FilePathWatcher::Callback& callback) {
   DCHECK(target_.value().empty());  // Can only watch one path.
 
   set_message_loop(base::MessageLoopProxy::current());
-  delegate_ = delegate;
+  callback_ = callback;
   target_ = path;
+  recursive_watch_ = recursive;
   MessageLoop::current()->AddDestructionObserver(this);
 
   if (!UpdateWatch())
@@ -96,7 +105,7 @@ bool FilePathWatcherImpl::Watch(const FilePath& path,
 }
 
 void FilePathWatcherImpl::Cancel() {
-  if (!delegate_) {
+  if (callback_.is_null()) {
     // Watch was never called, or the |message_loop_| has already quit.
     set_cancelled();
     return;
@@ -118,9 +127,9 @@ void FilePathWatcherImpl::CancelOnMessageLoopThread() {
   if (handle_ != INVALID_HANDLE_VALUE)
     DestroyWatch();
 
-  if (delegate_) {
+  if (!callback_.is_null()) {
     MessageLoop::current()->RemoveDestructionObserver(this);
-    delegate_ = NULL;
+    callback_.Reset();
   }
 }
 
@@ -134,18 +143,18 @@ void FilePathWatcherImpl::OnObjectSignaled(HANDLE object) {
   scoped_refptr<FilePathWatcherImpl> keep_alive(this);
 
   if (!UpdateWatch()) {
-    delegate_->OnFilePathError(target_);
+    callback_.Run(target_, true /* error */);
     return;
   }
 
-  // Check whether the event applies to |target_| and notify the delegate.
+  // Check whether the event applies to |target_| and notify the callback.
   base::PlatformFileInfo file_info;
   bool file_exists = file_util::GetFileInfo(target_, &file_info);
   if (file_exists && (last_modified_.is_null() ||
       last_modified_ != file_info.last_modified)) {
     last_modified_ = file_info.last_modified;
     first_notification_ = base::Time::Now();
-    delegate_->OnFilePathChanged(target_);
+    callback_.Run(target_, false);
   } else if (file_exists && !first_notification_.is_null()) {
     // The target's last modification time is equal to what's on record. This
     // means that either an unrelated event occurred, or the target changed
@@ -166,10 +175,10 @@ void FilePathWatcherImpl::OnObjectSignaled(HANDLE object) {
       // Stop further notifications for this |last_modification_| time stamp.
       first_notification_ = base::Time();
     }
-    delegate_->OnFilePathChanged(target_);
+    callback_.Run(target_, false);
   } else if (!file_exists && !last_modified_.is_null()) {
     last_modified_ = base::Time();
-    delegate_->OnFilePathChanged(target_);
+    callback_.Run(target_, false);
   }
 
   // The watch may have been cancelled by the callback.
@@ -179,16 +188,17 @@ void FilePathWatcherImpl::OnObjectSignaled(HANDLE object) {
 
 // static
 bool FilePathWatcherImpl::SetupWatchHandle(const FilePath& dir,
+                                           bool recursive,
                                            HANDLE* handle) {
   *handle = FindFirstChangeNotification(
       dir.value().c_str(),
-      false,  // Don't watch subtrees
+      recursive,
       FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_SIZE |
       FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_DIR_NAME |
       FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_SECURITY);
   if (*handle != INVALID_HANDLE_VALUE) {
     // Make sure the handle we got points to an existing directory. It seems
-    // that windows sometimes hands out watches to direectories that are
+    // that windows sometimes hands out watches to directories that are
     // about to go away, but doesn't sent notifications if that happens.
     if (!file_util::DirectoryExists(dir)) {
       FindCloseChangeNotification(*handle);
@@ -232,7 +242,7 @@ bool FilePathWatcherImpl::UpdateWatch() {
   std::vector<FilePath> child_dirs;
   FilePath watched_path(target_);
   while (true) {
-    if (!SetupWatchHandle(watched_path, &handle_))
+    if (!SetupWatchHandle(watched_path, recursive_watch_, &handle_))
       return false;
 
     // Break if a valid handle is returned. Try the parent directory otherwise.
@@ -256,7 +266,7 @@ bool FilePathWatcherImpl::UpdateWatch() {
     watched_path = watched_path.Append(child_dirs.back());
     child_dirs.pop_back();
     HANDLE temp_handle = INVALID_HANDLE_VALUE;
-    if (!SetupWatchHandle(watched_path, &temp_handle))
+    if (!SetupWatchHandle(watched_path, recursive_watch_, &temp_handle))
       return false;
     if (temp_handle == INVALID_HANDLE_VALUE)
       break;
@@ -279,5 +289,4 @@ FilePathWatcher::FilePathWatcher() {
   impl_ = new FilePathWatcherImpl();
 }
 
-}  // namespace files
 }  // namespace base

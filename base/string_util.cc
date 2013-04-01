@@ -23,7 +23,7 @@
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
-#include "base/utf_string_conversion_utils.h"
+#include "base/strings/utf_string_conversion_utils.h"
 #include "base/utf_string_conversions.h"
 #include "base/third_party/icu/icu_utf.h"
 
@@ -750,8 +750,7 @@ size_t Tokenize(const base::StringPiece& str,
 }
 
 template<typename STR>
-static STR JoinStringT(const std::vector<STR>& parts,
-                       typename STR::value_type sep) {
+static STR JoinStringT(const std::vector<STR>& parts, const STR& sep) {
   if (parts.empty())
     return STR();
 
@@ -768,11 +767,21 @@ static STR JoinStringT(const std::vector<STR>& parts,
 }
 
 std::string JoinString(const std::vector<std::string>& parts, char sep) {
-  return JoinStringT(parts, sep);
+  return JoinStringT(parts, std::string(1, sep));
 }
 
 string16 JoinString(const std::vector<string16>& parts, char16 sep) {
-  return JoinStringT(parts, sep);
+  return JoinStringT(parts, string16(1, sep));
+}
+
+std::string JoinString(const std::vector<std::string>& parts,
+                       const std::string& separator) {
+  return JoinStringT(parts, separator);
+}
+
+string16 JoinString(const std::vector<string16>& parts,
+                    const string16& separator) {
+  return JoinStringT(parts, separator);
 }
 
 template<class FormatStringType, class OutStringType>

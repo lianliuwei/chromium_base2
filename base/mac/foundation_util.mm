@@ -7,11 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/mac_logging.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 
 #if !defined(OS_IOS)
 extern "C" {
@@ -200,6 +200,8 @@ TYPE_NAME_FOR_CF_TYPE_DEFN(CFNull);
 TYPE_NAME_FOR_CF_TYPE_DEFN(CFNumber);
 TYPE_NAME_FOR_CF_TYPE_DEFN(CFSet);
 TYPE_NAME_FOR_CF_TYPE_DEFN(CFString);
+TYPE_NAME_FOR_CF_TYPE_DEFN(CFURL);
+TYPE_NAME_FOR_CF_TYPE_DEFN(CFUUID);
 
 TYPE_NAME_FOR_CF_TYPE_DEFN(CGColor);
 
@@ -333,6 +335,8 @@ CF_CAST_DEFN(CFNull);
 CF_CAST_DEFN(CFNumber);
 CF_CAST_DEFN(CFSet);
 CF_CAST_DEFN(CFString);
+CF_CAST_DEFN(CFURL);
+CF_CAST_DEFN(CFUUID);
 
 CF_CAST_DEFN(CGColor);
 

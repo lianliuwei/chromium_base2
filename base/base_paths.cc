@@ -4,27 +4,36 @@
 
 #include "base/base_paths.h"
 
-#include "base/file_path.h"
 #include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/path_service.h"
 
 namespace base {
 
 bool PathProvider(int key, FilePath* result) {
-  // NOTE: DIR_CURRENT is a special cased in PathService::Get
+  // NOTE: DIR_CURRENT is a special case in PathService::Get
 
   FilePath cur;
   switch (key) {
-    case base::DIR_EXE:
-      PathService::Get(base::FILE_EXE, &cur);
+    case DIR_EXE:
+      PathService::Get(FILE_EXE, &cur);
       cur = cur.DirName();
       break;
-    case base::DIR_MODULE:
-      PathService::Get(base::FILE_MODULE, &cur);
+    case DIR_MODULE:
+      PathService::Get(FILE_MODULE, &cur);
       cur = cur.DirName();
       break;
-    case base::DIR_TEMP:
+    case DIR_TEMP:
       if (!file_util::GetTempDir(&cur))
+        return false;
+      break;
+    case DIR_TEST_DATA:
+      if (!PathService::Get(DIR_SOURCE_ROOT, &cur))
+        return false;
+      cur = cur.Append(FILE_PATH_LITERAL("base"));
+      cur = cur.Append(FILE_PATH_LITERAL("test"));
+      cur = cur.Append(FILE_PATH_LITERAL("data"));
+      if (!file_util::PathExists(cur))  // We don't want to create this.
         return false;
       break;
     default:

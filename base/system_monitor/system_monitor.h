@@ -11,8 +11,6 @@
 
 #include "base/base_export.h"
 #include "base/basictypes.h"
-#include "base/file_path.h"
-#include "base/string16.h"
 #include "build/build_config.h"
 
 // Windows HiRes timers drain the battery faster so we need to know the battery
@@ -58,31 +56,6 @@ class BASE_EXPORT SystemMonitor {
     DEVTYPE_UNKNOWN,  // Other devices.
   };
 
-  // Type of location data to identify a currently attached media device.
-  enum MediaDeviceType {
-    TYPE_PATH,  // FilePath::StringType, e.g. a mount point.
-    TYPE_MTP,   // (W)string to locate a MTP device, e.g. its usb bus/port.
-  };
-
-  struct BASE_EXPORT MediaDeviceInfo {
-    MediaDeviceInfo(const std::string& id,
-                    const string16& device_name,
-                    MediaDeviceType device_type,
-                    const FilePath::StringType& device_location);
-
-    // Unique media device id - persists between device attachments.
-    std::string unique_id;
-
-    // Human readable media device name.
-    string16 name;
-
-    // Media device type.
-    MediaDeviceType type;
-
-    // Current attached media device location.
-    FilePath::StringType location;
-  };
-
   // Create SystemMonitor. Only one SystemMonitor instance per application
   // is allowed.
   SystemMonitor();
@@ -102,9 +75,6 @@ class BASE_EXPORT SystemMonitor {
   static void AllocateSystemIOPorts() {}
 #endif  // OS_IOS
 #endif  // OS_MACOSX
-
-  // Returns information for attached media devices.
-  std::vector<MediaDeviceInfo> GetAttachedMediaDevices() const;
 
   //
   // Power-related APIs
@@ -144,15 +114,6 @@ class BASE_EXPORT SystemMonitor {
     // This is only implemented on Windows currently.
     virtual void OnDevicesChanged(DeviceType device_type) {}
 
-    // When a media device is attached or detached, one of these two events
-    // is triggered.
-    virtual void OnMediaDeviceAttached(const std::string& id,
-                                       const string16& name,
-                                       MediaDeviceType type,
-                                       const FilePath::StringType& location) {}
-
-    virtual void OnMediaDeviceDetached(const std::string& id) {}
-
    protected:
     virtual ~DevicesChangedObserver() {}
   };
@@ -169,27 +130,39 @@ class BASE_EXPORT SystemMonitor {
   void RemovePowerObserver(PowerObserver* obs);
   void RemoveDevicesChangedObserver(DevicesChangedObserver* obs);
 
-#if defined(OS_WIN)
-  // Windows-specific handling of a WM_POWERBROADCAST message.
-  // Embedders of this API should hook their top-level window
-  // message loop and forward WM_POWERBROADCAST through this call.
-  void ProcessWmPowerBroadcastMessage(int event_id);
-#endif
+  // The ProcessFoo() style methods are a broken pattern and should not
+  // be copied. Any significant addition to this class is blocked on
+  // refactoring to improve the state of affairs. See http://crbug.com/149059
 
   // Cross-platform handling of a power event.
   void ProcessPowerMessage(PowerEvent event_id);
 
   // Cross-platform handling of a device change event.
   void ProcessDevicesChanged(DeviceType device_type);
-  void ProcessMediaDeviceAttached(const std::string& id,
-                                  const string16& name,
-                                  MediaDeviceType type,
-                                  const FilePath::StringType& location);
-  void ProcessMediaDeviceDetached(const std::string& id);
 
  private:
-  // Mapping of unique device id to device info tuple.
-  typedef std::map<std::string, MediaDeviceInfo> MediaDeviceMap;
+#if defined(OS_WIN)
+  // Represents a message-only window for power message handling on Windows.
+  // Only allow SystemMonitor to create it.
+  class PowerMessageWindow {
+   public:
+    PowerMessageWindow();
+    ~PowerMessageWindow();
+
+   private:
+    void ProcessWmPowerBroadcastMessage(int event_id);
+    LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
+                             WPARAM wparam, LPARAM lparam);
+    static LRESULT CALLBACK WndProcThunk(HWND hwnd,
+                                         UINT message,
+                                         WPARAM wparam,
+                                         LPARAM lparam);
+    // Instance of the module containing the window procedure.
+    HMODULE instance_;
+    // A hidden message-only window.
+    HWND message_hwnd_;
+  };
+#endif
 
 #if defined(OS_MACOSX)
   void PlatformInit();
@@ -207,11 +180,6 @@ class BASE_EXPORT SystemMonitor {
 
   // Functions to trigger notifications.
   void NotifyDevicesChanged(DeviceType device_type);
-  void NotifyMediaDeviceAttached(const std::string& id,
-                                 const string16& name,
-                                 MediaDeviceType type,
-                                 const FilePath::StringType& data);
-  void NotifyMediaDeviceDetached(const std::string& id);
   void NotifyPowerStateChange();
   void NotifySuspend();
   void NotifyResume();
@@ -231,8 +199,9 @@ class BASE_EXPORT SystemMonitor {
   std::vector<id> notification_observers_;
 #endif
 
-  // Map of all the attached media devices.
-  MediaDeviceMap media_device_map_;
+#if defined(OS_WIN)
+  PowerMessageWindow power_message_window_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(SystemMonitor);
 };

@@ -7,10 +7,11 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
-#include "base/eintr_wrapper.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop.h"
+#include "base/pending_task.h"
+#include "base/posix/eintr_wrapper.h"
 #include "base/run_loop.h"
 #include "base/thread_task_runner_handle.h"
 #include "base/threading/platform_thread.h"
@@ -32,8 +33,6 @@ using base::TimeTicks;
 // to avoid chopping this file up with so many #ifdefs.
 
 namespace {
-
-class MessageLoopTest : public testing::Test {};
 
 class Foo : public base::RefCounted<Foo> {
  public:
@@ -148,7 +147,7 @@ void RunTest_PostTask_SEH(MessageLoop::Type message_loop_type) {
 static void SlowFunc(TimeDelta pause, int* quit_counter) {
     PlatformThread::Sleep(pause);
     if (--(*quit_counter) == 0)
-      MessageLoop::current()->Quit();
+      MessageLoop::current()->QuitWhenIdle();
 }
 
 // This function records the time when Run was called in a Time object, which is
@@ -328,7 +327,7 @@ void RunTest_PostDelayedTask_SharedTimer(
   // and then run all pending to force them both to have run.  This is just
   // encouraging flakiness if there is any.
   PlatformThread::Sleep(TimeDelta::FromMilliseconds(100));
-  loop.RunAllPending();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(run_time1.is_null());
   EXPECT_FALSE(run_time2.is_null());
@@ -343,7 +342,7 @@ void SubPumpFunc() {
     TranslateMessage(&msg);
     DispatchMessage(&msg);
   }
-  MessageLoop::current()->Quit();
+  MessageLoop::current()->QuitWhenIdle();
 }
 
 void RunTest_PostDelayedTask_SharedTimer_SubPump() {
@@ -384,7 +383,7 @@ void RunTest_PostDelayedTask_SharedTimer_SubPump() {
   // and then run all pending to force them both to have run.  This is just
   // encouraging flakiness if there is any.
   PlatformThread::Sleep(TimeDelta::FromMilliseconds(100));
-  loop.RunAllPending();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(run_time.is_null());
 }
@@ -461,7 +460,7 @@ void NestingFunc(int* depth) {
     MessageLoop::current()->SetNestableTasksAllowed(true);
     MessageLoop::current()->Run();
   }
-  MessageLoop::current()->Quit();
+  MessageLoop::current()->QuitWhenIdle();
 }
 
 #if defined(OS_WIN)
@@ -504,7 +503,7 @@ class Crasher : public base::RefCounted<Crasher> {
 #error "needs architecture support"
 #endif
 
-    MessageLoop::current()->Quit();
+    MessageLoop::current()->QuitWhenIdle();
   }
   // Points the bad array to a valid memory location.
   static void FixError() {
@@ -728,7 +727,7 @@ void RecursiveSlowFunc(TaskList* order, int cookie, int depth,
 
 void QuitFunc(TaskList* order, int cookie) {
   order->RecordStart(QUITMESSAGELOOP, cookie);
-  MessageLoop::current()->Quit();
+  MessageLoop::current()->QuitWhenIdle();
   order->RecordEnd(QUITMESSAGELOOP, cookie);
 }
 
@@ -994,7 +993,7 @@ void FuncThatPumps(TaskList* order, int cookie) {
   order->RecordStart(PUMPS, cookie);
   {
     MessageLoop::ScopedNestableTaskAllower allow(MessageLoop::current());
-    MessageLoop::current()->RunAllPending();
+    base::RunLoop().RunUntilIdle();
   }
   order->RecordEnd(PUMPS, cookie);
 }
@@ -1371,6 +1370,23 @@ void RunTest_RunLoopQuitDeep(MessageLoop::Type message_loop_type) {
   EXPECT_EQ(static_cast<size_t>(task_index), order.Size());
 }
 
+void PostNTasksThenQuit(int posts_remaining) {
+  if (posts_remaining > 1) {
+    MessageLoop::current()->PostTask(
+        FROM_HERE,
+        base::Bind(&PostNTasksThenQuit, posts_remaining - 1));
+  } else {
+    MessageLoop::current()->QuitWhenIdle();
+  }
+}
+
+void RunTest_RecursivePosts(MessageLoop::Type message_loop_type,
+                            int num_times) {
+  MessageLoop loop(message_loop_type);
+  loop.PostTask(FROM_HERE, base::Bind(&PostNTasksThenQuit, num_times));
+  loop.Run();
+}
+
 #if defined(OS_WIN)
 
 class DispatcherImpl : public MessageLoopForUI::Dispatcher {
@@ -1643,7 +1659,7 @@ TEST(MessageLoopTest, PostDelayedTask_SharedTimer_SubPump) {
 // TODO(darin): MessageLoop does not support deleting all tasks in the
 // destructor.
 // Fails, http://crbug.com/50272.
-TEST(MessageLoopTest, FAILS_EnsureDeletion) {
+TEST(MessageLoopTest, DISABLED_EnsureDeletion) {
   RunTest_EnsureDeletion(MessageLoop::TYPE_DEFAULT);
   RunTest_EnsureDeletion(MessageLoop::TYPE_UI);
   RunTest_EnsureDeletion(MessageLoop::TYPE_IO);
@@ -1652,7 +1668,7 @@ TEST(MessageLoopTest, FAILS_EnsureDeletion) {
 // TODO(darin): MessageLoop does not support deleting all tasks in the
 // destructor.
 // Fails, http://crbug.com/50272.
-TEST(MessageLoopTest, FAILS_EnsureDeletion_Chain) {
+TEST(MessageLoopTest, DISABLED_EnsureDeletion_Chain) {
   RunTest_EnsureDeletion_Chain(MessageLoop::TYPE_DEFAULT);
   RunTest_EnsureDeletion_Chain(MessageLoop::TYPE_UI);
   RunTest_EnsureDeletion_Chain(MessageLoop::TYPE_IO);
@@ -1776,16 +1792,6 @@ TEST(MessageLoopTest, RunLoopQuitOrderAfter) {
   RunTest_RunLoopQuitOrderAfter(MessageLoop::TYPE_IO);
 }
 
-void PostNTasksThenQuit(int posts_remaining) {
-  if (posts_remaining > 1) {
-    MessageLoop::current()->PostTask(
-        FROM_HERE,
-        base::Bind(&PostNTasksThenQuit, posts_remaining - 1));
-  } else {
-    MessageLoop::current()->Quit();
-  }
-}
-
 class DummyTaskObserver : public MessageLoop::TaskObserver {
  public:
   explicit DummyTaskObserver(int num_tasks)
@@ -1795,16 +1801,16 @@ class DummyTaskObserver : public MessageLoop::TaskObserver {
 
   virtual ~DummyTaskObserver() {}
 
-  virtual void WillProcessTask(TimeTicks time_posted) OVERRIDE {
+  virtual void WillProcessTask(const base::PendingTask& pending_task) OVERRIDE {
     num_tasks_started_++;
-    EXPECT_TRUE(time_posted != TimeTicks());
+    EXPECT_TRUE(pending_task.time_posted != TimeTicks());
     EXPECT_LE(num_tasks_started_, num_tasks_);
     EXPECT_EQ(num_tasks_started_, num_tasks_processed_ + 1);
   }
 
-  virtual void DidProcessTask(TimeTicks time_posted) OVERRIDE {
+  virtual void DidProcessTask(const base::PendingTask& pending_task) OVERRIDE {
     num_tasks_processed_++;
-    EXPECT_TRUE(time_posted != TimeTicks());
+    EXPECT_TRUE(pending_task.time_posted != TimeTicks());
     EXPECT_LE(num_tasks_started_, num_tasks_);
     EXPECT_EQ(num_tasks_started_, num_tasks_processed_);
   }
@@ -1894,10 +1900,10 @@ namespace {
 class QuitDelegate : public MessageLoopForIO::Watcher {
  public:
   virtual void OnFileCanWriteWithoutBlocking(int fd) OVERRIDE {
-    MessageLoop::current()->Quit();
+    MessageLoop::current()->QuitWhenIdle();
   }
   virtual void OnFileCanReadWithoutBlocking(int fd) OVERRIDE {
-    MessageLoop::current()->Quit();
+    MessageLoop::current()->QuitWhenIdle();
   }
 };
 
@@ -2060,4 +2066,19 @@ TEST(MessageLoopTest, IsType) {
   EXPECT_TRUE(loop.IsType(MessageLoop::TYPE_UI));
   EXPECT_FALSE(loop.IsType(MessageLoop::TYPE_IO));
   EXPECT_FALSE(loop.IsType(MessageLoop::TYPE_DEFAULT));
+}
+
+TEST(MessageLoopTest, RecursivePosts) {
+  // There was a bug in the MessagePumpGLib where posting tasks recursively
+  // caused the message loop to hang, due to the buffer of the internal pipe
+  // becoming full. Test all MessageLoop types to ensure this issue does not
+  // exist in other MessagePumps.
+
+  // On Linux, the pipe buffer size is 64KiB by default. The bug caused one
+  // byte accumulated in the pipe per two posts, so we should repeat 128K
+  // times to reproduce the bug.
+  const int kNumTimes = 1 << 17;
+  RunTest_RecursivePosts(MessageLoop::TYPE_DEFAULT, kNumTimes);
+  RunTest_RecursivePosts(MessageLoop::TYPE_UI, kNumTimes);
+  RunTest_RecursivePosts(MessageLoop::TYPE_IO, kNumTimes);
 }

@@ -5,7 +5,7 @@
 #include "base/ios/device_util.h"
 
 #include <CommonCrypto/CommonDigest.h>
-#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 
 #include <ifaddrs.h>
 #include <net/if_dl.h>
@@ -13,19 +13,47 @@
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 
+#include "base/ios/ios_util.h"
 #include "base/logging.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 
 namespace {
 
 // Client ID key in the user preferences.
-NSString* const kClientIdPreferenceKey = @"ChromiumClientID";
+NSString* const kLegacyClientIdPreferenceKey = @"ChromiumClientID";
+NSString* const kClientIdPreferenceKey = @"ChromeClientID";
+// Current hardware type. This is used to detect that a device has been backed
+// up and restored to another device, and allows regenerating a new device id.
+NSString* const kHardwareTypePreferenceKey = @"ClientIDGenerationHardwareType";
 // Default salt for device ids.
 const char kDefaultSalt[] = "Salt";
+// Zero UUID returned on buggy iOS devices.
+NSString* const kZeroUUID = @"00000000-0000-0000-0000-000000000000";
+
+NSString* GenerateClientId() {
+  NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+
+  // Try to migrate from legacy client id.
+  NSString* client_id = [defaults stringForKey:kLegacyClientIdPreferenceKey];
+
+  // Some iOS6 devices return a buggy identifierForVendor:
+  // http://openradar.appspot.com/12377282. If this is the case, revert to
+  // generating a new one.
+  if (!client_id || [client_id isEqualToString:kZeroUUID]) {
+    if (base::ios::IsRunningOnIOS6OrLater()) {
+      client_id = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
+      if ([client_id isEqualToString:kZeroUUID])
+        client_id = base::SysUTF8ToNSString(ios::device_util::GetRandomId());
+    } else {
+      client_id = base::SysUTF8ToNSString(ios::device_util::GetRandomId());
+    }
+  }
+  return client_id;
+}
 
 }  // namespace
 
@@ -100,11 +128,22 @@ std::string GetRandomId() {
 
 std::string GetDeviceIdentifier(const char* salt) {
   NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+
+  NSString* last_seen_hardware =
+      [defaults stringForKey:kHardwareTypePreferenceKey];
+  NSString* current_hardware = base::SysUTF8ToNSString(GetPlatform());
+  if (!last_seen_hardware) {
+    last_seen_hardware = current_hardware;
+    [defaults setObject:current_hardware forKey:kHardwareTypePreferenceKey];
+    [defaults synchronize];
+  }
+
   NSString* client_id = [defaults stringForKey:kClientIdPreferenceKey];
 
-  if (!client_id) {
-    client_id = base::SysUTF8ToNSString(GetRandomId());
+  if (!client_id || ![last_seen_hardware isEqualToString:current_hardware]) {
+    client_id = GenerateClientId();
     [defaults setObject:client_id forKey:kClientIdPreferenceKey];
+    [defaults setObject:current_hardware forKey:kHardwareTypePreferenceKey];
     [defaults synchronize];
   }
 

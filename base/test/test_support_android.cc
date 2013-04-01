@@ -5,7 +5,8 @@
 #include <stdarg.h>
 #include <string.h>
 
-#include "base/file_path.h"
+#include "base/android/path_utils.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop.h"
@@ -14,10 +15,6 @@
 #include "base/synchronization/waitable_event.h"
 
 namespace {
-
-// The test implementation of AndroidOS stores everything in the following
-// directory.
-const char* kAndroidTestTempDirectory = "/data/local/tmp";
 
 struct RunState {
   RunState(base::MessagePump::Delegate* delegate, int run_depth)
@@ -141,16 +138,15 @@ base::MessagePump* CreateMessagePumpForUIStub() {
   return new MessagePumpForUIStub();
 };
 
-// Provides the test path for DIR_MODULE, DIR_CACHE and DIR_ANDROID_APP_DATA.
-bool GetTestProviderPath(int key, FilePath* result) {
+// Provides the test path for DIR_MODULE and DIR_ANDROID_APP_DATA.
+bool GetTestProviderPath(int key, base::FilePath* result) {
   switch (key) {
     case base::DIR_MODULE: {
-      *result = FilePath(kAndroidTestTempDirectory);
-      return true;
+      return base::android::GetExternalStorageDirectory(result);
     }
     case base::DIR_ANDROID_APP_DATA: {
-      *result = FilePath(kAndroidTestTempDirectory);
-      return true;
+      // For tests, app data is put in external storage.
+      return base::android::GetExternalStorageDirectory(result);
     }
     default:
       return false;
@@ -158,7 +154,7 @@ bool GetTestProviderPath(int key, FilePath* result) {
 }
 
 void InitPathProvider(int key) {
-  FilePath path;
+  base::FilePath path;
   // If failed to override the key, that means the way has not been registered.
   if (GetTestProviderPath(key, &path) && !PathService::Override(key, path))
     PathService::RegisterProvider(&GetTestProviderPath, key, key + 1);
@@ -173,7 +169,7 @@ void InitAndroidTestLogging() {
                        logging::LOG_ONLY_TO_SYSTEM_DEBUG_LOG,
                        logging::DONT_LOCK_LOG_FILE,
                        logging::DELETE_OLD_LOG_FILE,
-                       logging::ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS);
+                       logging::DISABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS);
   // To view log output with IDs and timestamps use "adb logcat -v threadtime".
   logging::SetLogItems(false,    // Process ID
                        false,    // Thread ID
@@ -183,12 +179,12 @@ void InitAndroidTestLogging() {
 
 void InitAndroidTestPaths() {
   InitPathProvider(DIR_MODULE);
-  InitPathProvider(DIR_CACHE);
   InitPathProvider(DIR_ANDROID_APP_DATA);
 }
 
 void InitAndroidTestMessageLoop() {
-  MessageLoop::InitMessagePumpForUIFactory(&CreateMessagePumpForUIStub);
+  if (!MessageLoop::InitMessagePumpForUIFactory(&CreateMessagePumpForUIStub))
+    LOG(INFO) << "MessagePumpForUIFactory already set, unable to override.";
 }
 
 void InitAndroidTest() {

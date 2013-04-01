@@ -29,8 +29,8 @@ typedef HANDLE MutexHandle;
 #if defined(OS_POSIX)
 #include <errno.h>
 #include <pthread.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #define MAX_PATH PATH_MAX
@@ -49,8 +49,8 @@ typedef pthread_mutex_t* MutexHandle;
 #include "base/debug/alias.h"
 #include "base/debug/debugger.h"
 #include "base/debug/stack_trace.h"
-#include "base/eintr_wrapper.h"
-#include "base/string_piece.h"
+#include "base/posix/eintr_wrapper.h"
+#include "base/strings/string_piece.h"
 #include "base/synchronization/lock_impl.h"
 #include "base/threading/platform_thread.h"
 #include "base/utf_string_conversions.h"
@@ -394,6 +394,7 @@ bool BaseInitLoggingImpl(const PathChar* new_log_file,
 
   return InitializeLogFileHandle();
 #else
+  (void) g_vlog_info_prev;
   return true;
 #endif  // !defined(OS_NACL)
 }
@@ -852,6 +853,14 @@ void RawLog(int level, const char* message) {
 
 // This was defined at the beginning of this file.
 #undef write
+
+#if defined(OS_WIN)
+std::wstring GetLogFileFullPath() {
+  if (log_file_name)
+    return *log_file_name;
+  return std::wstring();
+}
+#endif
 
 }  // namespace logging
 

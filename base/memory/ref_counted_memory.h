@@ -27,6 +27,9 @@ class BASE_EXPORT RefCountedMemory
   // Size of the memory pointed to.
   virtual size_t size() const = 0;
 
+  // Returns true if |other| is byte for byte equal.
+  bool Equals(const scoped_refptr<RefCountedMemory>& other) const;
+
  protected:
   friend class base::RefCountedThreadSafe<RefCountedMemory>;
   RefCountedMemory();
@@ -62,7 +65,7 @@ class BASE_EXPORT RefCountedBytes : public RefCountedMemory {
   RefCountedBytes();
 
   // Constructs a RefCountedBytes object by _copying_ from |initializer|.
-  RefCountedBytes(const std::vector<unsigned char>& initializer);
+  explicit RefCountedBytes(const std::vector<unsigned char>& initializer);
 
   // Constructs a RefCountedBytes object by performing a swap. (To non
   // destructively build a RefCountedBytes, use the constructor that takes a

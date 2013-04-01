@@ -4,9 +4,9 @@
 
 #include "base/utf_string_conversions.h"
 
-#include "base/string_piece.h"
 #include "base/string_util.h"
-#include "base/utf_string_conversion_utils.h"
+#include "base/strings/string_piece.h"
+#include "base/strings/utf_string_conversion_utils.h"
 
 using base::PrepareForUTF8Output;
 using base::PrepareForUTF16Or32Output;

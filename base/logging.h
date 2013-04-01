@@ -330,6 +330,7 @@ const LogSeverity LOG_DFATAL = LOG_FATAL;
 #define COMPACT_GOOGLE_LOG_DFATAL \
   COMPACT_GOOGLE_LOG_EX_DFATAL(LogMessage)
 
+#if defined(OS_WIN)
 // wingdi.h defines ERROR to be 0. When we call LOG(ERROR), it gets
 // substituted with 0, and it expands to COMPACT_GOOGLE_LOG_0. To allow us
 // to keep using this syntax, we define this macro to do the same thing
@@ -341,6 +342,7 @@ const LogSeverity LOG_DFATAL = LOG_FATAL;
 #define COMPACT_GOOGLE_LOG_0 COMPACT_GOOGLE_LOG_ERROR
 // Needed for LOG_IS_ON(ERROR).
 const LogSeverity LOG_0 = LOG_ERROR;
+#endif
 
 // As special cases, we can assume that LOG_IS_ON(ERROR_REPORT) and
 // LOG_IS_ON(FATAL) always hold.  Also, LOG_IS_ON(DFATAL) always holds
@@ -924,6 +926,11 @@ BASE_EXPORT void RawLog(int level, const char* message);
       logging::RawLog(logging::LOG_FATAL, "Check failed: " #condition "\n");   \
   } while (0)
 
+#if defined(OS_WIN)
+// Returns the default log file path.
+BASE_EXPORT std::wstring GetLogFileFullPath();
+#endif
+
 }  // namespace logging
 
 // These functions are provided as a convenience for logging, which is where we
@@ -978,9 +985,11 @@ inline std::ostream& operator<<(std::ostream& out, const std::wstring& wstr) {
 #define NOTIMPLEMENTED() LOG(ERROR) << NOTIMPLEMENTED_MSG
 #elif NOTIMPLEMENTED_POLICY == 5
 #define NOTIMPLEMENTED() do {\
-  static int count = 0;\
-  LOG_IF(ERROR, 0 == count++) << NOTIMPLEMENTED_MSG;\
-} while(0)
+  static bool logged_once = false;\
+  LOG_IF(ERROR, !logged_once) << NOTIMPLEMENTED_MSG;\
+  logged_once = true;\
+} while(0);\
+EAT_STREAM_PARAMETERS
 #endif
 
 #endif  // BASE_LOGGING_H_

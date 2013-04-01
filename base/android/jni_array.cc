@@ -25,6 +25,26 @@ ScopedJavaLocalRef<jbyteArray> ToJavaByteArray(
   return ScopedJavaLocalRef<jbyteArray>(env, byte_array);
 }
 
+ScopedJavaLocalRef<jlongArray> ToJavaLongArray(
+    JNIEnv* env, const int64* longs, size_t len) {
+  jlongArray long_array = env->NewLongArray(len);
+  CheckException(env);
+  DCHECK(long_array);
+
+  jlong* elements = env->GetLongArrayElements(long_array, NULL);
+  memcpy(elements, longs, len * sizeof(*longs));
+  env->ReleaseLongArrayElements(long_array, elements, 0);
+  CheckException(env);
+
+  return ScopedJavaLocalRef<jlongArray>(env, long_array);
+}
+
+// Returns a new Java long array converted from the given int64 array.
+BASE_EXPORT ScopedJavaLocalRef<jlongArray> ToJavaLongArray(
+    JNIEnv* env, const std::vector<int64>& longs) {
+  return ToJavaLongArray(env, longs.begin(), longs.size());
+}
+
 ScopedJavaLocalRef<jobjectArray> ToJavaArrayOfByteArray(
     JNIEnv* env, const std::vector<std::string>& v) {
   ScopedJavaLocalRef<jclass> byte_array_clazz = GetClass(env, "[B");
@@ -73,10 +93,12 @@ void AppendJavaStringArrayToStringVector(JNIEnv* env,
   if (!array)
     return;
   jsize len = env->GetArrayLength(array);
+  size_t back = out->size();
+  out->resize(back + len);
   for (jsize i = 0; i < len; ++i) {
     ScopedJavaLocalRef<jstring> str(env,
         static_cast<jstring>(env->GetObjectArrayElement(array, i)));
-    out->push_back(ConvertJavaStringToUTF16(str));
+    ConvertJavaStringToUTF16(env, str.obj(), &((*out)[back + i]));
   }
 }
 
@@ -87,10 +109,12 @@ void AppendJavaStringArrayToStringVector(JNIEnv* env,
   if (!array)
     return;
   jsize len = env->GetArrayLength(array);
+  size_t back = out->size();
+  out->resize(back + len);
   for (jsize i = 0; i < len; ++i) {
     ScopedJavaLocalRef<jstring> str(env,
         static_cast<jstring>(env->GetObjectArrayElement(array, i)));
-    out->push_back(ConvertJavaStringToUTF8(str));
+    ConvertJavaStringToUTF8(env, str.obj(), &((*out)[back + i]));
   }
 }
 
@@ -125,6 +149,24 @@ void JavaIntArrayToIntVector(JNIEnv* env,
     out->push_back(static_cast<int>(ints[i]));
   }
   env->ReleaseIntArrayElements(array, ints, JNI_ABORT);
+}
+
+void JavaArrayOfByteArrayToStringVector(
+    JNIEnv* env,
+    jobjectArray array,
+    std::vector<std::string>* out) {
+  DCHECK(out);
+  out->clear();
+  jsize len = env->GetArrayLength(array);
+  out->resize(len);
+  for (jsize i = 0; i < len; ++i) {
+    jbyteArray bytes_array = static_cast<jbyteArray>(
+        env->GetObjectArrayElement(array, i));
+    jsize bytes_len = env->GetArrayLength(bytes_array);
+    jbyte* bytes = env->GetByteArrayElements(bytes_array, NULL);
+    (*out)[i].assign(reinterpret_cast<const char*>(bytes), bytes_len);
+    env->ReleaseByteArrayElements(bytes_array, bytes, JNI_ABORT);
+  }
 }
 
 }  // namespace android

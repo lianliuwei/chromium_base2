@@ -10,7 +10,8 @@
 #include "base/command_line.h"
 #include "base/debug/debug_on_start_win.h"
 #include "base/debug/debugger.h"
-#include "base/file_path.h"
+#include "base/debug/stack_trace.h"
+#include "base/files/file_path.h"
 #include "base/i18n/icu_util.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
@@ -77,8 +78,6 @@ class TestClientInitializer : public testing::EmptyTestEventListener {
 
 }  // namespace
 
-const char TestSuite::kStrictFailureHandling[] = "strict_failure_handling";
-
 TestSuite::TestSuite(int argc, char** argv) : initialized_command_line_(false) {
   PreInitialize(argc, argv, true);
 }
@@ -117,53 +116,18 @@ void TestSuite::PreInitialize(int argc, char** argv,
     at_exit_manager_.reset(new base::AtExitManager);
 #endif
 
+#if defined(OS_IOS)
+  InitIOSRunHook(this, argc, argv);
+#endif
+
   // Don't add additional code to this function.  Instead add it to
   // Initialize().  See bug 6436.
 }
 
 
 // static
-bool TestSuite::IsMarkedFlaky(const testing::TestInfo& test) {
-  return strncmp(test.name(), "FLAKY_", 6) == 0;
-}
-
-// static
-bool TestSuite::IsMarkedFailing(const testing::TestInfo& test) {
-  return strncmp(test.name(), "FAILS_", 6) == 0;
-}
-
-// static
 bool TestSuite::IsMarkedMaybe(const testing::TestInfo& test) {
   return strncmp(test.name(), "MAYBE_", 6) == 0;
-}
-
-// static
-bool TestSuite::ShouldIgnoreFailure(const testing::TestInfo& test) {
-  if (CommandLine::ForCurrentProcess()->HasSwitch(kStrictFailureHandling))
-    return false;
-  return IsMarkedFlaky(test) || IsMarkedFailing(test);
-}
-
-// static
-bool TestSuite::NonIgnoredFailures(const testing::TestInfo& test) {
-  return test.should_run() && test.result()->Failed() &&
-      !ShouldIgnoreFailure(test);
-}
-
-int TestSuite::GetTestCount(TestMatch test_match) {
-  testing::UnitTest* instance = testing::UnitTest::GetInstance();
-  int count = 0;
-
-  for (int i = 0; i < instance->total_test_case_count(); ++i) {
-    const testing::TestCase& test_case = *instance->GetTestCase(i);
-    for (int j = 0; j < test_case.total_test_count(); ++j) {
-      if (test_match(*test_case.GetTestInfo(j))) {
-        count++;
-      }
-    }
-  }
-
-  return count;
 }
 
 void TestSuite::CatchMaybeTests() {
@@ -181,6 +145,10 @@ void TestSuite::ResetCommandLine() {
 // Don't add additional code to this method.  Instead add it to
 // Initialize().  See bug 6436.
 int TestSuite::Run() {
+#if defined(OS_IOS)
+  RunTestsFromIOSApp();
+#endif
+
 #if defined(OS_MACOSX)
   base::mac::ScopedNSAutoreleasePool scoped_pool;
 #endif
@@ -197,24 +165,6 @@ int TestSuite::Run() {
   base::test_listener_ios::RegisterTestEndListener();
 #endif
   int result = RUN_ALL_TESTS();
-
-  // If there are failed tests, see if we should ignore the failures.
-  if (result != 0 && GetTestCount(&TestSuite::NonIgnoredFailures) == 0)
-    result = 0;
-
-  // Display the number of flaky tests.
-  int flaky_count = GetTestCount(&TestSuite::IsMarkedFlaky);
-  if (flaky_count) {
-    printf("  YOU HAVE %d FLAKY %s\n\n", flaky_count,
-           flaky_count == 1 ? "TEST" : "TESTS");
-  }
-
-  // Display the number of tests with ignored failures (FAILS).
-  int failing_count = GetTestCount(&TestSuite::IsMarkedFailing);
-  if (failing_count) {
-    printf("  YOU HAVE %d %s with ignored failures (FAILS prefix)\n\n",
-           failing_count, failing_count == 1 ? "test" : "tests");
-  }
 
 #if defined(OS_MACOSX)
   // This MUST happen before Shutdown() since Shutdown() tears down
@@ -268,9 +218,9 @@ void TestSuite::Initialize() {
   InitAndroidTest();
 #else
   // Initialize logging.
-  FilePath exe;
+  base::FilePath exe;
   PathService::Get(base::FILE_EXE, &exe);
-  FilePath log_filename = exe.ReplaceExtension(FILE_PATH_LITERAL("log"));
+  base::FilePath log_filename = exe.ReplaceExtension(FILE_PATH_LITERAL("log"));
   logging::InitLogging(
       log_filename.value().c_str(),
       logging::LOG_TO_BOTH_FILE_AND_SYSTEM_DEBUG_LOG,
@@ -282,7 +232,7 @@ void TestSuite::Initialize() {
   logging::SetLogItems(true, true, true, true);
 #endif  // else defined(OS_ANDROID)
 
-  CHECK(base::EnableInProcessStackDumping());
+  CHECK(base::debug::EnableInProcessStackDumping());
 #if defined(OS_WIN)
   // Make sure we run with high resolution timer to minimize differences
   // between production code and test code.

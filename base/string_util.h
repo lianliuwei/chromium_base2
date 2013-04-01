@@ -17,7 +17,7 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/string16.h"
-#include "base/string_piece.h"  // For implicit conversions.
+#include "base/strings/string_piece.h"  // For implicit conversions.
 
 // Safe standard library wrappers for all platforms.
 
@@ -507,6 +507,14 @@ BASE_EXPORT size_t Tokenize(const base::StringPiece& str,
 BASE_EXPORT string16 JoinString(const std::vector<string16>& parts, char16 s);
 BASE_EXPORT std::string JoinString(
     const std::vector<std::string>& parts, char s);
+
+// Join |parts| using |separator|.
+BASE_EXPORT std::string JoinString(
+    const std::vector<std::string>& parts,
+    const std::string& separator);
+BASE_EXPORT string16 JoinString(
+    const std::vector<string16>& parts,
+    const string16& separator);
 
 // Replace $1-$2-$3..$9 in the format string with |a|-|b|-|c|..|i| respectively.
 // Additionally, any number of consecutive '$' characters is replaced by that

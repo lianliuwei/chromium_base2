@@ -90,6 +90,10 @@ bool PickleIterator::ReadUInt64(uint64* result) {
   return ReadBuiltinType(result);
 }
 
+bool PickleIterator::ReadFloat(float* result) {
+  return ReadBuiltinType(result);
+}
+
 bool PickleIterator::ReadString(std::string* result) {
   int len;
   if (!ReadInt(&len))
@@ -314,7 +318,7 @@ char* Pickle::BeginWrite(size_t length) {
 #endif
 
   header_->payload_size = static_cast<uint32>(new_size);
-  return payload() + offset;
+  return mutable_payload() + offset;
 }
 
 void Pickle::EndWrite(char* dest, int length) {

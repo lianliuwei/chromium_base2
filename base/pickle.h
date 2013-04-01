@@ -34,6 +34,7 @@ class BASE_EXPORT PickleIterator {
   bool ReadUInt32(uint32* result) WARN_UNUSED_RESULT;
   bool ReadInt64(int64* result) WARN_UNUSED_RESULT;
   bool ReadUInt64(uint64* result) WARN_UNUSED_RESULT;
+  bool ReadFloat(float* result) WARN_UNUSED_RESULT;
   bool ReadString(std::string* result) WARN_UNUSED_RESULT;
   bool ReadWString(std::wstring* result) WARN_UNUSED_RESULT;
   bool ReadString16(string16* result) WARN_UNUSED_RESULT;
@@ -158,6 +159,9 @@ class BASE_EXPORT Pickle {
   bool ReadUInt64(PickleIterator* iter, uint64* result) const {
     return iter->ReadUInt64(result);
   }
+  bool ReadFloat(PickleIterator* iter, float* result) const {
+    return iter->ReadFloat(result);
+  }
   bool ReadString(PickleIterator* iter, std::string* result) const {
     return iter->ReadString(result);
   }
@@ -218,6 +222,9 @@ class BASE_EXPORT Pickle {
   bool WriteUInt64(uint64 value) {
     return WriteBytes(&value, sizeof(value));
   }
+  bool WriteFloat(float value) {
+    return WriteBytes(&value, sizeof(value));
+  }
   bool WriteString(const std::string& value);
   bool WriteWString(const std::wstring& value);
   bool WriteString16(const string16& value);
@@ -271,24 +278,21 @@ class BASE_EXPORT Pickle {
 
   // The payload is the pickle data immediately following the header.
   size_t payload_size() const { return header_->payload_size; }
+
   const char* payload() const {
     return reinterpret_cast<const char*>(header_) + header_size_;
   }
 
- protected:
-  char* payload() {
-    return reinterpret_cast<char*>(header_) + header_size_;
-  }
-
   // Returns the address of the byte immediately following the currently valid
   // header + payload.
-  char* end_of_payload() {
-    // We must have a valid header_.
-    return payload() + payload_size();
-  }
   const char* end_of_payload() const {
     // This object may be invalid.
     return header_ ? payload() + payload_size() : NULL;
+  }
+
+ protected:
+  char* mutable_payload() {
+    return reinterpret_cast<char*>(header_) + header_size_;
   }
 
   size_t capacity() const {
