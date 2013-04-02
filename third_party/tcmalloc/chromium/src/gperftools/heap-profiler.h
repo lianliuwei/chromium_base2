@@ -90,12 +90,33 @@ PERFTOOLS_DLL_DECL void HeapProfilerStop();
  */
 PERFTOOLS_DLL_DECL void HeapProfilerDump(const char *reason);
 
+/* Dump a profile to a file now and store the dumped filename to
+ * "dumped_filename_buffer" which has a length of "filename_buffer_length"
+ * in addition to HeapProfilerDump().
+ */
+PERFTOOLS_DLL_DECL void HeapProfilerDumpWithFileName(
+    const char *reason,
+    char* dumped_filename_buffer,
+    int filename_buffer_length);
+
 /* Generate current heap profiling information.
  * Returns an empty string when heap profiling is not active.
  * The returned pointer is a '\0'-terminated string allocated using malloc()
  * and should be free()-ed as soon as the caller does not need it anymore.
  */
 PERFTOOLS_DLL_DECL char* GetHeapProfile();
+
+/* Callback function for iterating through all allocated objects. Accepts
+ * pointer to user data passed into IterateAllocatedObjects and pointer
+ * to the object being visited.
+ */
+typedef void (*AddressVisitor)(void* data, const void* ptr);
+
+/* Iterate over all live allocated objects. For each allocation the
+ * callback will be invoked with the data argument and allocation pointer.
+ */
+PERFTOOLS_DLL_DECL void IterateAllocatedObjects(AddressVisitor callback,
+                                                void* data);
 
 #ifdef __cplusplus
 }  // extern "C"
