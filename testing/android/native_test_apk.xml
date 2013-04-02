@@ -19,7 +19,6 @@ found in the LICENSE file.
   <property name="CHROMIUM_SRC" value="${PRODUCT_DIR}/../.." />
 
   <import file="${CHROMIUM_SRC}/build/android/ant/common.xml"/>
-  <import file="${CHROMIUM_SRC}/build/android/ant/sdk-targets.xml"/>
 
   <!--
     TODO(yfriedman): Remove the need to specify this. We should generate the packages in a way such
@@ -32,7 +31,7 @@ found in the LICENSE file.
   <property name="target.abi" value="${APP_ABI}"/>
 
   <path id="native.libs.gdbserver">
-    <fileset file="${toolchain.dir}/../../gdbserver"/>
+    <fileset file="${android.gdbserver}"/>
   </path>
 
   <!-- We expect PRODUCT_DIR to be set like the gyp var
@@ -50,18 +49,13 @@ found in the LICENSE file.
   <property name="resource.absolute.dir" value="res"/>
   <property name="gen.absolute.dir" value="${out.dir}/gen"/>
 
-  <condition property="external.jars.dir"
-             value="${out.dir}/java/libs"
-             else="">
-      <available file="${out.dir}/java/libs" type="dir"/>
-  </condition>
   <path id="out.dex.jar.input.ref">
-      <fileset dir="${external.jars.dir}" includes="*.jar"/>
+      <filelist files="${INPUT_JARS_PATHS}"/>
   </path>
   <condition property="java.compilerargs"
              value="-classpath ${toString:out.dex.jar.input.ref}">
     <not>
-      <equals arg1="${external.jars.dir}" arg2=""/>
+      <equals arg1="${toString:out.dex.jar.input.ref}" arg2=""/>
     </not>
   </condition>
   <property name="native.libs.absolute.dir" location="${out.dir}/libs" />
@@ -80,7 +74,6 @@ found in the LICENSE file.
         <equals arg1="${build.target}" arg2="debug" />
       </condition>
       <then>
-        <echo message="Copying gdbserver to the apk to enable native debugging"/>
         <copy todir="${out.dir}/libs/${target.abi}">
           <path refid="native.libs.gdbserver"/>
         </copy>
@@ -88,6 +81,7 @@ found in the LICENSE file.
     </if>
   </target>
 
+  <import file="${CHROMIUM_SRC}/build/android/ant/sdk-targets.xml"/>
   <import file="${sdk.dir}/tools/ant/build.xml" />
 
 </project>

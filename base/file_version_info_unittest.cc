@@ -12,10 +12,9 @@
 #include "base/file_version_info_win.h"
 #endif
 
-namespace {
+using base::FilePath;
 
-class FileVersionInfoTest : public testing::Test {
-};
+namespace {
 
 #if defined(OS_WIN)
 FilePath GetTestDataPath() {

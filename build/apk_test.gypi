@@ -19,8 +19,13 @@
 #
 
 {
+  'dependencies': [
+    '<(DEPTH)/base/base.gyp:base_java',
+    '<(DEPTH)/tools/android/android_tools.gyp:android_tools',
+  ],
   'variables': {
-    'input_jars_paths': [],
+    'intermediate_dir': '<(PRODUCT_DIR)/<(test_suite_name)_apk/',
+    'generate_native_test_stamp': '<(intermediate_dir)/generate_native_test.stamp',
   },
   'target_conditions': [
     ['_toolset == "target"', {
@@ -36,34 +41,43 @@
               '>@(input_jars_paths)',
             ],
             'outputs': [
-              '<(PRODUCT_DIR)/<(test_suite_name)_apk/<(test_suite_name)-debug.apk',
+              '<(generate_native_test_stamp)',
             ],
             'action': [
               '<(DEPTH)/testing/android/generate_native_test.py',
               '--native_library',
               '<(input_shlib_path)',
-              '--jars',
-              '">@(input_jars_paths)"',
               '--output',
-              '<(PRODUCT_DIR)/<(test_suite_name)_apk',
+              '<(intermediate_dir)',
+              '--strip-binary=<(android_strip)',
               '--app_abi',
               '<(android_app_abi)',
-              '--sdk-build=<(sdk_build)',
-              '--ant-args',
+              '--stamp-file',
+              '<(generate_native_test_stamp)',
+              '--no-compile',
+            ],
+          },
+          {
+            'action_name': 'ant_apk_<(test_suite_name)',
+            'message': 'Building <(test_suite_name) test apk.',
+            'inputs': [
+              '<(generate_native_test_stamp)',
+            ],
+            'outputs': [
+              '<(PRODUCT_DIR)/<(test_suite_name)_apk/<(test_suite_name)-debug.apk',
+            ],
+            'action': [
+              'ant', '-quiet',
               '-DPRODUCT_DIR=<(ant_build_out)',
-              '--ant-args',
               '-DANDROID_SDK=<(android_sdk)',
-              '--ant-args',
               '-DANDROID_SDK_ROOT=<(android_sdk_root)',
-              '--ant-args',
               '-DANDROID_SDK_TOOLS=<(android_sdk_tools)',
-              '--ant-args',
               '-DANDROID_SDK_VERSION=<(android_sdk_version)',
-              '--ant-args',
-              '-DANDROID_TOOLCHAIN=<(android_toolchain)',
-              '--ant-args',
+              '-DANDROID_GDBSERVER=<(android_gdbserver)',
               '-DCHROMIUM_SRC=<(ant_build_out)/../..',
-              '--ant-compile'
+              '-DINPUT_JARS_PATHS=>(input_jars_paths)',
+              '-DAPP_ABI=<(android_app_abi)',
+              '-buildfile', '<(intermediate_dir)/native_test_apk.xml',
             ],
           }],
         }],  # 'OS == "android" and gtest_target_type == "shared_library"

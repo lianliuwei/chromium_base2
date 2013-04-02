@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/message_loop.h"
+#include "base/run_loop.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -17,6 +18,10 @@ int ReturnFourtyTwo() {
 }
 
 void StoreValue(int* destination, int value) {
+  *destination = value;
+}
+
+void StoreDoubleValue(double* destination, double value) {
   *destination = value;
 }
 
@@ -61,18 +66,31 @@ void ExpectScopedFoo(scoped_ptr_malloc<Foo, FreeFooFunctor> foo) {
 }  // namespace
 
 TEST(TaskRunnerHelpersTest, PostTaskAndReplyWithResult) {
-  MessageLoop message_loop;
   int result = 0;
 
-  PostTaskAndReplyWithResult(
-      message_loop.message_loop_proxy(),
-      FROM_HERE,
-      Bind(&ReturnFourtyTwo),
-      Bind(&StoreValue, &result));
+  MessageLoop message_loop;
+  PostTaskAndReplyWithResult(message_loop.message_loop_proxy(),
+                             FROM_HERE,
+                             Bind(&ReturnFourtyTwo),
+                             Bind(&StoreValue, &result));
 
-  message_loop.RunAllPending();
+  RunLoop().RunUntilIdle();
 
   EXPECT_EQ(42, result);
+}
+
+TEST(TaskRunnerHelpersTest, PostTaskAndReplyWithResultImplicitConvert) {
+  double result = 0;
+
+  MessageLoop message_loop;
+  PostTaskAndReplyWithResult(message_loop.message_loop_proxy(),
+                             FROM_HERE,
+                             Bind(&ReturnFourtyTwo),
+                             Bind(&StoreDoubleValue, &result));
+
+  RunLoop().RunUntilIdle();
+
+  EXPECT_DOUBLE_EQ(42.0, result);
 }
 
 TEST(TaskRunnerHelpersTest, PostTaskAndReplyWithResultPassed) {
@@ -80,14 +98,12 @@ TEST(TaskRunnerHelpersTest, PostTaskAndReplyWithResultPassed) {
   g_foo_free_count = 0;
 
   MessageLoop message_loop;
+  PostTaskAndReplyWithResult(message_loop.message_loop_proxy(),
+                             FROM_HERE,
+                             Bind(&CreateFoo),
+                             Bind(&ExpectFoo));
 
-  PostTaskAndReplyWithResult(
-      message_loop.message_loop_proxy(),
-      FROM_HERE,
-      Bind(&CreateFoo),
-      Bind(&ExpectFoo));
-
-  message_loop.RunAllPending();
+  RunLoop().RunUntilIdle();
 
   EXPECT_EQ(1, g_foo_destruct_count);
   EXPECT_EQ(0, g_foo_free_count);
@@ -98,14 +114,12 @@ TEST(TaskRunnerHelpersTest, PostTaskAndReplyWithResultPassedFreeProc) {
   g_foo_free_count = 0;
 
   MessageLoop message_loop;
+  PostTaskAndReplyWithResult(message_loop.message_loop_proxy(),
+                             FROM_HERE,
+                             Bind(&CreateScopedFoo),
+                             Bind(&ExpectScopedFoo));
 
-  PostTaskAndReplyWithResult(
-      message_loop.message_loop_proxy(),
-      FROM_HERE,
-      Bind(&CreateScopedFoo),
-      Bind(&ExpectScopedFoo));
-
-  message_loop.RunAllPending();
+  RunLoop().RunUntilIdle();
 
   EXPECT_EQ(1, g_foo_destruct_count);
   EXPECT_EQ(1, g_foo_free_count);

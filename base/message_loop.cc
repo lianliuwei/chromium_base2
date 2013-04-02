@@ -13,7 +13,7 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/message_loop_proxy_impl.h"
+#include "base/message_loop/message_loop_proxy_impl.h"
 #include "base/message_pump_default.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/statistics_recorder.h"
@@ -27,7 +27,7 @@
 #if defined(OS_MACOSX)
 #include "base/message_pump_mac.h"
 #endif
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) && !defined(OS_IOS)
 #include "base/message_pump_libevent.h"
 #endif
 #if defined(OS_ANDROID)
@@ -91,6 +91,14 @@ bool enable_histogrammer_ = false;
 
 MessageLoop::MessagePumpFactory* message_pump_for_ui_factory_ = NULL;
 
+// Create a process-wide unique ID to represent this task in trace events. This
+// will be mangled with a Process ID hash to reduce the likelyhood of colliding
+// with MessageLoop pointers on other processes.
+uint64 GetTaskTraceID(const PendingTask& task, MessageLoop* loop) {
+  return (static_cast<uint64>(task.sequence_num) << 32) |
+         static_cast<uint64>(reinterpret_cast<intptr_t>(loop));
+}
+
 }  // namespace
 
 //------------------------------------------------------------------------------
@@ -134,7 +142,7 @@ MessageLoop::MessageLoop(Type type)
       exception_restoration_(false),
       message_histogram_(NULL),
       run_loop_(NULL),
-#ifdef OS_WIN
+#if defined(OS_WIN)
       os_modal_loop_(false),
 #endif  // OS_WIN
       next_sequence_num_(0) {
@@ -149,6 +157,9 @@ MessageLoop::MessageLoop(Type type)
 #if defined(OS_WIN)
 #define MESSAGE_PUMP_UI new base::MessagePumpForUI()
 #define MESSAGE_PUMP_IO new base::MessagePumpForIO()
+#elif defined(OS_IOS)
+#define MESSAGE_PUMP_UI base::MessagePumpMac::Create()
+#define MESSAGE_PUMP_IO new base::MessagePumpIOSForIO()
 #elif defined(OS_MACOSX)
 #define MESSAGE_PUMP_UI base::MessagePumpMac::Create()
 #define MESSAGE_PUMP_IO new base::MessagePumpLibevent()
@@ -240,9 +251,12 @@ void MessageLoop::EnableHistogrammer(bool enable) {
 }
 
 // static
-void MessageLoop::InitMessagePumpForUIFactory(MessagePumpFactory* factory) {
-  DCHECK(!message_pump_for_ui_factory_);
+bool MessageLoop::InitMessagePumpForUIFactory(MessagePumpFactory* factory) {
+  if (message_pump_for_ui_factory_)
+    return false;
+
   message_pump_for_ui_factory_ = factory;
+  return true;
 }
 
 void MessageLoop::AddDestructionObserver(
@@ -434,6 +448,8 @@ bool MessageLoop::ProcessNextDelayedNonNestableTask() {
 }
 
 void MessageLoop::RunTask(const PendingTask& pending_task) {
+  TRACE_EVENT_FLOW_END0("task", "MessageLoop::PostTask",
+      TRACE_ID_MANGLE(GetTaskTraceID(pending_task, this)));
   TRACE_EVENT2("task", "MessageLoop::RunTask",
                "src_file", pending_task.posted_from.file_name(),
                "src_func", pending_task.posted_from.function_name());
@@ -456,10 +472,10 @@ void MessageLoop::RunTask(const PendingTask& pending_task) {
       tracked_objects::ThreadData::NowForStartOfRun(pending_task.birth_tally);
 
   FOR_EACH_OBSERVER(TaskObserver, task_observers_,
-                    WillProcessTask(pending_task.time_posted));
+                    WillProcessTask(pending_task));
   pending_task.task.Run();
   FOR_EACH_OBSERVER(TaskObserver, task_observers_,
-                    DidProcessTask(pending_task.time_posted));
+                    DidProcessTask(pending_task));
 
   tracked_objects::ThreadData::TallyRunOnNamedThreadIfTracking(pending_task,
       start_time, tracked_objects::ThreadData::NowForEndOfRun());
@@ -482,13 +498,8 @@ bool MessageLoop::DeferOrRunPendingTask(const PendingTask& pending_task) {
 }
 
 void MessageLoop::AddToDelayedWorkQueue(const PendingTask& pending_task) {
-  // Move to the delayed work queue.  Initialize the sequence number
-  // before inserting into the delayed_work_queue_.  The sequence number
-  // is used to faciliate FIFO sorting when two tasks have the same
-  // delayed_run_time value.
-  PendingTask new_pending_task(pending_task);
-  new_pending_task.sequence_num = next_sequence_num_++;
-  delayed_work_queue_.push(new_pending_task);
+  // Move to the delayed work queue.
+  delayed_work_queue_.push(pending_task);
 }
 
 void MessageLoop::ReloadWorkQueue() {
@@ -586,6 +597,14 @@ void MessageLoop::AddToIncomingQueue(PendingTask* pending_task) {
   {
     base::AutoLock locked(incoming_queue_lock_);
 
+    // Initialize the sequence number. The sequence number is used for delayed
+    // tasks (to faciliate FIFO sorting when two tasks have the same
+    // delayed_run_time value) and for identifying the task in about:tracing.
+    pending_task->sequence_num = next_sequence_num_++;
+
+    TRACE_EVENT_FLOW_BEGIN0("task", "MessageLoop::PostTask",
+        TRACE_ID_MANGLE(GetTaskTraceID(*pending_task, this)));
+
     bool was_empty = incoming_queue_.empty();
     incoming_queue_.push(*pending_task);
     pending_task->task.Reset();
@@ -607,21 +626,25 @@ void MessageLoop::AddToIncomingQueue(PendingTask* pending_task) {
 // on each thread.
 
 void MessageLoop::StartHistogrammer() {
+#if !defined(OS_NACL)  // NaCl build has no metrics code.
   if (enable_histogrammer_ && !message_histogram_
       && base::StatisticsRecorder::IsActive()) {
     DCHECK(!thread_name_.empty());
-    message_histogram_ = base::LinearHistogram::FactoryGet(
+    message_histogram_ = base::LinearHistogram::FactoryGetWithRangeDescription(
         "MsgLoop:" + thread_name_,
         kLeastNonZeroMessageId, kMaxMessageId,
         kNumberOfDistinctMessagesDisplayed,
-        message_histogram_->kHexRangePrintingFlag);
-    message_histogram_->SetRangeDescriptions(event_descriptions_);
+        message_histogram_->kHexRangePrintingFlag,
+        event_descriptions_);
   }
+#endif
 }
 
 void MessageLoop::HistogramEvent(int event) {
+#if !defined(OS_NACL)
   if (message_histogram_)
     message_histogram_->Add(event);
+#endif
 }
 
 bool MessageLoop::DoWork() {
@@ -751,8 +774,27 @@ void MessageLoopForIO::RegisterIOHandler(HANDLE file, IOHandler* handler) {
   pump_io()->RegisterIOHandler(file, handler);
 }
 
+bool MessageLoopForIO::RegisterJobObject(HANDLE job, IOHandler* handler) {
+  return pump_io()->RegisterJobObject(job, handler);
+}
+
 bool MessageLoopForIO::WaitForIOCompletion(DWORD timeout, IOHandler* filter) {
   return pump_io()->WaitForIOCompletion(timeout, filter);
+}
+
+#elif defined(OS_IOS)
+
+bool MessageLoopForIO::WatchFileDescriptor(int fd,
+                                           bool persistent,
+                                           Mode mode,
+                                           FileDescriptorWatcher *controller,
+                                           Watcher *delegate) {
+  return pump_io()->WatchFileDescriptor(
+      fd,
+      persistent,
+      mode,
+      controller,
+      delegate);
 }
 
 #elif defined(OS_POSIX) && !defined(OS_NACL)
@@ -765,7 +807,7 @@ bool MessageLoopForIO::WatchFileDescriptor(int fd,
   return pump_libevent()->WatchFileDescriptor(
       fd,
       persistent,
-      static_cast<base::MessagePumpLibevent::Mode>(mode),
+      mode,
       controller,
       delegate);
 }

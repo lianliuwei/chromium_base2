@@ -27,5 +27,69 @@ TEST(JniArray, BasicConversions) {
   EXPECT_EQ(8U, vec.size());
 }
 
+void CheckLongConversion(
+    JNIEnv* env,
+    const int64* long_array,
+    const size_t len,
+    const ScopedJavaLocalRef<jlongArray>& longs) {
+  ASSERT_TRUE(longs.obj());
+
+  jsize java_array_len = env->GetArrayLength(longs.obj());
+  ASSERT_EQ(static_cast<int>(len), java_array_len);
+
+  jlong value;
+  for (size_t i = 0; i < len; ++i) {
+    env->GetLongArrayRegion(longs.obj(), i, 1, &value);
+    ASSERT_EQ(long_array[i], value);
+  }
+}
+
+TEST(JniArray, LongConversions) {
+  const int64 kLongs[] = { 0, 1, -1, kint64min, kint64max};
+  const size_t kLen = arraysize(kLongs);
+
+  JNIEnv* env = AttachCurrentThread();
+  CheckLongConversion(env, kLongs, kLen, ToJavaLongArray(env, kLongs, kLen));
+
+  const std::vector<int64> vec(kLongs, kLongs + kLen);
+  CheckLongConversion(env, kLongs, kLen, ToJavaLongArray(env, vec));
+}
+
+TEST(JniArray, JavaArrayOfByteArrayToStringVector) {
+  const int kMaxItems = 50;
+  JNIEnv* env = AttachCurrentThread();
+
+  // Create a byte[][] object.
+  ScopedJavaLocalRef<jclass> byte_array_clazz(env, env->FindClass("[B"));
+  ASSERT_TRUE(byte_array_clazz.obj());
+
+  ScopedJavaLocalRef<jobjectArray> array(
+      env, env->NewObjectArray(kMaxItems, byte_array_clazz.obj(), NULL));
+  ASSERT_TRUE(array.obj());
+
+  // Create kMaxItems byte buffers.
+  char text[16];
+  for (int i = 0; i < kMaxItems; ++i) {
+    snprintf(text, sizeof text, "%d", i);
+    ScopedJavaLocalRef<jbyteArray> byte_array = ToJavaByteArray(
+        env, reinterpret_cast<uint8*>(text),
+        static_cast<size_t>(strlen(text)));
+    ASSERT_TRUE(byte_array.obj());
+
+    env->SetObjectArrayElement(array.obj(), i, byte_array.obj());
+    ASSERT_FALSE(HasException(env));
+  }
+
+  // Convert to std::vector<std::string>, check the content.
+  std::vector<std::string> vec;
+  JavaArrayOfByteArrayToStringVector(env, array.obj(), &vec);
+
+  EXPECT_EQ(static_cast<size_t>(kMaxItems), vec.size());
+  for (int i = 0; i < kMaxItems; ++i) {
+    snprintf(text, sizeof text, "%d", i);
+    EXPECT_STREQ(text, vec[i].c_str());
+  }
+}
+
 }  // namespace android
 }  // namespace base

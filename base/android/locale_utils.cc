@@ -7,13 +7,24 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/i18n/rtl.h"
 #include "base/logging.h"
 #include "base/string_util.h"
 #include "jni/LocaleUtils_jni.h"
-#include "unicode/uloc.h"
+#include "third_party/icu/public/common/unicode/uloc.h"
 
 namespace base {
 namespace android {
+
+jboolean IsRTL(JNIEnv* env, jclass clazz) {
+  return base::i18n::IsRTL();
+}
+
+jint GetFirstStrongCharacterDirection(JNIEnv* env, jclass clazz,
+                                      jstring string) {
+  return base::i18n::GetFirstStrongCharacterDirection(
+      base::android::ConvertJavaStringToUTF16(env, string));
+}
 
 std::string GetDefaultLocale() {
   JNIEnv* env = AttachCurrentThread();
@@ -44,8 +55,6 @@ std::string GetLocaleComponent(const std::string& locale,
 
 ScopedJavaLocalRef<jobject> NewJavaLocale(
     JNIEnv* env,
-    ScopedJavaLocalRef<jclass> locale_class,
-    jmethodID constructor_id,
     const std::string& locale) {
   // TODO(wangxianzhu): Use new Locale API once Android supports scripts.
   std::string language = GetLocaleComponent(
@@ -54,12 +63,10 @@ ScopedJavaLocalRef<jobject> NewJavaLocale(
       locale, uloc_getCountry, ULOC_COUNTRY_CAPACITY);
   std::string variant = GetLocaleComponent(
       locale, uloc_getVariant, ULOC_FULLNAME_CAPACITY);
-  return ScopedJavaLocalRef<jobject>(
-      env, env->NewObject(
-          locale_class.obj(), constructor_id,
+  return Java_LocaleUtils_getJavaLocale(env,
           ConvertUTF8ToJavaString(env, language).obj(),
           ConvertUTF8ToJavaString(env, country).obj(),
-          ConvertUTF8ToJavaString(env, variant).obj()));
+          ConvertUTF8ToJavaString(env, variant).obj());
 }
 
 }  // namespace
@@ -67,22 +74,15 @@ ScopedJavaLocalRef<jobject> NewJavaLocale(
 string16 GetDisplayNameForLocale(const std::string& locale,
                                  const std::string& display_locale) {
   JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> java_locale =
+      NewJavaLocale(env, locale);
+  ScopedJavaLocalRef<jobject> java_display_locale =
+      NewJavaLocale(env, display_locale);
 
-  ScopedJavaLocalRef<jclass> locale_class = GetClass(env, "java/util/Locale");
-  jmethodID constructor_id = GetMethodID(
-      env, locale_class, "<init>",
-      "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
-  ScopedJavaLocalRef<jobject> java_locale = NewJavaLocale(
-      env, locale_class, constructor_id, locale);
-  ScopedJavaLocalRef<jobject> java_display_locale = NewJavaLocale(
-      env, locale_class, constructor_id, display_locale);
-
-  jmethodID method_id = GetMethodID(env, locale_class, "getDisplayName",
-                                    "(Ljava/util/Locale;)Ljava/lang/String;");
   ScopedJavaLocalRef<jstring> java_result(
-      env,
-      static_cast<jstring>(env->CallObjectMethod(java_locale.obj(), method_id,
-                                                 java_display_locale.obj())));
+      Java_LocaleUtils_getDisplayNameForLocale(env,
+                                              java_locale.obj(),
+                                              java_display_locale.obj()));
   return ConvertJavaStringToUTF16(java_result);
 }
 

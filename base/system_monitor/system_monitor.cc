@@ -8,9 +8,7 @@
 
 #include "base/logging.h"
 #include "base/message_loop.h"
-#include "base/stl_util.h"
 #include "base/time.h"
-#include "base/utf_string_conversions.h"
 
 namespace base {
 
@@ -21,17 +19,6 @@ static SystemMonitor* g_system_monitor = NULL;
 // battery check.
 static int kDelayedBatteryCheckMs = 10 * 1000;
 #endif  // defined(ENABLE_BATTERY_MONITORING)
-
-SystemMonitor::MediaDeviceInfo::MediaDeviceInfo(
-    const std::string& id,
-    const string16& device_name,
-    MediaDeviceType device_type,
-    const FilePath::StringType& device_location)
-    : unique_id(id),
-      name(device_name),
-      type(device_type),
-      location(device_location) {
-}
 
 SystemMonitor::SystemMonitor()
     : power_observer_list_(new ObserverListThreadSafe<PowerObserver>()),
@@ -98,40 +85,6 @@ void SystemMonitor::ProcessDevicesChanged(DeviceType device_type) {
   NotifyDevicesChanged(device_type);
 }
 
-void SystemMonitor::ProcessMediaDeviceAttached(
-    const std::string& id,
-    const string16& name,
-    MediaDeviceType type,
-    const FilePath::StringType& location) {
-  MediaDeviceInfo info(id, name, type, location);
-  if (ContainsKey(media_device_map_, id)) {
-    // This can happen if our unique id scheme fails. Ignore the incoming
-    // non-unique attachment.
-    return;
-  }
-  media_device_map_.insert(std::make_pair(id, info));
-  NotifyMediaDeviceAttached(id, name, type, location);
-}
-
-void SystemMonitor::ProcessMediaDeviceDetached(const std::string& id) {
-  MediaDeviceMap::iterator it = media_device_map_.find(id);
-  if (it == media_device_map_.end())
-    return;
-  media_device_map_.erase(it);
-  NotifyMediaDeviceDetached(id);
-}
-
-std::vector<SystemMonitor::MediaDeviceInfo>
-SystemMonitor::GetAttachedMediaDevices() const {
-  std::vector<MediaDeviceInfo> results;
-  for (MediaDeviceMap::const_iterator it = media_device_map_.begin();
-       it != media_device_map_.end();
-       ++it) {
-    results.push_back(it->second);
-  }
-  return results;
-}
-
 void SystemMonitor::AddPowerObserver(PowerObserver* obs) {
   power_observer_list_->AddObserver(obs);
 }
@@ -152,23 +105,6 @@ void SystemMonitor::NotifyDevicesChanged(DeviceType device_type) {
   DVLOG(1) << "DevicesChanged with device type " << device_type;
   devices_changed_observer_list_->Notify(
       &DevicesChangedObserver::OnDevicesChanged, device_type);
-}
-
-void SystemMonitor::NotifyMediaDeviceAttached(
-    const std::string& id,
-    const string16& name,
-    MediaDeviceType type,
-    const FilePath::StringType& location) {
-  DVLOG(1) << "MediaDeviceAttached with name " << UTF16ToUTF8(name)
-           << " and id " << id;
-  devices_changed_observer_list_->Notify(
-    &DevicesChangedObserver::OnMediaDeviceAttached, id, name, type, location);
-}
-
-void SystemMonitor::NotifyMediaDeviceDetached(const std::string& id) {
-  DVLOG(1) << "MediaDeviceDetached for id " << id;
-  devices_changed_observer_list_->Notify(
-    &DevicesChangedObserver::OnMediaDeviceDetached, id);
 }
 
 void SystemMonitor::NotifyPowerStateChange() {

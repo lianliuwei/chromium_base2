@@ -5,12 +5,13 @@
   'variables': {
     'isolate_dependency_tracked': [
       '../testing/test_env.py',
-      '../tools/isolate/run_test_cases.py',
+      '../tools/swarm_client/run_isolated.py',
+      '../tools/swarm_client/run_test_cases.py',
       '<(PRODUCT_DIR)/base_unittests<(EXECUTABLE_SUFFIX)',
-      'data/json/bom_feff.json',
     ],
     'isolate_dependency_untracked': [
-      'data/file_util_unittest/',
+      'data/',
+      'prefs/test/',
     ],
   },
   'conditions': [
@@ -19,7 +20,7 @@
         'command': [
           '../testing/xvfb.py',
           '<(PRODUCT_DIR)',
-          '../tools/isolate/run_test_cases.py',
+          '../tools/swarm_client/run_test_cases.py',
           '<(PRODUCT_DIR)/base_unittests<(EXECUTABLE_SUFFIX)',
         ],
         'isolate_dependency_tracked': [
@@ -31,7 +32,7 @@
       'variables': {
         'command': [
           '../testing/test_env.py',
-          '../tools/isolate/run_test_cases.py',
+          '../tools/swarm_client/run_test_cases.py',
           '<(PRODUCT_DIR)/base_unittests<(EXECUTABLE_SUFFIX)',
         ],
       },
@@ -40,8 +41,6 @@
       'variables': {
         'isolate_dependency_tracked': [
           '<(PRODUCT_DIR)/icudt.dll',
-          'data/file_version_info_unittest/FileVersionInfoTest1.dll',
-          'data/file_version_info_unittest/FileVersionInfoTest2.dll',
         ],
       },
     }],

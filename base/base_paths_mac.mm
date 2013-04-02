@@ -2,23 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/base_paths_mac.h"
+// Defines base::PathProviderMac which replaces base::PathProviderPosix for Mac
+// in base/path_service.cc.
 
 #include <dlfcn.h>
 #import <Foundation/Foundation.h>
 #include <mach-o/dyld.h>
 
+#include "base/base_paths.h"
 #include "base/compiler_specific.h"
-#include "base/file_path.h"
 #include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #include "base/path_service.h"
 #include "base/string_util.h"
+#include "build/build_config.h"
 
 namespace {
 
-void GetNSExecutablePath(FilePath* path) {
+void GetNSExecutablePath(base::FilePath* path) {
   DCHECK(path);
   // Executable path can have relative references ("..") depending on
   // how the app was launched.
@@ -29,19 +32,19 @@ void GetNSExecutablePath(FilePath* path) {
   int rv = _NSGetExecutablePath(WriteInto(&executable_path, executable_length),
                                 &executable_length);
   DCHECK_EQ(rv, 0);
-  *path = FilePath(executable_path);
+  *path = base::FilePath(executable_path);
 }
 
 // Returns true if the module for |address| is found. |path| will contain
 // the path to the module. Note that |path| may not be absolute.
-bool GetModulePathForAddress(FilePath* path,
+bool GetModulePathForAddress(base::FilePath* path,
                              const void* address) WARN_UNUSED_RESULT;
 
-bool GetModulePathForAddress(FilePath* path, const void* address) {
+bool GetModulePathForAddress(base::FilePath* path, const void* address) {
   Dl_info info;
   if (dladdr(address, &info) == 0)
     return false;
-  *path = FilePath(info.dli_fname);
+  *path = base::FilePath(info.dli_fname);
   return true;
 }
 
@@ -49,7 +52,7 @@ bool GetModulePathForAddress(FilePath* path, const void* address) {
 
 namespace base {
 
-bool PathProviderMac(int key, FilePath* result) {
+bool PathProviderMac(int key, base::FilePath* result) {
   switch (key) {
     case base::FILE_EXE:
       GetNSExecutablePath(result);
@@ -57,8 +60,6 @@ bool PathProviderMac(int key, FilePath* result) {
     case base::FILE_MODULE:
       return GetModulePathForAddress(result,
           reinterpret_cast<const void*>(&base::PathProviderMac));
-    case base::DIR_CACHE:
-      return base::mac::GetUserDirectory(NSCachesDirectory, result);
     case base::DIR_APP_DATA: {
       bool success = base::mac::GetUserDirectory(NSApplicationSupportDirectory,
                                                  result);
@@ -69,7 +70,7 @@ bool PathProviderMac(int key, FilePath* result) {
 #endif  // defined(OS_IOS)
       return success;
     }
-    case base::DIR_SOURCE_ROOT: {
+    case base::DIR_SOURCE_ROOT:
       // Go through PathService to catch overrides.
       if (!PathService::Get(base::FILE_EXE, result))
         return false;
@@ -90,11 +91,19 @@ bool PathProviderMac(int key, FilePath* result) {
       }
 #endif
       return true;
-    }
-    case base::DIR_HOME: {
+    case base::DIR_USER_DESKTOP:
+#if defined(OS_IOS)
+      // iOS does not have desktop directories.
+      NOTIMPLEMENTED();
+      return false;
+#else
+      return base::mac::GetUserDirectory(NSDesktopDirectory, result);
+#endif
+    case base::DIR_CACHE:
+      return base::mac::GetUserDirectory(NSCachesDirectory, result);
+    case base::DIR_HOME:
       *result = base::mac::NSStringToFilePath(NSHomeDirectory());
       return true;
-    }
     default:
       return false;
   }

@@ -8,6 +8,7 @@
 #include "base/allocator/allocator_extension_thunks.h"
 #include "base/profiler/alternate_timer.h"
 #include "base/sysinfo.h"
+#include "jemalloc.h"
 
 // When defined, different heap allocators can be used via an environment
 // variable set before running the program.  This may reduce the amount
@@ -44,8 +45,12 @@ typedef enum {
 // See SetupSubprocessAllocator() to specify a default secondary (subprocess)
 // allocator.
 // TODO(jar): Switch to using TCMALLOC for the renderer as well.
+#if (defined(ADDRESS_SANITIZER) && defined(OS_WIN))
+// The Windows implementation of Asan requires the use of "WINHEAP".
+static Allocator allocator = WINHEAP;
+#else
 static Allocator allocator = TCMALLOC;
-
+#endif
 // The names of the environment variables that can optionally control the
 // selection of the allocator.  The primary may be used to control overall
 // allocator selection, and the secondary can be used to specify an allocator
@@ -55,7 +60,7 @@ static const char secondary_name[] = "CHROME_ALLOCATOR_2";
 
 // We include tcmalloc and the win_allocator to get as much inlining as
 // possible.
-#include "tcmalloc.cc"
+#include "debugallocation_shim.cc"
 #include "win_allocator.cc"
 
 // Forward declarations from jemalloc.
@@ -67,8 +72,6 @@ size_t je_msize(void* p);
 bool je_malloc_init_hard();
 void* je_memalign(size_t a, size_t s);
 }
-
-extern "C" {
 
 // Call the new handler, if one has been set.
 // Returns true on successfully calling the handler, false otherwise.
@@ -83,7 +86,8 @@ inline bool call_new_handler(bool nothrow) {
     nh = std::set_new_handler(0);
     (void) std::set_new_handler(nh);
   }
-#if (defined(__GNUC__) && !defined(__EXCEPTIONS)) || (defined(_HAS_EXCEPTIONS) && !_HAS_EXCEPTIONS)
+#if (defined(__GNUC__) && !defined(__EXCEPTIONS)) || \
+    (defined(_HAS_EXCEPTIONS) && !_HAS_EXCEPTIONS)
   if (!nh)
     return false;
   // Since exceptions are disabled, we don't really know if new_handler
@@ -94,7 +98,7 @@ inline bool call_new_handler(bool nothrow) {
   // If no new_handler is established, the allocation failed.
   if (!nh) {
     if (nothrow)
-      return 0;
+      return false;
     throw std::bad_alloc();
   }
   // Otherwise, try the new_handler.  If it returns, retry the
@@ -108,8 +112,10 @@ inline bool call_new_handler(bool nothrow) {
     return true;
   }
 #endif  // (defined(__GNUC__) && !defined(__EXCEPTIONS)) || (defined(_HAS_EXCEPTIONS) && !_HAS_EXCEPTIONS)
+  return false;
 }
 
+extern "C" {
 void* malloc(size_t size) __THROW {
   void* ptr;
   for (;;) {
@@ -231,6 +237,29 @@ extern "C" intptr_t _get_heap_handle() {
   return 0;
 }
 
+static bool get_allocator_waste_size_thunk(size_t* size) {
+#ifdef ENABLE_DYNAMIC_ALLOCATOR_SWITCHING
+  switch (allocator) {
+    case JEMALLOC:
+    case WINHEAP:
+    case WINLFH:
+      // TODO(alexeif): Implement for allocators other than tcmalloc.
+      return false;
+  }
+#endif
+  size_t heap_size, allocated_bytes, unmapped_bytes;
+  MallocExtension* ext = MallocExtension::instance();
+  if (ext->GetNumericProperty("generic.heap_size", &heap_size) &&
+      ext->GetNumericProperty("generic.current_allocated_bytes",
+                              &allocated_bytes) &&
+      ext->GetNumericProperty("tcmalloc.pageheap_unmapped_bytes",
+                              &unmapped_bytes)) {
+    *size = heap_size - allocated_bytes - unmapped_bytes;
+    return true;
+  }
+  return false;
+}
+
 static void get_stats_thunk(char* buffer, int buffer_length) {
   MallocExtension::instance()->GetStats(buffer, buffer_length);
 }
@@ -242,6 +271,9 @@ static void release_free_memory_thunk() {
 // The CRT heap initialization stub.
 extern "C" int _heap_init() {
 #ifdef ENABLE_DYNAMIC_ALLOCATOR_SWITCHING
+// Don't use the environment variable if ADDRESS_SANITIZER is defined on
+// Windows, as the implementation requires Winheap to be the allocator.
+#if !(defined(ADDRESS_SANITIZER) && defined(OS_WIN))
   const char* environment_value = GetenvBeforeMain(primary_name);
   if (environment_value) {
     if (!stricmp(environment_value, "jemalloc"))
@@ -253,6 +285,7 @@ extern "C" int _heap_init() {
     else if (!stricmp(environment_value, "tcmalloc"))
       allocator = TCMALLOC;
   }
+#endif
 
   switch (allocator) {
     case JEMALLOC:
@@ -284,6 +317,8 @@ extern "C" int _heap_init() {
         tracked_objects::TIME_SOURCE_TYPE_TCMALLOC);
   }
 
+  base::allocator::thunks::SetGetAllocatorWasteSizeFunction(
+      get_allocator_waste_size_thunk);
   base::allocator::thunks::SetGetStatsFunction(get_stats_thunk);
   base::allocator::thunks::SetReleaseFreeMemoryFunction(
       release_free_memory_thunk);
@@ -381,8 +416,14 @@ void SetupSubprocessAllocator() {
   buffer[sizeof(buffer) - 1] = '\0';
 
   if (secondary_length || !primary_length) {
+    // Don't use the environment variable if ADDRESS_SANITIZER is defined on
+    // Windows, as the implementation require Winheap to be the allocator.
+#if !(defined(ADDRESS_SANITIZER) && defined(OS_WIN))
     const char* secondary_value = secondary_length ? buffer : "TCMALLOC";
     // Force renderer (or other subprocesses) to use secondary_value.
+#else
+    const char* secondary_value = "WINHEAP";
+#endif
     int ret_val = _putenv_s(primary_name, secondary_value);
     DCHECK_EQ(0, ret_val);
   }

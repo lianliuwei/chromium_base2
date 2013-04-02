@@ -10,15 +10,15 @@
 #include <time64.h>
 
 #include "base/rand_util.h"
-#include "base/string_piece.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_piece.h"
 
 // There is no futimes() avaiable in Bionic, so we provide our own
 // implementation until it is there.
 extern "C" {
 
 int futimes(int fd, const struct timeval tv[2]) {
-  const std::string fd_path = StringPrintf("/proc/self/fd/%d", fd);
+  const std::string fd_path = base::StringPrintf("/proc/self/fd/%d", fd);
   return utimes(fd_path.c_str(), tv);
 }
 

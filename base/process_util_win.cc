@@ -56,52 +56,6 @@ const DWORD kProcessKilledExitCode = 1;
 // HeapSetInformation function pointer.
 typedef BOOL (WINAPI* HeapSetFn)(HANDLE, HEAP_INFORMATION_CLASS, PVOID, SIZE_T);
 
-// Previous unhandled filter. Will be called if not NULL when we intercept an
-// exception. Only used in unit tests.
-LPTOP_LEVEL_EXCEPTION_FILTER g_previous_filter = NULL;
-
-// Prints the exception call stack.
-// This is the unit tests exception filter.
-long WINAPI StackDumpExceptionFilter(EXCEPTION_POINTERS* info) {
-  debug::StackTrace(info).PrintBacktrace();
-  if (g_previous_filter)
-    return g_previous_filter(info);
-  return EXCEPTION_CONTINUE_SEARCH;
-}
-
-// Connects back to a console if available.
-void AttachToConsole() {
-  if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
-    unsigned int result = GetLastError();
-    // Was probably already attached.
-    if (result == ERROR_ACCESS_DENIED)
-      return;
-
-    if (result == ERROR_INVALID_HANDLE || result == ERROR_INVALID_HANDLE) {
-      // TODO(maruel): Walk up the process chain if deemed necessary.
-    }
-    // Continue even if the function call fails.
-    AllocConsole();
-  }
-  // http://support.microsoft.com/kb/105305
-  int raw_out = _open_osfhandle(
-      reinterpret_cast<intptr_t>(GetStdHandle(STD_OUTPUT_HANDLE)), _O_TEXT);
-  *stdout = *_fdopen(raw_out, "w");
-  setvbuf(stdout, NULL, _IONBF, 0);
-
-  int raw_err = _open_osfhandle(
-      reinterpret_cast<intptr_t>(GetStdHandle(STD_ERROR_HANDLE)), _O_TEXT);
-  *stderr = *_fdopen(raw_err, "w");
-  setvbuf(stderr, NULL, _IONBF, 0);
-
-  int raw_in = _open_osfhandle(
-      reinterpret_cast<intptr_t>(GetStdHandle(STD_INPUT_HANDLE)), _O_TEXT);
-  *stdin = *_fdopen(raw_in, "r");
-  setvbuf(stdin, NULL, _IONBF, 0);
-  // Fix all cout, wcout, cin, wcin, cerr, wcerr, clog and wclog.
-  std::ios::sync_with_stdio();
-}
-
 void OnNoMemory() {
   // Kill the process. This is important for security, since WebKit doesn't
   // NULL-check many memory allocations. If a malloc fails, returns NULL, and
@@ -166,6 +120,63 @@ void TimerExpiredTask::KillProcess() {
 }
 
 }  // namespace
+
+void RouteStdioToConsole() {
+  // Don't change anything if stdout or stderr already point to a
+  // valid stream.
+  //
+  // If we are running under Buildbot or under Cygwin's default
+  // terminal (mintty), stderr and stderr will be pipe handles.  In
+  // that case, we don't want to open CONOUT$, because its output
+  // likely does not go anywhere.
+  //
+  // We don't use GetStdHandle() to check stdout/stderr here because
+  // it can return dangling IDs of handles that were never inherited
+  // by this process.  These IDs could have been reused by the time
+  // this function is called.  The CRT checks the validity of
+  // stdout/stderr on startup (before the handle IDs can be reused).
+  // _fileno(stdout) will return -2 (_NO_CONSOLE_FILENO) if stdout was
+  // invalid.
+  if (_fileno(stdout) >= 0 || _fileno(stderr) >= 0)
+    return;
+
+  if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
+    unsigned int result = GetLastError();
+    // Was probably already attached.
+    if (result == ERROR_ACCESS_DENIED)
+      return;
+    // Don't bother creating a new console for each child process if the
+    // parent process is invalid (eg: crashed).
+    if (result == ERROR_GEN_FAILURE)
+      return;
+    // Make a new console if attaching to parent fails with any other error.
+    // It should be ERROR_INVALID_HANDLE at this point, which means the browser
+    // was likely not started from a console.
+    AllocConsole();
+  }
+
+  // Arbitrary byte count to use when buffering output lines.  More
+  // means potential waste, less means more risk of interleaved
+  // log-lines in output.
+  enum { kOutputBufferSize = 64 * 1024 };
+
+  if (freopen("CONOUT$", "w", stdout)) {
+    setvbuf(stdout, NULL, _IOLBF, kOutputBufferSize);
+    // Overwrite FD 1 for the benefit of any code that uses this FD
+    // directly.  This is safe because the CRT allocates FDs 0, 1 and
+    // 2 at startup even if they don't have valid underlying Windows
+    // handles.  This means we won't be overwriting an FD created by
+    // _open() after startup.
+    _dup2(_fileno(stdout), 1);
+  }
+  if (freopen("CONOUT$", "w", stderr)) {
+    setvbuf(stderr, NULL, _IOLBF, kOutputBufferSize);
+    _dup2(_fileno(stderr), 2);
+  }
+
+  // Fix all cout, wcout, cin, wcin, cerr, wcerr, clog and wclog.
+  std::ios::sync_with_stdio();
+}
 
 ProcessId GetCurrentProcId() {
   return ::GetCurrentProcessId();
@@ -268,7 +279,7 @@ bool GetProcessIntegrityLevel(ProcessHandle process, IntegrityLevel *level) {
       GetLastError() != ERROR_INSUFFICIENT_BUFFER)
     return false;
 
-  scoped_array<char> token_label_bytes(new char[token_info_length]);
+  scoped_ptr<char[]> token_label_bytes(new char[token_info_length]);
   if (!token_label_bytes.get())
     return false;
 
@@ -309,6 +320,17 @@ bool LaunchProcess(const string16& cmdline,
   startup_info.dwFlags = STARTF_USESHOWWINDOW;
   startup_info.wShowWindow = options.start_hidden ? SW_HIDE : SW_SHOW;
 
+  if (options.stdin_handle || options.stdout_handle || options.stderr_handle) {
+    DCHECK(options.inherit_handles);
+    DCHECK(options.stdin_handle);
+    DCHECK(options.stdout_handle);
+    DCHECK(options.stderr_handle);
+    startup_info.dwFlags |= STARTF_USESTDHANDLES;
+    startup_info.hStdInput = options.stdin_handle;
+    startup_info.hStdOutput = options.stdout_handle;
+    startup_info.hStdError = options.stderr_handle;
+  }
+
   DWORD flags = 0;
 
   if (options.job_handle) {
@@ -320,14 +342,19 @@ bool LaunchProcess(const string16& cmdline,
     flags |= CREATE_BREAKAWAY_FROM_JOB;
   }
 
+  if (options.force_breakaway_from_job_)
+    flags |= CREATE_BREAKAWAY_FROM_JOB;
+
   base::win::ScopedProcessInformation process_info;
 
   if (options.as_user) {
     flags |= CREATE_UNICODE_ENVIRONMENT;
     void* enviroment_block = NULL;
 
-    if (!CreateEnvironmentBlock(&enviroment_block, options.as_user, FALSE))
+    if (!CreateEnvironmentBlock(&enviroment_block, options.as_user, FALSE)) {
+      DPLOG(ERROR);
       return false;
+    }
 
     BOOL launched =
         CreateProcessAsUser(options.as_user, NULL,
@@ -336,13 +363,16 @@ bool LaunchProcess(const string16& cmdline,
                             enviroment_block, NULL, &startup_info,
                             process_info.Receive());
     DestroyEnvironmentBlock(enviroment_block);
-    if (!launched)
+    if (!launched) {
+      DPLOG(ERROR);
       return false;
+    }
   } else {
     if (!CreateProcess(NULL,
                        const_cast<wchar_t*>(cmdline.c_str()), NULL, NULL,
                        options.inherit_handles, flags, NULL, NULL,
                        &startup_info, process_info.Receive())) {
+      DPLOG(ERROR);
       return false;
     }
   }
@@ -393,8 +423,7 @@ bool KillProcessById(ProcessId process_id, int exit_code, bool wait) {
                                FALSE,  // Don't inherit handle
                                process_id);
   if (!process) {
-    DLOG(ERROR) << "Unable to open process " << process_id << " : "
-                << GetLastError();
+    DLOG_GETLASTERROR(ERROR) << "Unable to open process " << process_id;
     return false;
   }
   bool ret = KillProcess(process, exit_code, wait);
@@ -477,9 +506,9 @@ bool KillProcess(ProcessHandle process, int exit_code, bool wait) {
   if (result && wait) {
     // The process may not end immediately due to pending I/O
     if (WAIT_OBJECT_0 != WaitForSingleObject(process, 60 * 1000))
-      DLOG(ERROR) << "Error waiting for process exit: " << GetLastError();
+      DLOG_GETLASTERROR(ERROR) << "Error waiting for process exit";
   } else if (!result) {
-    DLOG(ERROR) << "Unable to terminate process: " << GetLastError();
+    DLOG_GETLASTERROR(ERROR) << "Unable to terminate process";
   }
   return result;
 }
@@ -488,7 +517,7 @@ TerminationStatus GetTerminationStatus(ProcessHandle handle, int* exit_code) {
   DWORD tmp_exit_code = 0;
 
   if (!::GetExitCodeProcess(handle, &tmp_exit_code)) {
-    NOTREACHED();
+    DLOG_GETLASTERROR(FATAL) << "GetExitCodeProcess() failed";
     if (exit_code) {
       // This really is a random number.  We haven't received any
       // information about the exit code, presumably because this
@@ -513,10 +542,14 @@ TerminationStatus GetTerminationStatus(ProcessHandle handle, int* exit_code) {
       return TERMINATION_STATUS_STILL_RUNNING;
     }
 
-    DCHECK_EQ(WAIT_OBJECT_0, wait_result);
+    if (wait_result == WAIT_FAILED) {
+      DLOG_GETLASTERROR(ERROR) << "WaitForSingleObject() failed";
+    } else {
+      DCHECK_EQ(WAIT_OBJECT_0, wait_result);
 
-    // Strange, the process used 0x103 (STILL_ACTIVE) as exit code.
-    NOTREACHED();
+      // Strange, the process used 0x103 (STILL_ACTIVE) as exit code.
+      NOTREACHED();
+    }
 
     return TERMINATION_STATUS_ABNORMAL_TERMINATION;
   }
@@ -894,7 +927,6 @@ bool ProcessMetrics::CalculateFreeMemory(FreeMBytes* free) const {
       return false;
     if (info.State == MEM_FREE) {
       accumulated += info.RegionSize;
-      UINT_PTR end = scan + info.RegionSize;
       if (info.RegionSize > largest.RegionSize)
         largest = info;
     }
@@ -924,7 +956,7 @@ bool EnableLowFragmentationHeap() {
   // Gives us some extra space in the array in case a thread is creating heaps
   // at the same time we're querying them.
   static const int MARGIN = 8;
-  scoped_array<HANDLE> heaps(new HANDLE[number_heaps + MARGIN]);
+  scoped_ptr<HANDLE[]> heaps(new HANDLE[number_heaps + MARGIN]);
   number_heaps = GetProcessHeaps(number_heaps + MARGIN, heaps.get());
   if (!number_heaps)
     return false;
@@ -948,14 +980,6 @@ void EnableTerminationOnHeapCorruption() {
 
 void EnableTerminationOnOutOfMemory() {
   std::set_new_handler(&OnNoMemory);
-}
-
-bool EnableInProcessStackDumping() {
-  // Add stack dumping support on exception on windows. Similar to OS_POSIX
-  // signal() handling in process_util_posix.cc.
-  g_previous_filter = SetUnhandledExceptionFilter(&StackDumpExceptionFilter);
-  AttachToConsole();
-  return true;
 }
 
 void RaiseProcessToHighPriority() {
