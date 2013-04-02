@@ -18,7 +18,6 @@ import logging
 import optparse
 import os
 import re
-import shutil
 import subprocess
 import sys
 
@@ -52,15 +51,16 @@ class NativeTestApkGenerator(object):
                       'native_test_apk.xml',
                       'res/values/strings.xml']
 
-  def __init__(self, native_library, jars, output_directory, target_abi):
+  def __init__(self, native_library, strip_binary, output_directory,
+               target_abi):
     self._native_library = native_library
-    self._jars = jars
+    self._strip_binary = strip_binary
     self._output_directory = os.path.abspath(output_directory)
     self._target_abi = target_abi
     self._root_name = None
     if self._native_library:
       self._root_name = self._LibraryRoot()
-    logging.warn('root name: %s', self._root_name)
+    logging.info('root name: %s', self._root_name)
 
   def _LibraryRoot(self):
     """Return a root name for a shared library.
@@ -88,7 +88,7 @@ class NativeTestApkGenerator(object):
       os.makedirs(destdir)
     elif not '/out/' in destdir:
       raise Exception('Unbelievable output directory; bailing for safety')
-    logging.warning('rsync %s --> %s', self._SOURCE_FILES, destdir)
+    logging.info('rsync %s --> %s', self._SOURCE_FILES, destdir)
     logging.info(cmd_helper.GetCmdOutput(
         ['rsync', '-aRv', '--delete', '--exclude', '.svn'] +
         self._SOURCE_FILES + [destdir], cwd=srcdir))
@@ -100,7 +100,7 @@ class NativeTestApkGenerator(object):
     """
     if not self._root_name:
       return
-    logging.warn('Replacing "replaceme" with ' + self._root_name)
+    logging.info('Replacing "replaceme" with ' + self._root_name)
     for f in self._REPLACEME_FILES:
       dest = os.path.join(self._output_directory, f)
       contents = open(dest).read()
@@ -108,34 +108,23 @@ class NativeTestApkGenerator(object):
       dest = dest.replace('replaceme', self._root_name)  # update the filename!
       open(dest, 'w').write(contents)
 
-  def _CopyLibraryAndJars(self):
-    """Copy the shlib and jars into the apk source tree (if relevant)."""
+  def _CopyLibrary(self):
+    """Copy the shlib into the apk source tree (if relevant)."""
     if self._native_library:
       destdir = os.path.join(self._output_directory, 'libs/' + self._target_abi)
       if not os.path.exists(destdir):
         os.makedirs(destdir)
       dest = os.path.join(destdir, os.path.basename(self._native_library))
-      logging.warn('strip %s --> %s', self._native_library, dest)
-      strip = os.environ['STRIP']
+      logging.info('strip %s --> %s', self._native_library, dest)
       cmd_helper.RunCmd(
-          [strip, '--strip-unneeded', self._native_library, '-o', dest])
-    if self._jars:
-      destdir = os.path.join(self._output_directory, 'java/libs')
-      if not os.path.exists(destdir):
-        os.makedirs(destdir)
-      for jar in self._jars:
-        dest = os.path.join(destdir, os.path.basename(jar))
-        logging.warn('%s --> %s', jar, dest)
-        shutil.copyfile(jar, dest)
+          [self._strip_binary, '--strip-unneeded', self._native_library, '-o',
+           dest])
 
-  def CreateBundle(self, sdk_build):
+  def CreateBundle(self):
     """Create the apk bundle source and assemble components."""
-    if not sdk_build:
-      self._SOURCE_FILES.append('Android.mk')
-      self._REPLACEME_FILES.append('Android.mk')
     self._CopyTemplateFilesAndClearDir()
     self._ReplaceStrings()
-    self._CopyLibraryAndJars()
+    self._CopyLibrary()
 
   def Compile(self, ant_args):
     """Build the generated apk with ant.
@@ -149,24 +138,13 @@ class NativeTestApkGenerator(object):
     cmd.append("-DAPP_ABI=" + self._target_abi)
     cmd.extend(['-buildfile',
                 os.path.join(self._output_directory, 'native_test_apk.xml')])
-    logging.warn(cmd)
+    logging.info(cmd)
     p = subprocess.Popen(cmd, stderr=subprocess.STDOUT)
     (stdout, _) = p.communicate()
-    logging.warn(stdout)
+    logging.info(stdout)
     if p.returncode != 0:
       logging.error('Ant return code %d', p.returncode)
       sys.exit(p.returncode)
-
-  def CompileAndroidMk(self):
-    """Build the generated apk within Android source tree using Android.mk."""
-    try:
-      import compile_android_mk  # pylint: disable=F0401
-    except:
-      raise AssertionError('Not in Android source tree. '
-                           'Please use --ant-compile.')
-    compile_android_mk.CompileAndroidMk(self._native_library,
-                                        self._output_directory)
-
 
 def main(argv):
   parser = optparse.OptionParser()
@@ -180,17 +158,14 @@ def main(argv):
                     help='Output directory for generated files.')
   parser.add_option('--app_abi', default='armeabi',
                     help='ABI for native shared library')
-  parser.add_option('--sdk-build', type='int', default=1,
-                    help='Unless set to 0, build the generated apk with ant. '
-                         'Otherwise assume compiling within the Android '
-                         'source tree using Android.mk.')
-  # FIXME(beverloo): Remove --ant-compile when all users adopted.
-  parser.add_option('--ant-compile', action='store_true',
-                    help=('If specified, build the generated apk with ant. '
-                          'Otherwise assume compiling within the Android '
-                          'source tree using Android.mk.'))
+  parser.add_option('--strip-binary',
+                    help='Binary to use for stripping the native libraries.')
   parser.add_option('--ant-args', action='append',
                     help='extra args for ant')
+  parser.add_option('--stamp-file',
+                    help='Path to file to touch on success.')
+  parser.add_option('--no-compile', action='store_true',
+                    help='Use this flag to disable ant compilation.')
 
   options, _ = parser.parse_args(argv)
 
@@ -203,23 +178,25 @@ def main(argv):
   if options.verbose:
     logging.basicConfig(level=logging.DEBUG, format=' %(message)s')
 
-  # Remove all quotes from the jars string
-  jar_list = []
-  if options.jars:
-    jar_list = options.jars.replace('"', '').split()
+  if not options.strip_binary:
+    options.strip_binary = os.getenv('STRIP')
+    if not options.strip_binary:
+      raise Exception('No tool for stripping the libraries has been supplied')
 
   ntag = NativeTestApkGenerator(native_library=options.native_library,
-                                jars=jar_list,
+                                strip_binary=options.strip_binary,
                                 output_directory=options.output,
                                 target_abi=options.app_abi)
-  ntag.CreateBundle(options.sdk_build or options.ant_compile)
 
-  if options.sdk_build or options.ant_compile:
+  ntag.CreateBundle()
+  if not options.no_compile:
     ntag.Compile(options.ant_args)
-  else:
-    ntag.CompileAndroidMk()
 
-  logging.warn('COMPLETE.')
+  if options.stamp_file:
+    with file(options.stamp_file, 'a'):
+      os.utime(options.stamp_file, None)
+
+  logging.info('COMPLETE.')
 
 if __name__ == '__main__':
   sys.exit(main(sys.argv))

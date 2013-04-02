@@ -11,18 +11,20 @@ import android.os.Environment;
 import android.os.Handler;
 import android.util.Log;
 
+import org.chromium.base.ChromiumActivity;
 import org.chromium.base.PathUtils;
+import org.chromium.base.SystemMonitor;
 
 import java.io.File;
 
 // Android's NativeActivity is mostly useful for pure-native code.
 // Our tests need to go up to our own java classes, which is not possible using
 // the native activity class loader.
-public class ChromeNativeTestActivity extends Activity {
-    private final String TAG = "ChromeNativeTestActivity";
-    private final String EXTRA_RUN_IN_SUB_THREAD = "RunInSubThread";
+public class ChromeNativeTestActivity extends ChromiumActivity {
+    private static final String TAG = "ChromeNativeTestActivity";
+    private static final String EXTRA_RUN_IN_SUB_THREAD = "RunInSubThread";
     // We post a delayed task to run tests so that we do not block onCreate().
-    private static long RUN_TESTS_DELAY_IN_MS = 300;
+    private static final long RUN_TESTS_DELAY_IN_MS = 300;
 
     // Name of our shlib as obtained from a string resource.
     private String mLibrary;
@@ -40,42 +42,35 @@ public class ChromeNativeTestActivity extends Activity {
         // Needed by path_utils_unittest.cc
         PathUtils.setPrivateDataDirectorySuffix("chrome");
 
-        try {
-            loadLibrary();
-            Bundle extras = this.getIntent().getExtras();
-            if (extras != null && extras.containsKey(EXTRA_RUN_IN_SUB_THREAD)) {
-                // Create a new thread and run tests on it.
-                new Thread() {
-                    @Override
-                    public void run() {
-                        runTests();
-                    }
-                }.start();
-            } else {
-                // Post a task to run the tests. This allows us to not block
-                // onCreate and still run tests on the main thread.
-                new Handler().postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        runTests();
-                    }
-                }, RUN_TESTS_DELAY_IN_MS);
-            }
-        } catch (UnsatisfiedLinkError e) {
-            Log.e(TAG, "Unable to load lib" + mLibrary + ".so: " + e);
-            nativeTestFailed();
-            throw e;
+        // Needed by system_monitor_unittest.cc
+        SystemMonitor.createForTests(this);
+
+
+        loadLibrary();
+        Bundle extras = this.getIntent().getExtras();
+        if (extras != null && extras.containsKey(EXTRA_RUN_IN_SUB_THREAD)) {
+            // Create a new thread and run tests on it.
+            new Thread() {
+                @Override
+                public void run() {
+                    runTests();
+                }
+            }.start();
+        } else {
+            // Post a task to run the tests. This allows us to not block
+            // onCreate and still run tests on the main thread.
+            new Handler().postDelayed(new Runnable() {
+                  @Override
+                  public void run() {
+                      runTests();
+                  }
+              }, RUN_TESTS_DELAY_IN_MS);
         }
     }
 
     private void runTests() {
-        Log.d(TAG, ">>nativeRunTests");
         // This directory is used by build/android/pylib/test_package_apk.py.
-        File filesDir = new File(Environment.getExternalStorageDirectory(),
-                                 "native_tests/");
-        filesDir.mkdirs();
-        nativeRunTests(filesDir.getAbsolutePath(), getApplicationContext());
-        Log.d(TAG, "<<nativeRunTests");
+        nativeRunTests(getFilesDir().getAbsolutePath(), getApplicationContext());
     }
 
     // Signal a failure of the native test loader to python scripts
@@ -85,7 +80,7 @@ public class ChromeNativeTestActivity extends Activity {
         Log.e(TAG, "[ RUNNER_FAILED ] could not load native library");
     }
 
-    private void loadLibrary() throws UnsatisfiedLinkError {
+    private void loadLibrary() {
         Log.i(TAG, "loading: " + mLibrary);
         System.loadLibrary(mLibrary);
         Log.i(TAG, "loaded: " + mLibrary);

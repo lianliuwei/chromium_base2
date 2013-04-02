@@ -12,20 +12,15 @@
           'type': 'none',
           'dependencies': [
             'native_test_native_code',
+            '<(DEPTH)/base/base.gyp:base_java',
           ],
           'actions': [
-            {
-              'action_name': 'copy_base_jar',
-              'inputs': ['<(PRODUCT_DIR)/lib.java/chromium_base.jar'],
-              'outputs': ['<(PRODUCT_DIR)/replaceme_apk/java/libs/chromium_base.jar'],
-              'action': ['cp', '<@(_inputs)', '<@(_outputs)'],
-            },
             {
               'action_name': 'native_test_apk',
               'inputs': [
                 '<(DEPTH)/testing/android/native_test_apk.xml',
                 '<!@(find <(DEPTH)/testing/android -name "*.java")',
-                '<(PRODUCT_DIR)/replaceme_apk/java/libs/chromium_base.jar',
+                '>@(input_jars_paths)',
                 'native_test_launcher.cc'
               ],
               'outputs': [
@@ -37,7 +32,7 @@
                 '<(PRODUCT_DIR)/replaceme_apk/replaceme-debug.apk',
               ],
               'action': [
-                'ant',
+                'ant', '-q',
                 # TODO: All of these paths are absolute paths right now, while
                 # we really should be using relative paths for anything that is
                 # checked in to the Chromium tree (among which the SDK).
@@ -46,8 +41,9 @@
                 '-DANDROID_SDK_ROOT=<(android_sdk_root)',
                 '-DANDROID_SDK_TOOLS=<(android_sdk_tools)',
                 '-DANDROID_SDK_VERSION=<(android_sdk_version)',
-                '-DANDROID_TOOLCHAIN=<(android_toolchain)',
+                '-DANDROID_GDBSERVER=<(android_gdbserver)',
                 '-DCHROMIUM_SRC=<(ant_build_out)/../..',
+                '-DINPUT_JARS_PATHS=>(input_jars_paths)',
                 '-buildfile',
                 '<(DEPTH)/testing/android/native_test_apk.xml',
               ]
@@ -73,6 +69,7 @@
             '../../base/base.gyp:test_support_base',
             '../gtest.gyp:gtest',
             'native_test_jni_headers',
+            'native_test_util',
           ],
         },
         {
@@ -82,7 +79,7 @@
             'java/src/org/chromium/native_test/ChromeNativeTestActivity.java'
           ],
           'variables': {
-            'jni_gen_dir': 'testing',
+            'jni_gen_package': 'testing',
           },
           'includes': [ '../../build/jni_generator.gypi' ],
           # So generated jni headers can be found by targets that
@@ -92,6 +89,17 @@
               '<(SHARED_INTERMEDIATE_DIR)',
             ],
           },
+        },
+        {
+          'target_name': 'native_test_util',
+          'type': 'static_library',
+          'sources': [
+            'native_test_util.cc',
+            'native_test_util.h',
+          ],
+          'dependencies': [
+            '../../base/base.gyp:base',
+          ],
         },
       ],
     }]
