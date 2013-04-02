@@ -23,22 +23,22 @@ class DeviceStatsMonitor(object):
       hz: Frequency at which to sample device stats.
   """
 
-  DEVICE_PATH = '/data/local/tmp/device_stats_monitor'
-  HOST_PATH = os.path.abspath(os.path.join(
-      constants.CHROME_DIR, 'out', 'Release', 'device_stats_monitor'))
-  PROFILE_PATH = '/sdcard/Download/device_stats_monitor.profile'
+  DEVICE_PATH = constants.TEST_EXECUTABLE_DIR + '/device_stats_monitor'
+  PROFILE_PATH = (constants.DEVICE_PERF_OUTPUT_DIR +
+      '/device_stats_monitor.profile')
   RESULT_VIEWER_PATH = os.path.abspath(os.path.join(
       os.path.dirname(os.path.realpath(__file__)), 'device_stats_monitor.html'))
 
-  def __init__(self, adb, hz):
+  def __init__(self, adb, hz, build_type):
     self._adb = adb
-    self._adb.PushIfNeeded(DeviceStatsMonitor.HOST_PATH,
-                           DeviceStatsMonitor.DEVICE_PATH)
+    host_path = os.path.abspath(os.path.join(
+        constants.CHROME_DIR, 'out', build_type, 'device_stats_monitor'))
+    self._adb.PushIfNeeded(host_path, DeviceStatsMonitor.DEVICE_PATH)
     self._hz = hz
 
   def Start(self):
     """Starts device stats monitor on the device."""
-    self._adb.SetFileContents(DeviceStatsMonitor.PROFILE_PATH, '')
+    self._adb.SetProtectedFileContents(DeviceStatsMonitor.PROFILE_PATH, '')
     self._process = subprocess.Popen(
         ['adb', 'shell', '%s --hz=%d %s' % (
             DeviceStatsMonitor.DEVICE_PATH, self._hz,

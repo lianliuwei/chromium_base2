@@ -1,0 +1,76 @@
+# List of suppressions
+# Timeouts
+Http/MediaTest.*
+File/MediaTest.*
+ExternalClearKey/EncryptedMediaTest.*
+ClearKey/EncryptedMediaTest.*
+WorkerTest.*
+MediaTest.*
+AudioLayoutTest.*
+WebGLConformanceTest.*
+MessagePortTest.Tests
+EncryptedMediaTest.InvalidKeySystem
+IndexedDBBrowserTest.DoesntHangTest
+IndexedDBBrowserTest.NullKeyPathPersistence
+IndexedDBBrowserTest.VersionChangeCrashResilience
+IndexedDBBrowserTest.ValueSizeTest
+IndexedDBBrowserTest.ConnectionsClosedOnTabClose
+CrossPlatformAccessibilityBrowserTest.*
+DatabaseTest.*
+
+# Failures
+WorkerLayoutTest.*
+MediaLayoutTest.*
+IndexedDBLayoutTest.*
+RenderViewHostTest.BaseURLParam
+OffTheRecordClipboardTest.ClearContentData
+FileSystemLayoutTest.*
+GpuPixelBrowserTest.*
+BlobLayoutTest.XhrResponseBlob
+FileSystemBrowserTestWithLowQuota.QuotaTest
+BlobLayoutTest.*
+ChildProcessSecurityPolicyInProcessBrowserTest.NoLeak
+
+# Crashes
+WorkerXHRHttpLayoutTest.Tests
+
+# Needs to start the test server before
+# BrowserTestBase::SetUpCommandLine is called, but on Android
+# the test server needs to be started in SetUpOnMainThread().
+SecurityExploitBrowserTest.SetWebUIProperty
+
+# Plugins are not supported.
+BrowserPluginHostTest.*
+BrowserPluginTest.*
+PluginTest.*
+
+# http://crbug.com/187500
+RenderViewImplTest.*
+RendererAccessibilityTest.EditableTextModeFocusNotifications
+RendererAccessibilityTest.SendFullAccessibilityTreeOnReload
+RendererAccessibilityTest.HideAccessibilityObject
+RendererAccessibilityTest.ShowAccessibilityObject
+RenderWidgetTest.OnMsgPaintAtSize
+PasswordFormConversionUtilsTest.ValidWebFormElementToPasswordForm
+PasswordFormConversionUtilsTest.InvalidWebFormElementToPasswordForm
+
+# Multiple test servers support: http://crbug/187570
+RenderViewHostManagerTest.*
+
+# http://crbug.com/215894
+DownloadContentTest.ResumeInterruptedDownload
+DownloadContentTest.ResumeInterruptedDownloadNoRange
+DownloadContentTest.ResumeInterruptedDownloadNoVerifiers
+DownloadContentTest.ResumeInterruptedDownloadBadPrecondition
+DownloadContentTest.ResumeWithDeletedFile
+
+# http://crbug.com/181069
+WebrtcBrowserTest.CanSetupVideoCall
+WebrtcBrowserTest.CanSetupAudioAndVideoCall
+WebrtcBrowserTest.CanSetupAudioAndVideoCallWithoutMsidAndBundle
+WebrtcBrowserTest.CallWithDataOnly
+WebrtcBrowserTest.CallWithDataAndMedia
+WebrtcBrowserTest.CanMakeEmptyCallThenAddStreamsAndRenegotiate
+
+# http://crbug.com/224134
+RenderWidgetHostBrowserTest.GetSnapshotFromRendererTest
