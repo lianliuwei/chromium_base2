@@ -23,4 +23,10 @@ deps = {
       Var('git_url') + '/external/skia/src.git@f1666deb4a697135c9219600a200bc494a109d69',
   'googleurl':
       Var('git_url') + '/external/google-url.git@8debb9b26bab1b66e9b28a58447338eca544765d',
+  'third_party/libjpeg_turbo':
+      Var('git_url') + '/chromium/deps/libjpeg_turbo.git@82ce8a6d4ebe12a177c0c3597192f2b4f09e81c3',
+  'third_party/sfntly/cpp/src':
+      Var('git_url') + '/external/sfntly/cpp/src.git@cfb2f1743f0169ad8d01035458617bce97107539',
+  'third_party/yasm/binaries':
+      Var('git_url') + '/chromium/deps/yasm/binaries.git@52f9b3f4b0aa06da24ef8b123058bb61ee468881',
 }
