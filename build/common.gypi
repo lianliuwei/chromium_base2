@@ -2239,23 +2239,23 @@
       'x64_Base': {
         'abstract': 1,
         'msvs_configuration_platform': 'x64',
-        'msvs_settings': {
-          'VCLinkerTool': {
-            'TargetMachine': '17', # x86 - 64
-            'AdditionalLibraryDirectories!':
-              ['<(windows_sdk_path)/Lib/win8/um/x86'],
-            'AdditionalLibraryDirectories':
-              ['<(windows_sdk_path)/Lib/win8/um/x64'],
-            # Doesn't exist x64 SDK. Should use oleaut32 in any case.
-            'IgnoreDefaultLibraryNames': [ 'olepro32.lib' ],
-          },
-          'VCLibrarianTool': {
-            'AdditionalLibraryDirectories!':
-              ['<(windows_sdk_path)/Lib/win8/um/x86'],
-            'AdditionalLibraryDirectories':
-              ['<(windows_sdk_path)/Lib/win8/um/x64'],
-          },
-        },
+ #       'msvs_settings': {
+ #         'VCLinkerTool': {
+ #           'TargetMachine': '17', # x86 - 64
+ #           'AdditionalLibraryDirectories!':
+ #             ['<(windows_sdk_path)/Lib/win8/um/x86'],
+ #           'AdditionalLibraryDirectories':
+ #             ['<(windows_sdk_path)/Lib/win8/um/x64'],
+ #           # Doesn't exist x64 SDK. Should use oleaut32 in any case.
+ #           'IgnoreDefaultLibraryNames': [ 'olepro32.lib' ],
+ #         },
+ #         'VCLibrarianTool': {
+ #           'AdditionalLibraryDirectories!':
+ #             ['<(windows_sdk_path)/Lib/win8/um/x86'],
+ #           'AdditionalLibraryDirectories':
+ #            ['<(windows_sdk_path)/Lib/win8/um/x64'],
+ #         },
+ #       },
       },
       'Debug_Base': {
         'abstract': 1,
@@ -3944,9 +3944,9 @@
           }],
         ],
         'msvs_system_include_dirs': [
-          '<(windows_sdk_path)/Include/shared',
-          '<(windows_sdk_path)/Include/um',
-          '<(windows_sdk_path)/Include/winrt',
+ #         '<(windows_sdk_path)/Include/shared',
+ #         '<(windows_sdk_path)/Include/um',
+ #         '<(windows_sdk_path)/Include/winrt',
           '$(VSInstallDir)/VC/atlmfc/include',
         ],
         'msvs_cygwin_dirs': ['<(DEPTH)/third_party/cygwin'],
@@ -3977,9 +3977,9 @@
           },
           'VCLibrarianTool': {
             'AdditionalOptions': ['/ignore:4221'],
-            'AdditionalLibraryDirectories': [
-              '<(windows_sdk_path)/Lib/win8/um/x86',
-            ],
+ #           'AdditionalLibraryDirectories': [
+ #             '<(windows_sdk_path)/Lib/win8/um/x86',
+ #           ],
           },
           'VCLinkerTool': {
             'AdditionalDependencies': [
@@ -3994,9 +3994,9 @@
               'winmm.lib',
               'shlwapi.lib',
             ],
-            'AdditionalLibraryDirectories': [
-              '<(windows_sdk_path)/Lib/win8/um/x86',
-            ],
+ #           'AdditionalLibraryDirectories': [
+ #             '<(windows_sdk_path)/Lib/win8/um/x86',
+ #           ],
             'GenerateDebugInformation': 'true',
             'MapFileName': '$(OutDir)\\$(TargetName).map',
             'ImportLibrary': '$(OutDir)\\lib\\$(TargetName).lib',
