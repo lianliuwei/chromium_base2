@@ -58,7 +58,7 @@
       'conditions': [
         ["test_isolation_outdir==''", {
           'action': [
-            'python',
+            '<(DEPTH)/setup_env.bat&&python',
             '<(DEPTH)/tools/swarm_client/isolate.py',
             '<(test_isolation_mode)',
             # GYP will eliminate duplicate arguments so '<(PRODUCT_DIR)' cannot
@@ -75,7 +75,7 @@
           ],
         }, {
           'action': [
-            'python',
+            '<(DEPTH)/setup_env.bat&&python',
             '<(DEPTH)/tools/swarm_client/isolate.py',
             '<(test_isolation_mode)',
             '--outdir', '<(test_isolation_outdir)',
