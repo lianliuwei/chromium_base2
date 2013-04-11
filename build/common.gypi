@@ -3822,6 +3822,8 @@
     }],  # OS=="ios"
     ['OS=="win"', {
       'target_defaults': {
+      # no using cygwin method in chromium
+      'msvs_cygwin_shell': 0,
         'defines': [
           '_WIN32_WINNT=0x0602',
           'WINVER=0x0602',
