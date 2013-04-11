@@ -56,18 +56,18 @@
 #include "googleurl/src/url_canon.h"
 #include "googleurl/src/url_canon_ip.h"
 #include "googleurl/src/url_parse.h"
-#include "grit/net_resources.h"
+//#include "grit/net_resources.h"
 #if defined(OS_ANDROID)
 #include "net/android/network_library.h"
 #endif
-#include "net/base/dns_util.h"
+//#include "net/base/dns_util.h"
 #include "net/base/escape.h"
-#include "net/base/mime_util.h"
-#include "net/base/net_module.h"
+//#include "net/base/mime_util.h"
+//#include "net/base/net_module.h"
 #if defined(OS_WIN)
-#include "net/base/winsock_init.h"
+//#include "net/base/winsock_init.h"
 #endif
-#include "net/http/http_content_disposition.h"
+//#include "net/http/http_content_disposition.h"
 #include "third_party/icu/public/common/unicode/uidna.h"
 #include "third_party/icu/public/common/unicode/uniset.h"
 #include "third_party/icu/public/common/unicode/uscript.h"
@@ -870,18 +870,20 @@ void EnsureSafeExtension(const std::string& mime_type,
     // TODO(asanka): Remove this ScopedAllowIO once all callers have switched
     // over to IO safe threads.
     base::ThreadRestrictions::ScopedAllowIO allow_io;
-    net::GetPreferredExtensionForMimeType(mime_type, &preferred_mime_extension);
-    net::GetExtensionsForMimeType(mime_type, &all_mime_extensions);
-    // If the existing extension is in the list of valid extensions for the
-    // given type, use it. This avoids doing things like pointlessly renaming
-    // "foo.jpg" to "foo.jpeg".
-    if (std::find(all_mime_extensions.begin(),
-                  all_mime_extensions.end(),
-                  extension) != all_mime_extensions.end()) {
-      // leave |extension| alone
-    } else if (!preferred_mime_extension.empty()) {
-      extension = preferred_mime_extension;
-    }
+    // os_exchange_data_privider_win.cc always call with mine_type = ""
+    // so this don't need.
+    //net::GetPreferredExtensionForMimeType(mime_type, &preferred_mime_extension);
+    //net::GetExtensionsForMimeType(mime_type, &all_mime_extensions);
+    //// If the existing extension is in the list of valid extensions for the
+    //// given type, use it. This avoids doing things like pointlessly renaming
+    //// "foo.jpg" to "foo.jpeg".
+    //if (std::find(all_mime_extensions.begin(),
+    //              all_mime_extensions.end(),
+    //              extension) != all_mime_extensions.end()) {
+    //  // leave |extension| alone
+    //} else if (!preferred_mime_extension.empty()) {
+    //  extension = preferred_mime_extension;
+    //}
   }
 
 #if defined(OS_WIN)
@@ -1006,23 +1008,23 @@ std::string CanonicalizeHost(const std::string& host,
   return canon_host;
 }
 
-std::string GetDirectoryListingHeader(const base::string16& title) {
-  static const base::StringPiece header(
-      NetModule::GetResource(IDR_DIR_HEADER_HTML));
-  // This can be null in unit tests.
-  DLOG_IF(WARNING, header.empty()) <<
-      "Missing resource: directory listing header";
-
-  std::string result;
-  if (!header.empty())
-    result.assign(header.data(), header.size());
-
-  result.append("<script>start(");
-  base::JsonDoubleQuote(title, true, &result);
-  result.append(");</script>\n");
-
-  return result;
-}
+//std::string GetDirectoryListingHeader(const base::string16& title) {
+//  static const base::StringPiece header(
+//      NetModule::GetResource(IDR_DIR_HEADER_HTML));
+//  // This can be null in unit tests.
+//  DLOG_IF(WARNING, header.empty()) <<
+//      "Missing resource: directory listing header";
+//
+//  std::string result;
+//  if (!header.empty())
+//    result.assign(header.data(), header.size());
+//
+//  result.append("<script>start(");
+//  base::JsonDoubleQuote(title, true, &result);
+//  result.append(");</script>\n");
+//
+//  return result;
+//}
 
 inline bool IsHostCharAlpha(char c) {
   // We can just check lowercase because uppercase characters have already been
@@ -1158,11 +1160,13 @@ base::string16 GetSuggestedFilename(const GURL& url,
   std::string filename;  // In UTF-8
   bool overwrite_extension = false;
 
-  // Try to extract a filename from content-disposition first.
-  if (!content_disposition.empty()) {
-    HttpContentDisposition header(content_disposition, referrer_charset);
-    filename = header.filename();
-  }
+  // NOTE: os_exchang_data_privider_win.cc content_disposition always ""
+  // so commit it.
+  //// Try to extract a filename from content-disposition first.
+  //if (!content_disposition.empty()) {
+  //  HttpContentDisposition header(content_disposition, referrer_charset);
+  //  filename = header.filename();
+  //}
 
   // Then try to use the suggested name.
   if (filename.empty() && !suggested_name.empty())
@@ -1460,20 +1464,20 @@ std::string IPAddressToStringWithPort(const IPAddressNumber& addr,
   return IPAddressToStringWithPort(&addr.front(), addr.size(), port);
 }
 
-std::string GetHostName() {
-#if defined(OS_WIN)
-  EnsureWinsockInit();
-#endif
-
-  // Host names are limited to 255 bytes.
-  char buffer[256];
-  int result = gethostname(buffer, sizeof(buffer));
-  if (result != 0) {
-    DVLOG(1) << "gethostname() failed with " << result;
-    buffer[0] = '\0';
-  }
-  return std::string(buffer);
-}
+//std::string GetHostName() {
+//#if defined(OS_WIN)
+//  EnsureWinsockInit();
+//#endif
+//
+//  // Host names are limited to 255 bytes.
+//  char buffer[256];
+//  int result = gethostname(buffer, sizeof(buffer));
+//  if (result != 0) {
+//    DVLOG(1) << "gethostname() failed with " << result;
+//    buffer[0] = '\0';
+//  }
+//  return std::string(buffer);
+//}
 
 void GetIdentityFromURL(const GURL& url,
                         base::string16* username,
@@ -1484,9 +1488,9 @@ void GetIdentityFromURL(const GURL& url,
   *password = UnescapeAndDecodeUTF8URLComponent(url.password(), flags, NULL);
 }
 
-std::string GetHostOrSpecFromURL(const GURL& url) {
-  return url.has_host() ? TrimEndingDot(url.host()) : url.spec();
-}
+//std::string GetHostOrSpecFromURL(const GURL& url) {
+//  return url.has_host() ? TrimEndingDot(url.host()) : url.spec();
+//}
 
 void AppendFormattedHost(const GURL& url,
                          const std::string& languages,
@@ -1766,176 +1770,176 @@ ScopedPortException::~ScopedPortException() {
 
 namespace {
 
-const char* kFinalStatusNames[] = {
-  "Cannot create sockets",
-  "Can create sockets",
-  "Can't get addresses",
-  "Global ipv6 address missing",
-  "Global ipv6 address present",
-  "Interface array too short",
-  "Probing not supported",  // IPV6_SUPPORT_MAX
-};
-COMPILE_ASSERT(arraysize(kFinalStatusNames) == IPV6_SUPPORT_MAX + 1,
-               IPv6SupportStatus_name_count_mismatch);
-
-// TODO(jar): The following is a simple estimate of IPv6 support.  We may need
-// to do a test resolution, and a test connection, to REALLY verify support.
-IPv6SupportResult TestIPv6SupportInternal() {
-#if defined(OS_ANDROID)
-  // TODO: We should fully implement IPv6 probe once 'getifaddrs' API available;
-  // Another approach is implementing the similar feature by
-  // java.net.NetworkInterface through JNI.
-  NOTIMPLEMENTED();
-  return IPv6SupportResult(true, IPV6_SUPPORT_MAX, 0);
-#elif defined(OS_POSIX)
-  int test_socket = socket(AF_INET6, SOCK_STREAM, 0);
-  if (test_socket == -1)
-    return IPv6SupportResult(false, IPV6_CANNOT_CREATE_SOCKETS, errno);
-  close(test_socket);
-
-  // Check to see if any interface has a IPv6 address.
-  struct ifaddrs* interface_addr = NULL;
-  int rv = getifaddrs(&interface_addr);
-  if (rv != 0) {
-    // Don't yet block IPv6.
-    return IPv6SupportResult(true, IPV6_GETIFADDRS_FAILED, errno);
-  }
-
-  bool found_ipv6 = false;
-  for (struct ifaddrs* interface = interface_addr;
-       interface != NULL;
-       interface = interface->ifa_next) {
-    if (!(IFF_UP & interface->ifa_flags))
-      continue;
-    if (IFF_LOOPBACK & interface->ifa_flags)
-      continue;
-    struct sockaddr* addr = interface->ifa_addr;
-    if (!addr)
-      continue;
-    if (addr->sa_family != AF_INET6)
-      continue;
-    // Safe cast since this is AF_INET6.
-    struct sockaddr_in6* addr_in6 =
-        reinterpret_cast<struct sockaddr_in6*>(addr);
-    struct in6_addr* sin6_addr = &addr_in6->sin6_addr;
-    if (IN6_IS_ADDR_LOOPBACK(sin6_addr) || IN6_IS_ADDR_LINKLOCAL(sin6_addr))
-      continue;
-    found_ipv6 = true;
-    break;
-  }
-  freeifaddrs(interface_addr);
-  if (!found_ipv6)
-    return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, 0);
-
-  return IPv6SupportResult(true, IPV6_GLOBAL_ADDRESS_PRESENT, 0);
-#elif defined(OS_WIN)
-  EnsureWinsockInit();
-  SOCKET test_socket = socket(AF_INET6, SOCK_STREAM, 0);
-  if (test_socket == INVALID_SOCKET) {
-    return IPv6SupportResult(false,
-                             IPV6_CANNOT_CREATE_SOCKETS,
-                             WSAGetLastError());
-  }
-  closesocket(test_socket);
-
-  // Check to see if any interface has a IPv6 address.
-  // The GetAdaptersAddresses MSDN page recommends using a size of 15000 to
-  // avoid reallocation.
-  ULONG adapters_size = 15000;
-  scoped_ptr_malloc<IP_ADAPTER_ADDRESSES> adapters;
-  ULONG error;
-  int num_tries = 0;
-  do {
-    adapters.reset(
-        reinterpret_cast<PIP_ADAPTER_ADDRESSES>(malloc(adapters_size)));
-    // Return only unicast addresses.
-    error = GetAdaptersAddresses(AF_UNSPEC,
-                                 GAA_FLAG_SKIP_ANYCAST |
-                                 GAA_FLAG_SKIP_MULTICAST |
-                                 GAA_FLAG_SKIP_DNS_SERVER |
-                                 GAA_FLAG_SKIP_FRIENDLY_NAME,
-                                 NULL, adapters.get(), &adapters_size);
-    num_tries++;
-  } while (error == ERROR_BUFFER_OVERFLOW && num_tries <= 3);
-  if (error == ERROR_NO_DATA)
-    return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, error);
-  if (error != ERROR_SUCCESS) {
-    // Don't yet block IPv6.
-    return IPv6SupportResult(true, IPV6_GETIFADDRS_FAILED, error);
-  }
-
-  PIP_ADAPTER_ADDRESSES adapter;
-  for (adapter = adapters.get(); adapter; adapter = adapter->Next) {
-    if (adapter->OperStatus != IfOperStatusUp)
-      continue;
-    if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
-      continue;
-    PIP_ADAPTER_UNICAST_ADDRESS unicast_address;
-    for (unicast_address = adapter->FirstUnicastAddress;
-         unicast_address;
-         unicast_address = unicast_address->Next) {
-      if (unicast_address->Address.lpSockaddr->sa_family != AF_INET6)
-        continue;
-      // Safe cast since this is AF_INET6.
-      struct sockaddr_in6* addr_in6 = reinterpret_cast<struct sockaddr_in6*>(
-          unicast_address->Address.lpSockaddr);
-      struct in6_addr* sin6_addr = &addr_in6->sin6_addr;
-      if (IN6_IS_ADDR_LOOPBACK(sin6_addr) || IN6_IS_ADDR_LINKLOCAL(sin6_addr))
-        continue;
-      const uint8 kTeredoPrefix[] = { 0x20, 0x01, 0, 0 };
-      if (!memcmp(sin6_addr->s6_addr, kTeredoPrefix, arraysize(kTeredoPrefix)))
-        continue;
-      return IPv6SupportResult(true, IPV6_GLOBAL_ADDRESS_PRESENT, 0);
-    }
-  }
-
-  return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, 0);
-#else
-  NOTIMPLEMENTED();
-  return IPv6SupportResult(true, IPV6_SUPPORT_MAX, 0);
-#endif  // defined(various platforms)
-}
+//const char* kFinalStatusNames[] = {
+//  "Cannot create sockets",
+//  "Can create sockets",
+//  "Can't get addresses",
+//  "Global ipv6 address missing",
+//  "Global ipv6 address present",
+//  "Interface array too short",
+//  "Probing not supported",  // IPV6_SUPPORT_MAX
+//};
+//COMPILE_ASSERT(arraysize(kFinalStatusNames) == IPV6_SUPPORT_MAX + 1,
+//               IPv6SupportStatus_name_count_mismatch);
+//
+//// TODO(jar): The following is a simple estimate of IPv6 support.  We may need
+//// to do a test resolution, and a test connection, to REALLY verify support.
+//IPv6SupportResult TestIPv6SupportInternal() {
+//#if defined(OS_ANDROID)
+//  // TODO: We should fully implement IPv6 probe once 'getifaddrs' API available;
+//  // Another approach is implementing the similar feature by
+//  // java.net.NetworkInterface through JNI.
+//  NOTIMPLEMENTED();
+//  return IPv6SupportResult(true, IPV6_SUPPORT_MAX, 0);
+//#elif defined(OS_POSIX)
+//  int test_socket = socket(AF_INET6, SOCK_STREAM, 0);
+//  if (test_socket == -1)
+//    return IPv6SupportResult(false, IPV6_CANNOT_CREATE_SOCKETS, errno);
+//  close(test_socket);
+//
+//  // Check to see if any interface has a IPv6 address.
+//  struct ifaddrs* interface_addr = NULL;
+//  int rv = getifaddrs(&interface_addr);
+//  if (rv != 0) {
+//    // Don't yet block IPv6.
+//    return IPv6SupportResult(true, IPV6_GETIFADDRS_FAILED, errno);
+//  }
+//
+//  bool found_ipv6 = false;
+//  for (struct ifaddrs* interface = interface_addr;
+//       interface != NULL;
+//       interface = interface->ifa_next) {
+//    if (!(IFF_UP & interface->ifa_flags))
+//      continue;
+//    if (IFF_LOOPBACK & interface->ifa_flags)
+//      continue;
+//    struct sockaddr* addr = interface->ifa_addr;
+//    if (!addr)
+//      continue;
+//    if (addr->sa_family != AF_INET6)
+//      continue;
+//    // Safe cast since this is AF_INET6.
+//    struct sockaddr_in6* addr_in6 =
+//        reinterpret_cast<struct sockaddr_in6*>(addr);
+//    struct in6_addr* sin6_addr = &addr_in6->sin6_addr;
+//    if (IN6_IS_ADDR_LOOPBACK(sin6_addr) || IN6_IS_ADDR_LINKLOCAL(sin6_addr))
+//      continue;
+//    found_ipv6 = true;
+//    break;
+//  }
+//  freeifaddrs(interface_addr);
+//  if (!found_ipv6)
+//    return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, 0);
+//
+//  return IPv6SupportResult(true, IPV6_GLOBAL_ADDRESS_PRESENT, 0);
+//#elif defined(OS_WIN)
+//  EnsureWinsockInit();
+//  SOCKET test_socket = socket(AF_INET6, SOCK_STREAM, 0);
+//  if (test_socket == INVALID_SOCKET) {
+//    return IPv6SupportResult(false,
+//                             IPV6_CANNOT_CREATE_SOCKETS,
+//                             WSAGetLastError());
+//  }
+//  closesocket(test_socket);
+//
+//  // Check to see if any interface has a IPv6 address.
+//  // The GetAdaptersAddresses MSDN page recommends using a size of 15000 to
+//  // avoid reallocation.
+//  ULONG adapters_size = 15000;
+//  scoped_ptr_malloc<IP_ADAPTER_ADDRESSES> adapters;
+//  ULONG error;
+//  int num_tries = 0;
+//  do {
+//    adapters.reset(
+//        reinterpret_cast<PIP_ADAPTER_ADDRESSES>(malloc(adapters_size)));
+//    // Return only unicast addresses.
+//    error = GetAdaptersAddresses(AF_UNSPEC,
+//                                 GAA_FLAG_SKIP_ANYCAST |
+//                                 GAA_FLAG_SKIP_MULTICAST |
+//                                 GAA_FLAG_SKIP_DNS_SERVER |
+//                                 GAA_FLAG_SKIP_FRIENDLY_NAME,
+//                                 NULL, adapters.get(), &adapters_size);
+//    num_tries++;
+//  } while (error == ERROR_BUFFER_OVERFLOW && num_tries <= 3);
+//  if (error == ERROR_NO_DATA)
+//    return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, error);
+//  if (error != ERROR_SUCCESS) {
+//    // Don't yet block IPv6.
+//    return IPv6SupportResult(true, IPV6_GETIFADDRS_FAILED, error);
+//  }
+//
+//  PIP_ADAPTER_ADDRESSES adapter;
+//  for (adapter = adapters.get(); adapter; adapter = adapter->Next) {
+//    if (adapter->OperStatus != IfOperStatusUp)
+//      continue;
+//    if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+//      continue;
+//    PIP_ADAPTER_UNICAST_ADDRESS unicast_address;
+//    for (unicast_address = adapter->FirstUnicastAddress;
+//         unicast_address;
+//         unicast_address = unicast_address->Next) {
+//      if (unicast_address->Address.lpSockaddr->sa_family != AF_INET6)
+//        continue;
+//      // Safe cast since this is AF_INET6.
+//      struct sockaddr_in6* addr_in6 = reinterpret_cast<struct sockaddr_in6*>(
+//          unicast_address->Address.lpSockaddr);
+//      struct in6_addr* sin6_addr = &addr_in6->sin6_addr;
+//      if (IN6_IS_ADDR_LOOPBACK(sin6_addr) || IN6_IS_ADDR_LINKLOCAL(sin6_addr))
+//        continue;
+//      const uint8 kTeredoPrefix[] = { 0x20, 0x01, 0, 0 };
+//      if (!memcmp(sin6_addr->s6_addr, kTeredoPrefix, arraysize(kTeredoPrefix)))
+//        continue;
+//      return IPv6SupportResult(true, IPV6_GLOBAL_ADDRESS_PRESENT, 0);
+//    }
+//  }
+//
+//  return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, 0);
+//#else
+//  NOTIMPLEMENTED();
+//  return IPv6SupportResult(true, IPV6_SUPPORT_MAX, 0);
+//#endif  // defined(various platforms)
+//}
 
 }  // namespace
 
-IPv6SupportResult::IPv6SupportResult(bool ipv6_supported,
-                                     IPv6SupportStatus ipv6_support_status,
-                                     int os_error)
-                                     : ipv6_supported(ipv6_supported),
-                                       ipv6_support_status(ipv6_support_status),
-                                       os_error(os_error) {
-}
-
-base::Value* IPv6SupportResult::ToNetLogValue(
-    NetLog::LogLevel /* log_level */) const {
-  base::DictionaryValue* dict = new DictionaryValue();
-  dict->SetBoolean("ipv6_supported", ipv6_supported);
-  dict->SetString("ipv6_support_status",
-                  kFinalStatusNames[ipv6_support_status]);
-  if (os_error)
-    dict->SetInteger("os_error", os_error);
-  return dict;
-}
-
-IPv6SupportResult TestIPv6Support() {
-  IPv6SupportResult result = TestIPv6SupportInternal();
-
-  // Record UMA.
-  if (result.ipv6_support_status != IPV6_SUPPORT_MAX) {
-    static bool run_once = false;
-    if (!run_once) {
-      run_once = true;
-      UMA_HISTOGRAM_ENUMERATION("Net.IPv6Status",
-                                result.ipv6_support_status,
-                                IPV6_SUPPORT_MAX);
-    } else {
-      UMA_HISTOGRAM_ENUMERATION("Net.IPv6Status_retest",
-                                result.ipv6_support_status,
-                                IPV6_SUPPORT_MAX);
-    }
-  }
-  return result;
-}
+//IPv6SupportResult::IPv6SupportResult(bool ipv6_supported,
+//                                     IPv6SupportStatus ipv6_support_status,
+//                                     int os_error)
+//                                     : ipv6_supported(ipv6_supported),
+//                                       ipv6_support_status(ipv6_support_status),
+//                                       os_error(os_error) {
+//}
+//
+//base::Value* IPv6SupportResult::ToNetLogValue(
+//    NetLog::LogLevel /* log_level */) const {
+//  base::DictionaryValue* dict = new DictionaryValue();
+//  dict->SetBoolean("ipv6_supported", ipv6_supported);
+//  dict->SetString("ipv6_support_status",
+//                  kFinalStatusNames[ipv6_support_status]);
+//  if (os_error)
+//    dict->SetInteger("os_error", os_error);
+//  return dict;
+//}
+//
+//IPv6SupportResult TestIPv6Support() {
+//  IPv6SupportResult result = TestIPv6SupportInternal();
+//
+//  // Record UMA.
+//  if (result.ipv6_support_status != IPV6_SUPPORT_MAX) {
+//    static bool run_once = false;
+//    if (!run_once) {
+//      run_once = true;
+//      UMA_HISTOGRAM_ENUMERATION("Net.IPv6Status",
+//                                result.ipv6_support_status,
+//                                IPV6_SUPPORT_MAX);
+//    } else {
+//      UMA_HISTOGRAM_ENUMERATION("Net.IPv6Status_retest",
+//                                result.ipv6_support_status,
+//                                IPV6_SUPPORT_MAX);
+//    }
+//  }
+//  return result;
+//}
 
 bool HaveOnlyLoopbackAddresses() {
 #if defined(OS_ANDROID)

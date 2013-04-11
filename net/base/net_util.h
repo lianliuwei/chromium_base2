@@ -24,7 +24,7 @@
 #include "base/string16.h"
 #include "net/base/escape.h"
 #include "net/base/net_export.h"
-#include "net/base/net_log.h"
+//#include "net/base/net_log.h"
 
 class GURL;
 
@@ -156,7 +156,7 @@ NET_EXPORT std::string IPAddressToStringWithPort(
     const IPAddressNumber& addr, uint16 port);
 
 // Returns the hostname of the current system. Returns empty string on failure.
-NET_EXPORT std::string GetHostName();
+//NET_EXPORT std::string GetHostName();
 
 // Extracts the unescaped username/password from |url|, saving the results
 // into |*username| and |*password|.
@@ -165,7 +165,7 @@ NET_EXPORT_PRIVATE void GetIdentityFromURL(const GURL& url,
                         base::string16* password);
 
 // Returns either the host from |url|, or, if the host is empty, the full spec.
-NET_EXPORT std::string GetHostOrSpecFromURL(const GURL& url);
+//NET_EXPORT std::string GetHostOrSpecFromURL(const GURL& url);
 
 // Return the value of the HTTP response header with name 'name'.  'headers'
 // should be in the format that URLRequest::GetResponseHeaders() returns.
@@ -217,7 +217,7 @@ NET_EXPORT bool IsCanonicalizedHostCompliant(const std::string& host,
 
 // Call these functions to get the html snippet for a directory listing.
 // The return values of both functions are in UTF-8.
-NET_EXPORT std::string GetDirectoryListingHeader(const base::string16& title);
+//NET_EXPORT std::string GetDirectoryListingHeader(const base::string16& title);
 
 // Given the name of a file in a directory (ftp or local) and
 // other information (is_dir, size, modification time), it returns
@@ -409,28 +409,28 @@ enum IPv6SupportStatus {
                     // where detection is not supported.
 };
 
-// Encapsulates the results of an IPv6 probe.
-struct NET_EXPORT IPv6SupportResult {
-  IPv6SupportResult(bool ipv6_supported,
-                    IPv6SupportStatus ipv6_support_status,
-                    int os_error);
-
-  // Serializes the results to a Value.  Caller takes ownership of the returned
-  // Value.
-  base::Value* ToNetLogValue(NetLog::LogLevel log_level) const;
-
-  bool ipv6_supported;
-  // Set to IPV6_SUPPORT_MAX if detection isn't supported.
-  IPv6SupportStatus ipv6_support_status;
-
-  // Error code from the OS, or zero if there was no error.
-  int os_error;
-};
-
-// Perform a simplistic test to see if IPv6 is supported by trying to create an
-// IPv6 socket.
-// TODO(jar): Make test more in-depth as needed.
-NET_EXPORT IPv6SupportResult TestIPv6Support();
+//// Encapsulates the results of an IPv6 probe.
+//struct NET_EXPORT IPv6SupportResult {
+//  IPv6SupportResult(bool ipv6_supported,
+//                    IPv6SupportStatus ipv6_support_status,
+//                    int os_error);
+//
+//  // Serializes the results to a Value.  Caller takes ownership of the returned
+//  // Value.
+//  base::Value* ToNetLogValue(NetLog::LogLevel log_level) const;
+//
+//  bool ipv6_supported;
+//  // Set to IPV6_SUPPORT_MAX if detection isn't supported.
+//  IPv6SupportStatus ipv6_support_status;
+//
+//  // Error code from the OS, or zero if there was no error.
+//  int os_error;
+//};
+//
+//// Perform a simplistic test to see if IPv6 is supported by trying to create an
+//// IPv6 socket.
+//// TODO(jar): Make test more in-depth as needed.
+//NET_EXPORT IPv6SupportResult TestIPv6Support();
 
 // Returns true if it can determine that only loopback addresses are configured.
 // i.e. if only 127.0.0.1 and ::1 are routable.

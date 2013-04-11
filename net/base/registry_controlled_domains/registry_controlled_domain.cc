@@ -50,7 +50,7 @@
 #include "base/utf_string_conversions.h"
 #include "googleurl/src/gurl.h"
 #include "googleurl/src/url_parse.h"
-#include "net/base/net_module.h"
+//#include "net/base/net_module.h"
 #include "net/base/net_util.h"
 
 #include "effective_tld_names.cc"
