@@ -11,8 +11,8 @@ class CompositorTestSupport {
  public:
   // Called by programs that want to use a real compositor,
   // but skip the typical initialization of browser_main.cc.
-  static void Initialize();
-  static void Terminate();
+  static void Initialize() {}
+  static void Terminate() {}
 };
 
 }  // namespace ui

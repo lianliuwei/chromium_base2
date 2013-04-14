@@ -12,11 +12,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop.h"
-#include "cc/animation/animation_events.h"
-#include "cc/animation/layer_animation_event_observer.h"
-#include "cc/base/scoped_ptr_vector.h"
-#include "cc/layers/content_layer_client.h"
-#include "cc/layers/texture_layer_client.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkRegion.h"
 #include "ui/compositor/compositor.h"
@@ -28,17 +23,6 @@
 
 class SkCanvas;
 
-namespace cc {
-class ContentLayer;
-class DelegatedFrameData;
-class DelegatedRendererLayer;
-class Layer;
-class ResourceUpdateQueue;
-class SolidColorLayer;
-class TextureLayer;
-struct TransferableResource;
-typedef std::vector<TransferableResource> TransferableResourceArray;
-}
 
 namespace ui {
 
@@ -57,10 +41,7 @@ class Texture;
 // delete a Layer and it has children, the parent of each child layer is set to
 // NULL, but the children are not deleted.
 class COMPOSITOR_EXPORT Layer
-    : public LayerAnimationDelegate,
-      NON_EXPORTED_BASE(public cc::ContentLayerClient),
-      NON_EXPORTED_BASE(public cc::TextureLayerClient),
-      NON_EXPORTED_BASE(public cc::LayerAnimationEventObserver) {
+    : public LayerAnimationDelegate {
  public:
   Layer();
   explicit Layer(LayerType type);
@@ -251,13 +232,6 @@ class COMPOSITOR_EXPORT Layer
   void SetExternalTexture(ui::Texture* texture);
   ui::Texture* external_texture() { return texture_.get(); }
 
-  // Sets a delegated frame, coming from a child compositor.
-  void SetDelegatedFrame(scoped_ptr<cc::DelegatedFrameData> frame,
-                         gfx::Size frame_size_in_dip);
-
-  // Gets unused resources to recycle to the child compositor.
-  void TakeUnusedResourcesForChildCompositor(
-      cc::TransferableResourceArray* array);
 
   // Sets the layer's fill color.  May only be called for LAYER_SOLID_COLOR.
   void SetColor(SkColor color);
@@ -297,16 +271,7 @@ class COMPOSITOR_EXPORT Layer
   // (e.g. the GPU process on UI_COMPOSITOR_IMAGE_TRANSPORT).
   bool layer_updated_externally() const { return layer_updated_externally_; }
 
-  // ContentLayerClient
-  virtual void PaintContents(
-      SkCanvas* canvas, gfx::Rect clip, gfx::RectF* opaque) OVERRIDE;
-  virtual void DidChangeLayerCanUseLCDText() OVERRIDE {}
 
-  cc::Layer* cc_layer() { return cc_layer_; }
-
-  // TextureLayerClient
-  virtual unsigned PrepareTexture(cc::ResourceUpdateQueue* queue) OVERRIDE;
-  virtual WebKit::WebGraphicsContext3D* Context3d() OVERRIDE;
 
   float device_scale_factor() const { return device_scale_factor_; }
 
@@ -315,36 +280,12 @@ class COMPOSITOR_EXPORT Layer
   void SetForceRenderSurface(bool force);
   bool force_render_surface() const { return force_render_surface_; }
 
-  // LayerAnimationEventObserver
-  virtual void OnAnimationStarted(const cc::AnimationEvent& event) OVERRIDE;
-
-  // Whether this layer has animations waiting to get sent to its cc::Layer.
-  bool HasPendingThreadedAnimations() {
-    return pending_threaded_animations_.size() != 0;
-  }
 
   // Triggers a call to SwitchToLayer.
   void SwitchCCLayerForTest();
 
  private:
-  // Stacks |child| above or below |other|.  Helper method for StackAbove() and
-  // StackBelow().
-  void StackRelativeTo(Layer* child, Layer* other, bool above);
-
-  bool ConvertPointForAncestor(const Layer* ancestor, gfx::Point* point) const;
-  bool ConvertPointFromAncestor(const Layer* ancestor, gfx::Point* point) const;
-
-  // Following are invoked from the animation or if no animation exists to
-  // update the values immediately.
-  void SetBoundsImmediately(const gfx::Rect& bounds);
-  void SetTransformImmediately(const gfx::Transform& transform);
-  void SetOpacityImmediately(float opacity);
-  void SetVisibilityImmediately(bool visibility);
-  void SetBrightnessImmediately(float brightness);
-  void SetGrayscaleImmediately(float grayscale);
-  void SetColorImmediately(SkColor color);
-
-  // Implementation of LayerAnimatorDelegate
+   // Implementation of LayerAnimatorDelegate
   virtual void SetBoundsFromAnimation(const gfx::Rect& bounds) OVERRIDE;
   virtual void SetTransformFromAnimation(
       const gfx::Transform& transform) OVERRIDE;
@@ -362,29 +303,9 @@ class COMPOSITOR_EXPORT Layer
   virtual float GetGrayscaleForAnimation() const OVERRIDE;
   virtual SkColor GetColorForAnimation() const OVERRIDE;
   virtual float GetDeviceScaleFactor() const OVERRIDE;
-  virtual void AddThreadedAnimation(
-      scoped_ptr<cc::Animation> animation) OVERRIDE;
   virtual void RemoveThreadedAnimation(int animation_id) OVERRIDE;
 
-  void CreateWebLayer();
-  void RecomputeCCTransformFromTransform(const gfx::Transform& transform);
-  void RecomputeDrawsContentAndUVRect();
-
-  // Set all filters which got applied to the layer.
-  void SetLayerFilters();
-
-  // Set all filters which got applied to the layer background.
-  void SetLayerBackgroundFilters();
-
-  void UpdateIsDrawn();
-
-  void SwitchToLayer(scoped_refptr<cc::Layer> new_layer);
-
-  // We cannot send animations to our cc_layer_ until we have been added to a
-  // layer tree. Instead, we hold on to these animations in
-  // pending_threaded_animations_, and expect SendPendingThreadedAnimations to
-  // be called once we have been added to a tree.
-  void SendPendingThreadedAnimations();
+  void Layer::StackRelativeTo(Layer* child, Layer* other, bool above);
 
   const LayerType type_;
 
@@ -443,19 +364,6 @@ class COMPOSITOR_EXPORT Layer
 
   LayerDelegate* delegate_;
 
-  scoped_refptr<LayerAnimator> animator_;
-
-  // Animations that are passed to AddThreadedAnimation before this layer is
-  // added to a tree.
-  cc::ScopedPtrVector<cc::Animation> pending_threaded_animations_;
-
-  // Ownership of the layer is held through one of the strongly typed layer
-  // pointers, depending on which sort of layer this is.
-  scoped_refptr<cc::ContentLayer> content_layer_;
-  scoped_refptr<cc::TextureLayer> texture_layer_;
-  scoped_refptr<cc::SolidColorLayer> solid_color_layer_;
-  scoped_refptr<cc::DelegatedRendererLayer> delegated_renderer_layer_;
-  cc::Layer* cc_layer_;
 
   // If true, the layer scales the canvas and the texture with the device scale
   // factor as appropriate. When true, the texture size is in DIP.
@@ -464,9 +372,7 @@ class COMPOSITOR_EXPORT Layer
   // A cached copy of |Compositor::device_scale_factor()|.
   float device_scale_factor_;
 
-  // The size of the delegated frame in DIP, set when SetDelegatedFrame was
-  // called.
-  gfx::Size delegated_frame_size_in_dip_;
+  gfx::Transform transform_;
 
   DISALLOW_COPY_AND_ASSIGN(Layer);
 };
