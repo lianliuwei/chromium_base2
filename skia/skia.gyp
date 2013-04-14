@@ -328,7 +328,7 @@
             ['exclude', '_ios\\.(cc|cpp|mm?)$'],
           ],
           'dependencies': [
-            '<(webkit_src_dir)/Source/WebKit/chromium/skia_webkit.gyp:skia_webkit',
+ #           '<(webkit_src_dir)/Source/WebKit/chromium/skia_webkit.gyp:skia_webkit',
           ],
         }],
         [ 'OS != "mac"', {
