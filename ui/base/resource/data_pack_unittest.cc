@@ -67,7 +67,7 @@ TEST(DataPackTest, LoadFromFile) {
   base::PlatformFile file = base::CreatePlatformFile(
       data_path, base::PLATFORM_FILE_OPEN | base::PLATFORM_FILE_READ,
       &created, &error_code);
-
+  
   // Load the file through the data pack API.
   DataPack pack(SCALE_FACTOR_100P);
   ASSERT_TRUE(pack.LoadFromFile(file));
@@ -90,7 +90,7 @@ TEST(DataPackTest, LoadFromFile) {
   ASSERT_FALSE(pack.HasResource(140));
   ASSERT_FALSE(pack.GetStringPiece(140, &data));
 
-  base::ClosePlatformFile(file);
+  //base::ClosePlatformFile(file);
 }
 
 INSTANTIATE_TEST_CASE_P(WriteBINARY, DataPackTest, ::testing::Values(
