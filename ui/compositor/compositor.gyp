@@ -20,6 +20,7 @@
         'COMPOSITOR_IMPLEMENTATION',
       ],
       'sources': [
+        'compositor_setup.h'
         'compositor.h',
         'compositor_export.h',
         'layer.cc',
