@@ -643,7 +643,7 @@
         # TODO(jcivelli): ideally the resource needed by views would be
         #                 factored out. (for some reason it pulls in a bunch
         #                 unrelated things like v8, sqlite nss...).
- #       '../../chrome/chrome_resources.gyp:packed_resources',
+        '../../chrome/chrome_resources.gyp:packed_resources',
         '../../build/temp_gyp/googleurl.gyp:googleurl',
         '../../skia/skia.gyp:skia',
         '../../testing/gmock.gyp:gmock',
@@ -767,7 +767,7 @@
       'type': '<(component)',
       'dependencies': [
         '../../base/base.gyp:base',
-#        '../../chrome/chrome_resources.gyp:packed_resources',
+        '../../chrome/chrome_resources.gyp:packed_resources',
         '../../skia/skia.gyp:skia',
         '../../third_party/icu/icu.gyp:icui18n',
         '../../third_party/icu/icu.gyp:icuuc',
@@ -858,7 +858,7 @@
         '../../base/base.gyp:base',
         '../../base/base.gyp:base_i18n',
         '../../build/temp_gyp/googleurl.gyp:googleurl',
- #       '../../chrome/chrome_resources.gyp:packed_resources',
+        '../../chrome/chrome_resources.gyp:packed_resources',
  #       '../../content/content.gyp:content',
         '../../skia/skia.gyp:skia',
         '../../third_party/icu/icu.gyp:icui18n',
@@ -945,7 +945,7 @@
       'dependencies': [
         '../../base/base.gyp:base',
         '../../base/base.gyp:base_i18n',
- #       '../../chrome/chrome_resources.gyp:packed_resources',
+        '../../chrome/chrome_resources.gyp:packed_resources',
  #       '../../content/content.gyp:content_shell_lib',
  #       '../../content/content.gyp:content',
  #       '../../content/content.gyp:test_support_content',
