@@ -847,129 +847,24 @@
     {
       'target_name': 'views_examples_exe',
       'type': 'executable',
-      'sources': [
-        'examples/examples_main.cc',
-      ],
-    },  # target_name: views_examples_exe
-    {
-      'target_name': 'views_examples_with_content_lib',
-      'type': '<(component)',
-      'dependencies': [
-        '../../base/base.gyp:base',
-        '../../base/base.gyp:base_i18n',
-        '../../build/temp_gyp/googleurl.gyp:googleurl',
-        '../../chrome/chrome_resources.gyp:packed_resources',
- #       '../../content/content.gyp:content',
-        '../../skia/skia.gyp:skia',
-        '../../third_party/icu/icu.gyp:icui18n',
-        '../../third_party/icu/icu.gyp:icuuc',
-        '../ui.gyp:ui',
-        '../ui.gyp:ui_resources',
- #       'controls/webview/webview.gyp:webview',
-        'views',
-      ],
-      'include_dirs': [
-        '..',
-      ],
-      'defines': [
-        'VIEWS_EXAMPLES_WITH_CONTENT_IMPLEMENTATION',
-      ],
-      'sources': [
-        'examples/bubble_example.cc',
-        'examples/bubble_example.h',
-        'examples/button_example.cc',
-        'examples/button_example.h',
-        'examples/combobox_example.cc',
-        'examples/combobox_example.h',
-        'examples/double_split_view_example.cc',
-        'examples/double_split_view_example.h',
-        'examples/example_base.cc',
-        'examples/example_base.h',
-        'examples/example_combobox_model.cc',
-        'examples/example_combobox_model.h',
-        'examples/examples_window_with_content.cc',
-        'examples/examples_window_with_content.h',
-        'examples/label_example.cc',
-        'examples/label_example.h',
-        'examples/link_example.cc',
-        'examples/link_example.h',
-        'examples/message_box_example.cc',
-        'examples/message_box_example.h',
-        'examples/menu_example.cc',
-        'examples/menu_example.h',
-        'examples/native_theme_button_example.cc',
-        'examples/native_theme_button_example.h',
-        'examples/native_theme_checkbox_example.cc',
-        'examples/native_theme_checkbox_example.h',
-        'examples/progress_bar_example.cc',
-        'examples/progress_bar_example.h',
-        'examples/radio_button_example.cc',
-        'examples/radio_button_example.h',
-        'examples/scroll_view_example.cc',
-        'examples/scroll_view_example.h',
-        'examples/single_split_view_example.cc',
-        'examples/single_split_view_example.h',
-        'examples/slider_example.cc',
-        'examples/slider_example.h',
-        'examples/tabbed_pane_example.cc',
-        'examples/tabbed_pane_example.h',
-        'examples/table_example.cc',
-        'examples/table_example.h',
-        'examples/text_example.cc',
-        'examples/text_example.h',
-        'examples/textfield_example.cc',
-        'examples/textfield_example.h',
-        'examples/throbber_example.cc',
-        'examples/throbber_example.h',
-        'examples/tree_view_example.cc',
-        'examples/tree_view_example.h',
-        'examples/views_examples_with_content_export.h',
-        'examples/webview_example.cc',
-        'examples/webview_example.h',
-        'examples/widget_example.cc',
-        'examples/widget_example.h',
-      ],
-      'conditions': [
-        ['OS=="win"', {
-          'include_dirs': [
-            '../third_party/wtl/include',
-          ],
-          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-          'msvs_disabled_warnings': [ 4267, ],
-        }],
-      ],
-    },  # target_name: views_examples_with_content_lib
-    {
-      'target_name': 'views_examples_with_content_exe',
-      'type': 'executable',
       'dependencies': [
         '../../base/base.gyp:base',
         '../../base/base.gyp:base_i18n',
         '../../chrome/chrome_resources.gyp:packed_resources',
- #       '../../content/content.gyp:content_shell_lib',
- #       '../../content/content.gyp:content',
- #       '../../content/content.gyp:test_support_content',
         '../../skia/skia.gyp:skia',
         '../../third_party/icu/icu.gyp:icui18n',
         '../../third_party/icu/icu.gyp:icuuc',
         '../ui.gyp:ui',
         '../ui.gyp:ui_resources',
         'views',
-        'views_examples_with_content_lib',
-        'views_test_support'
+        'views_examples_lib',
+#        'views_test_support'
       ],
       'include_dirs': [
         '../..',
       ],
       'sources': [
-#        '../../content/app/startup_helper_win.cc',
-        'examples/content_client/examples_browser_main_parts.cc',
-        'examples/content_client/examples_browser_main_parts.h',
-        'examples/content_client/examples_content_browser_client.cc',
-        'examples/content_client/examples_content_browser_client.h',
-        'examples/content_client/examples_main_delegate.cc',
-        'examples/content_client/examples_main_delegate.h',
-        'examples/content_client/examples_main.cc',
+        'examples/examples_main.cc',
       ],
       'conditions': [
         ['OS=="win"', {
@@ -987,9 +882,6 @@
               'SubSystem': '2',  # Set /SUBSYSTEM:WINDOWS
             },
           },
-          'dependencies': [
- #           '../../sandbox/sandbox.gyp:sandbox',
-          ],
         }],
         ['use_aura==1', {
           'dependencies': [
@@ -997,14 +889,7 @@
             '../compositor/compositor.gyp:compositor_test_support',
           ],
         }],
-        ['OS=="win"', {
-          'sources/': [
-            # This is needed because the aura rule strips it from the default
-            # sources list.
-            ['include', '^../../content/app/startup_helper_win.cc'],
-          ],
-        }],
       ],
-    },  # target_name: views_examples_with_content_exe
+    },  # target_name: views_examples_exe
   ],
 }
