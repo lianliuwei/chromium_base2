@@ -1,0 +1,3 @@
+call ..\setup_env.bat
+
+..\tools\gyp\gyp.bat --depth . -D component=shared_library -D remoting=0 -D enable_background=0 -D enable_automation=0 -D enable_extensions=0 -D enable_web_intents=0 -D enable_task_manager=0 -D enable_session_service=0 -D enable_themes=0 -D enable_printing=0 -D enable_webrtc=0 -D configuration_policy=0 -D input_speech=0 -D notifications=0 -D enable_plugin_installation=0 -D enable_protector_service=0 -D enable_captive_portal_detection=0 -D enable_eglimage=0 -D enable_gpu=0 -D use_official_google_api_keys=0 --no-circular-check -G msvs_version=2008 -I ../build/common.gypi all.gyp
