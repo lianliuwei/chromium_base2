@@ -1,15 +1,13 @@
 # only support dll bin reuse now.
 {
   'variables': {
-    'bin_path': '..\\build\\<(build_dir_prefix)$(ConfigurationName)',
+    'chromium_code': 1,
+    'bin_path': '..\\build\\$(ConfigurationName)',
     'lib_path': '<(bin_path)\\lib',
   },
   
   'includes': [
     'base.gypi',
-  ],
-  'dependencies': [
-    ''
   ],
   
   'targets': [
@@ -19,10 +17,25 @@
       'variables': {
         'base_target': 1,
       },
+      
+      'dependencies': [
+      ],
+ 
       'direct_dependent_settings': {
         'include_dirs': [
           '..',
         ],
+        'msvs_settings':{
+          'VCLinkerTool': {
+            'AdditionalDependencies': [
+              'base.lib',
+            ],
+            'AdditionalLibraryDirectories': [
+              '<(lib_path)'
+            ],
+          },
+        },
+      },
       'copies': [
         {
           'destination': '<(PRODUCT_DIR)',
@@ -37,6 +50,7 @@
             '<(lib_path)\\base.lib'
           ],
         },
+      ],
       'soucres': [
         'third_party/nspr/prcpucfg.h',
         'third_party/nspr/prcpucfg_win.h',
