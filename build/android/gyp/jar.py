@@ -9,7 +9,8 @@ import optparse
 import os
 import sys
 
-from pylib import build_utils
+from util import build_utils
+from util import md5_check
 
 
 def DoJar(options):
@@ -24,9 +25,17 @@ def DoJar(options):
   # the command. Because of this, the command should be run in
   # options.classes_dir so the .class file paths in the jar are correct.
   jar_cwd = options.classes_dir
-  class_files = [os.path.relpath(f, jar_cwd) for f in class_files]
-  jar_cmd = ['jar', 'cf0', jar_path] + class_files
-  build_utils.CheckCallDie(jar_cmd, cwd=jar_cwd)
+  class_files_rel = [os.path.relpath(f, jar_cwd) for f in class_files]
+  jar_cmd = ['jar', 'cf0', jar_path] + class_files_rel
+
+  record_path = '%s.md5.stamp' % options.jar_path
+  md5_check.CallAndRecordIfStale(
+      lambda: build_utils.CheckCallDie(jar_cmd, cwd=jar_cwd),
+      record_path=record_path,
+      input_paths=class_files,
+      input_strings=jar_cmd)
+
+  build_utils.Touch(options.jar_path)
 
 
 def main(argv):

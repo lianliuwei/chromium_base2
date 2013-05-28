@@ -9,7 +9,9 @@ import optparse
 import os
 import sys
 
-from pylib import build_utils
+from util import build_utils
+from util import md5_check
+
 
 def DoJavac(options):
   output_dir = options.output_dir
@@ -30,25 +32,42 @@ def DoJavac(options):
   # crash... Sorted order works, so use that.
   # See https://code.google.com/p/guava-libraries/issues/detail?id=950
   java_files.sort()
-
   classpath = build_utils.ParseGypList(options.classpath)
 
-  # Delete the classes directory. This ensures that all .class files in the
-  # output are actually from the input .java files. For example, if a .java
-  # file is deleted or an inner class is removed, the classes directory should
-  # not contain the corresponding old .class file after running this action.
-  build_utils.DeleteDirectory(output_dir)
-  build_utils.MakeDirectory(output_dir)
+  jar_inputs = []
+  for path in classpath:
+    if os.path.exists(path + '.TOC'):
+      jar_inputs.append(path + '.TOC')
+    else:
+      jar_inputs.append(path)
 
-  build_utils.CheckCallDie([
+  javac_cmd = [
       'javac',
       '-g',
-      '-Xlint:unchecked',
       '-source', '1.5',
       '-target', '1.5',
       '-classpath', ':'.join(classpath),
-      '-d', output_dir] +
-      java_files)
+      '-d', output_dir,
+      '-Xlint:unchecked',
+      '-Xlint:deprecation',
+      ] + java_files
+
+  def Compile():
+    # Delete the classes directory. This ensures that all .class files in the
+    # output are actually from the input .java files. For example, if a .java
+    # file is deleted or an inner class is removed, the classes directory should
+    # not contain the corresponding old .class file after running this action.
+    build_utils.DeleteDirectory(output_dir)
+    build_utils.MakeDirectory(output_dir)
+    suppress_output = not options.chromium_code
+    build_utils.CheckCallDie(javac_cmd, suppress_output=suppress_output)
+
+  record_path = '%s/javac.md5.stamp' % options.output_dir
+  md5_check.CallAndRecordIfStale(
+      Compile,
+      record_path=record_path,
+      input_paths=java_files + jar_inputs,
+      input_strings=javac_cmd)
 
 
 def main(argv):
@@ -60,6 +79,9 @@ def main(argv):
   parser.add_option('--classpath', help='Classpath for javac.')
   parser.add_option('--output-dir', help='Directory for javac output.')
   parser.add_option('--stamp', help='Path to touch on success.')
+  parser.add_option('--chromium-code', type='int', help='Whether code being '
+                    'compiled should be built with stricter warnings for '
+                    'chromium code.')
 
   # TODO(newt): remove this once http://crbug.com/177552 is fixed in ninja.
   parser.add_option('--ignore', help='Ignored.')

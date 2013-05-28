@@ -101,9 +101,8 @@ def GetBotStepMap():
         None),
 
       # Other waterfalls
-      B('asan-builder', std_build_steps, None, None),
-      B('asan-tests', std_test_steps + ['bb_asan_tests_setup'],
-        T(std_tests, ['--asan']), None),
+      B('asan-builder-tests', compile_step + ['bb_asan_tests_setup'],
+        T(std_tests, ['--asan']), {'extra_gyp_defines': 'asan=1'}),
       B('chromedriver-fyi-tests-dbg', std_test_steps, T(['chromedriver']),
         None),
       B('fyi-builder-dbg',
@@ -112,6 +111,8 @@ def GetBotStepMap():
       B('fyi-builder-rel',
         ['bb_compile', 'bb_compile_experimental', 'bb_zip_build'], None, None),
       B('fyi-tests', std_test_steps,
+        T(std_tests, ['--experimental', flakiness_server]), None),
+      B('fyi-component-builder-tests-dbg', compile_step,
         T(std_tests, ['--experimental', flakiness_server]), None),
       B('perf-tests-rel', std_test_steps,
         T([], ['--install=ContentShell']),
@@ -128,6 +129,7 @@ def GetBotStepMap():
 
   # These bots have identical configuration to ones defined earlier.
   copy_map = [
+      ('lkgr-clobber', 'main-clobber'),
       ('try-builder-dbg', 'main-builder-dbg'),
       ('try-builder-rel', 'main-builder-rel'),
       ('try-clang-builder', 'main-clang-builder'),

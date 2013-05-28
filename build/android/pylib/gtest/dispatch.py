@@ -122,6 +122,7 @@ def _RunATestSuite(options, suite_name):
 
   if options.use_emulator:
     buildbot_emulators = emulator.LaunchEmulators(options.emulator_count,
+                                                  options.abi,
                                                   wait_for_boot=True)
     attached_devices = [e.device for e in buildbot_emulators]
   elif options.test_device:
@@ -130,8 +131,7 @@ def _RunATestSuite(options, suite_name):
     attached_devices = android_commands.GetAttachedDevices()
 
   if not attached_devices:
-    logging.critical('A device must be attached and online.')
-    return 1
+    raise Exception('A device must be attached and online.')
 
   # Reset the test port allocation. It's important to do it before starting
   # to dispatch any tests.
@@ -164,7 +164,8 @@ def _RunATestSuite(options, suite_name):
 
   # Run tests.
   test_results = shard.ShardAndRunTests(RunnerFactory, attached_devices, tests,
-                                        options.build_type)
+                                        options.build_type, test_timeout=None,
+                                        num_retries=options.num_retries)
 
   report_results.LogFull(
       results=test_results,

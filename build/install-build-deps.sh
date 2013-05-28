@@ -41,8 +41,8 @@ do
   shift
 done
 
-ubuntu_versions="10\.04|10\.10|11\.04|11\.10|12\.04|12\.10"
-ubuntu_codenames="lucid|maverick|natty|oneiric|precise|quantal"
+ubuntu_versions="10\.04|10\.10|11\.04|11\.10|12\.04|12\.10|13\.04"
+ubuntu_codenames="lucid|maverick|natty|oneiric|precise|quantal|raring"
 ubuntu_issue="Ubuntu ($ubuntu_versions|$ubuntu_codenames)"
 # GCEL is an Ubuntu-derived VM image used on Google Compute Engine; /etc/issue
 # doesn't contain a version number so just trust that the user knows what
@@ -51,7 +51,7 @@ gcel_issue="^GCEL"
 
 if [ 0 -eq "${do_unsupported-0}" ] ; then
   if ! egrep -q "($ubuntu_issue|$gcel_issue)" /etc/issue; then
-    echo "ERROR: Only Ubuntu 10.04 (lucid) through 12.10 (quantal) are"\
+    echo "ERROR: Only Ubuntu 10.04 (lucid) through 13.04 (raring) are"\
         "currently supported" >&2
     exit 1
   fi
@@ -100,7 +100,7 @@ chromeos_lib_list="libpulse0 libbz2-1.0 libcurl4-gnutls-dev"
 lib_list="libatk1.0-0 libc6 libasound2 libcairo2 libcups2 libexpat1
           libfontconfig1 libfreetype6 libglib2.0-0 libgnome-keyring0
           libgtk2.0-0 libpam0g libpango1.0-0 libpci3 libpcre3 libpixman-1-0
-          libpng12-0 libspeechd2 libstdc++6 libsqlite3-0 libudev0 libx11-6
+          libpng12-0 libspeechd2 libstdc++6 libsqlite3-0 libx11-6
           libxau6 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxdmcp6
           libxext6 libxfixes3 libxi6 libxinerama1 libxrandr2 libxrender1
           libxtst6 zlib1g $chromeos_lib_list"
@@ -136,10 +136,16 @@ else
   lib_list="${lib_list} libnspr4-0d libnss3-1d"
 fi
 if apt-cache show libjpeg-dev >/dev/null 2>&1; then
- dev_list="${dev_list} libjpeg-dev"
+  dev_list="${dev_list} libjpeg-dev"
 else
- dev_list="${dev_list} libjpeg62-dev"
+  dev_list="${dev_list} libjpeg62-dev"
 fi
+if [ "$(apt-cache pkgnames libudev1 2>&1)" == "libudev1" ] ; then
+  dev_list="${dev_list} libudev1"
+else
+  dev_list="${dev_list} libudev0"
+fi
+
 
 # Some packages are only needed, if the distribution actually supports
 # installing them.
@@ -206,9 +212,21 @@ fi
 
 # Install the Chrome OS default fonts.
 if test "$do_inst_chromeos_fonts" != "0"; then
+  echo
   echo "Installing Chrome OS fonts."
   dir=`echo $0 | sed -r -e 's/\/[^/]+$//'`
-  sudo $dir/linux/install-chromeos-fonts.py
+  if ! sudo $dir/linux/install-chromeos-fonts.py; then
+    echo "ERROR: The installation of the Chrome OS default fonts failed."
+    if [ `stat -f -c %T $dir` == "nfs" ]; then
+      echo "The reason is that your repo is installed on a remote file system."
+    else
+      echo "This is expected if your repo is installed on a remote file system."
+    fi
+    echo "It is recommended to install your repo on a local file system."
+    echo "You can skip the installation of the Chrome OS default founts with"
+    echo "the command line option: --no-chromeos-fonts."
+    exit 1
+  fi
 else
   echo "Skipping installation of Chrome OS fonts."
 fi
@@ -245,7 +263,7 @@ packages="${dev_list} ${lib_list} ${dbg_list} ${arm_list}"
 echo "Packages required: " $packages
 echo
 new_list_cmd="sudo apt-get install --reinstall $(echo $packages)"
-if new_list="$(yes n | LANG=C $new_list_cmd)"; then
+if new_list="$(yes n | LANGUAGE=en LANG=C $new_list_cmd)"; then
   # We probably never hit this following line.
   echo "No missing packages, and the packages are up-to-date."
 elif [ $? -eq 1 ]; then
@@ -285,6 +303,21 @@ if [ "$(uname -m)" = "x86_64" ]; then
     echo
     echo "Installation complete."
     exit 0
+  else
+    # This conditional statement has been added to deprecate and eventually
+    # remove support for 32bit libraries on 64bit systems. But for the time
+    # being, we still have to support a few legacy systems (e.g. bots), where
+    # this feature is needed.
+    # We only even give the user the option to install these libraries, if
+    # they explicitly requested doing so by setting the --lib32 command line
+    # flag.
+    # And even then, we interactively ask them one more time whether they are
+    # absolutely sure.
+    # In order for that to work, we must reset the ${do_inst_lib32} variable.
+    # There are other ways to achieve the same goal. But resetting the
+    # variable is the best way to document the intended behavior -- and to
+    # allow us to gradually deprecate and then remove the obsolete code.
+    do_inst_lib32=
   fi
 
   echo "WARNING"

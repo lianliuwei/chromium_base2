@@ -10,7 +10,7 @@ import optparse
 import os
 import shlex
 
-from pylib import build_utils
+from util import build_utils
 
 def ParseArgs():
   """Parses command line options.
@@ -45,9 +45,7 @@ def ParseArgs():
   # Check that required options have been provided.
   required_options = ('android_sdk', 'android_sdk_tools', 'R_dir', 'res_dirs',
                       'crunch_input_dir', 'crunch_output_dir')
-  for option_name in required_options:
-    if not getattr(options, option_name):
-      parser.error('--%s is required' % option_name.replace('_', '-'))
+  build_utils.CheckOptions(options, parser, required=required_options)
 
   return options
 
@@ -89,7 +87,7 @@ def main():
               'crunch',
               '-S', options.crunch_input_dir,
               '-C', options.crunch_output_dir]
-  build_utils.CheckCallDie(aapt_cmd)
+  build_utils.CheckCallDie(aapt_cmd, suppress_output=True)
 
   if options.stamp:
     build_utils.Touch(options.stamp)
