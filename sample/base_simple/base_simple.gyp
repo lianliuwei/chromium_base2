@@ -10,7 +10,7 @@
       'type': 'executable',
 
       'dependencies': [
-        '../../base/base_bin.gyp:base'
+        '../../base/base_bin.gyp:base_bin'
       ],
       'sources': [
         'main.cc',
