@@ -511,19 +511,11 @@ class BASE_EXPORT Histogram : public HistogramBase {
                                const int64 remaining, const size_t i,
                                std::string* output) const;
 
-  // Write textual description of the bucket contents (relative to histogram).
-  // Output is the count in the buckets, as well as the percentage.
-  void WriteAsciiBucketValue(Count current, double scaled_sum,
-                             std::string* output) const;
-
-  // Produce actual graph (set of blank vs non blank char's) for a bucket.
-  void WriteAsciiBucketGraph(double current_size, double max_size,
-                             std::string* output) const;
-
   // WriteJSON calls these.
   virtual void GetParameters(DictionaryValue* params) const OVERRIDE;
 
   virtual void GetCountAndBucketData(Count* count,
+                                     int64* sum,
                                      ListValue* buckets) const OVERRIDE;
 
   // Does not own this object. Should get from StatisticsRecorder.

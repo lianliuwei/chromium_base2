@@ -51,6 +51,7 @@
         # Generated for our configuration from tcmalloc's build
         # and checked in.
         '<(tcmalloc_dir)/src/config.h',
+        '<(tcmalloc_dir)/src/config_android.h',
         '<(tcmalloc_dir)/src/config_linux.h',
         '<(tcmalloc_dir)/src/config_win.h',
 
@@ -313,8 +314,7 @@
             'disable_debugallocation%': 0,
           },
           'conditions': [
-            # TODO(phajdan.jr): Also enable on Windows.
-            ['disable_debugallocation==0 and OS!="win"', {
+            ['disable_debugallocation==0', {
               'defines': [
                 # Use debugallocation for Debug builds to catch problems early
                 # and cleanly, http://crbug.com/30715 .
@@ -389,7 +389,7 @@
             '<(tcmalloc_dir)/src/profiler.cc',
           ],
         }],
-        ['OS=="linux" or OS=="freebsd" or OS=="solaris"', {
+        ['OS=="linux" or OS=="freebsd" or OS=="solaris" or OS=="android"', {
           'sources!': [
             '<(tcmalloc_dir)/src/system-alloc.h',
             '<(tcmalloc_dir)/src/windows/port.cc',
