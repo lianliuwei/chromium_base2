@@ -213,8 +213,8 @@
         '../../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
         '../../testing/gmock.gyp:gmock',
         '../../testing/gtest.gyp:gtest',
-        '../../third_party/icu/icu.gyp:icui18n',
-        '../../third_party/icu/icu.gyp:icuuc',
+        '../../third_party/icu_bin.gyp:icui18n_bin',
+        '../../third_party/icu_bin.gyp:icuuc_bin',
       ],
       'includes': ['../../build/nocompile.gypi'],
       'variables': {
