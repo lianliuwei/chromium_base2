@@ -33,6 +33,8 @@
           'allocator/allocator_extension.h',
           'allocator/type_profiler_control.cc',
           'allocator/type_profiler_control.h',
+          'android/activity_status.cc',
+          'android/activity_status.h',
           'android/base_jni_registrar.cc',
           'android/base_jni_registrar.h',
           'android/build_info.cc',
@@ -52,8 +54,6 @@
           'android/jni_registrar.h',
           'android/jni_string.cc',
           'android/jni_string.h',
-          'android/locale_utils.cc',
-          'android/locale_utils.h',
           'android/path_service_android.cc',
           'android/path_service_android.h',
           'android/path_utils.cc',
@@ -138,8 +138,10 @@
           'debug/trace_event_android.cc',
           'debug/trace_event_impl.cc',
           'debug/trace_event_impl.h',
-          'debug/trace_event_internal.h',
+          'debug/trace_event_impl_constants.cc',
           'debug/trace_event_win.cc',
+          'deferred_sequenced_task_runner.cc',
+          'deferred_sequenced_task_runner.h',
           'environment.cc',
           'environment.h',
           'file_descriptor_posix.h',
@@ -160,6 +162,7 @@
           'files/dir_reader_posix.h',
           'files/file_path.cc',
           'files/file_path.h',
+          'files/file_path_constants.cc',
           'files/file_path_watcher.cc',
           'files/file_path_watcher.h',
           'files/file_path_watcher_kqueue.cc',
@@ -225,6 +228,8 @@
           'mac/cocoa_protocols.h',
           'mac/foundation_util.h',
           'mac/foundation_util.mm',
+          'mac/launch_services_util.cc',
+          'mac/launch_services_util.h',
           'mac/launchd.cc',
           'mac/launchd.h',
           'mac/libdispatch_task_runner.cc',
@@ -242,6 +247,7 @@
           'mac/scoped_block.h',
           'mac/scoped_cftyperef.h',
           'mac/scoped_ioobject.h',
+          'mac/scoped_ioplugininterface.h',
           'mac/scoped_launch_data.h',
           'mac/scoped_mach_port.cc',
           'mac/scoped_mach_port.h',
@@ -251,8 +257,6 @@
           'mac/scoped_nsexception_enabler.mm',
           'mac/scoped_sending_event.h',
           'mac/scoped_sending_event.mm',
-          'mach_ipc_mac.h',
-          'mach_ipc_mac.mm',
           'memory/aligned_memory.cc',
           'memory/aligned_memory.h',
           'memory/discardable_memory.cc',
@@ -293,6 +297,8 @@
           'message_pump_android.h',
           'message_pump_default.cc',
           'message_pump_default.h',
+          'message_pump_ozone.cc',
+          'message_pump_ozone.h',
           'message_pump_win.cc',
           'message_pump_win.h',
           'metrics/sample_map.cc',
@@ -345,6 +351,15 @@
           'posix/global_descriptors.h',
           'posix/unix_domain_socket_linux.cc',
           'posix/unix_domain_socket_linux.h',
+          'power_monitor/power_monitor.cc',
+          'power_monitor/power_monitor.h',
+          'power_monitor/power_monitor_android.cc',
+          'power_monitor/power_monitor_android.h',
+          'power_monitor/power_monitor_ios.mm',
+          'power_monitor/power_monitor_mac.mm',
+          'power_monitor/power_monitor_posix.cc',
+          'power_monitor/power_monitor_win.cc',
+          'power_monitor/power_observer.h',
           'process.h',
           'process_info.h',
           'process_info_mac.cc',
@@ -361,6 +376,16 @@
           'process_util_posix.cc',
           'process_util_win.cc',
           'process_win.cc',
+          'process/process_metrics.h',
+          'process/process_metrics_freebsd.cc',
+          'process/process_metrics_ios.cc',
+          'process/process_metrics_linux.cc',
+          'process/process_metrics_mac.cc',
+          'process/process_metrics_openbsd.cc',
+          'process/process_metrics_posix.cc',
+          'process/process_metrics_win.cc',
+          'process/internal_linux.cc',
+          'process/internal_linux.h',
           'profiler/scoped_profile.cc',
           'profiler/scoped_profile.h',
           'profiler/alternate_timer.cc',
@@ -392,6 +417,7 @@
           'stl_util.h',
           'string_util.cc',
           'string_util.h',
+          'string_util_constants.cc',
           'string_util_posix.h',
           'string_util_win.h',
           'string16.cc',
@@ -414,6 +440,8 @@
           'strings/utf_offset_string_conversions.h',
           'strings/utf_string_conversion_utils.cc',
           'strings/utf_string_conversion_utils.h',
+          'strings/utf_string_conversions.cc',
+          'strings/utf_string_conversions.h',
           'supports_user_data.cc',
           'supports_user_data.h',
           'synchronization/cancellation_flag.cc',
@@ -435,12 +463,6 @@
           'synchronization/waitable_event_win.cc',
           'system_monitor/system_monitor.cc',
           'system_monitor/system_monitor.h',
-          'system_monitor/system_monitor_android.cc',
-          'system_monitor/system_monitor_android.h',
-          'system_monitor/system_monitor_ios.mm',
-          'system_monitor/system_monitor_mac.mm',
-          'system_monitor/system_monitor_posix.cc',
-          'system_monitor/system_monitor_win.cc',
           'sys_byteorder.h',
           'sys_info.cc',
           'sys_info.h',
@@ -463,6 +485,8 @@
           'threading/non_thread_safe_impl.cc',
           'threading/non_thread_safe_impl.h',
           'threading/platform_thread.h',
+          'threading/platform_thread_android.cc',
+          'threading/platform_thread_linux.cc',
           'threading/platform_thread_mac.mm',
           'threading/platform_thread_posix.cc',
           'threading/platform_thread_win.cc',
@@ -517,8 +541,6 @@
           'tracking_info.cc',
           'tracking_info.h',
           'tuple.h',
-          'utf_string_conversions.cc',
-          'utf_string_conversions.h',
           'values.cc',
           'values.h',
           'value_conversions.cc',
@@ -583,6 +605,14 @@
           'win/wrapped_window_proc.cc',
           'win/wrapped_window_proc.h',
         ],
+        'conditions': [
+          ['google_tv==1', {
+           'sources': [
+             'android/context_types.cc',
+             'android/context_types.h',
+           ],
+          }],
+        ],
         'defines': [
           'BASE_IMPLEMENTATION',
         ],
@@ -618,7 +648,6 @@
                'allocator/type_profiler_control.cc',
                'allocator/type_profiler_control.h',
                'base_paths.cc',
-               'command_line.cc',
                'cpu.cc',
                'debug/stack_trace_posix.cc',
                'file_util.cc',
@@ -640,26 +669,37 @@
                'threading/sequenced_worker_pool.cc',
                'third_party/dynamic_annotations/dynamic_annotations.c',
             ],
-            # Metrics won't work in the NaCl sandbox.
-            'sources/': [ ['exclude', '^metrics/'] ],
+            'sources/': [
+              # Metrics won't work in the NaCl sandbox.
+              ['exclude', '^metrics/'],
+              ['include', '^threading/platform_thread_linux\\.cc$'],
+            ],
           }],
           ['OS == "android" and >(nacl_untrusted_build)==0', {
             'sources!': [
               'base_paths_posix.cc',
               'files/file_path_watcher_kqueue.cc',
               'files/file_path_watcher_stub.cc',
-              'system_monitor/system_monitor_posix.cc',
+              'power_monitor/power_monitor_posix.cc',
             ],
             'sources/': [
               ['include', '^files/file_path_watcher_linux\\.cc$'],
               ['include', '^process_util_linux\\.cc$'],
+              ['include', '^process/internal_linux\\.cc$'],
+              ['include', '^process/process_metrics_linux\\.cc$'],
               ['include', '^posix/unix_domain_socket_linux\\.cc$'],
               ['include', '^strings/sys_string_conversions_posix\\.cc$'],
               ['include', '^sys_info_linux\\.cc$'],
               ['include', '^worker_pool_linux\\.cc$'],
             ],
           }],
-          ['OS == "ios"', {
+          ['OS == "android" and _toolset == "host" and host_os == "linux"', {
+            'sources/': [
+              # Pull in specific files for host builds.
+              ['include', '^threading/platform_thread_linux\\.cc$'],
+            ],
+          }],
+          ['OS == "ios" and _toolset != "host"', {
             'sources/': [
               # Pull in specific Mac files for iOS (which have been filtered out
               # by file name rules).
@@ -687,6 +727,15 @@
             'sources!': [
               'message_pump_libevent.cc'
             ],
+          }],
+          ['OS == "ios" and _toolset == "host"', {
+            'sources/': [
+              # Copied filename_rules to switch from iOS to Mac inclusions.
+              ['include', '_(cocoa|mac)(_unittest)?\\.(h|cc|mm?)$'],
+              ['include', '(^|/)(cocoa|mac)/'],
+              ['exclude', '_ios(_unittest)?\\.(h|cc|mm?)$'],
+              ['exclude', '(^|/)ios/'],
+            ]
           }],
           ['OS != "mac" or >(nacl_untrusted_build)==1', {
               'sources!': [
@@ -727,6 +776,12 @@
               'string16.cc',
             ],
           },],
+          ['<(use_ozone) == 1', {
+            'sources!': [
+              'message_pump_glib.cc',
+              'message_pump_aurax11.cc',
+            ]
+          }],
           ['OS == "linux" and >(nacl_untrusted_build)==0', {
             'sources!': [
               'files/file_path_watcher_kqueue.cc',

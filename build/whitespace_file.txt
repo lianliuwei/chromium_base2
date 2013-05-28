@@ -2,15 +2,16 @@ Copyright (c) 2013 The Chromium Authors. All rights reserved.
 Use of this useless file is governed by a BSD-style license that can be
 found in the LICENSE file.
 
+
 This file is used for making non-code changes to trigger buildbot cycles. Make
 any modification below this line.
 
-========================================================================
+======================================================================
 
 Let's make a story. Add one sentence for every commit:
 
 CHAPTER 1:
-It was a dark and stormy night; the rain fell in torrents -- except at
+It was a dark and blinky night; the rain fell in torrents -- except at
 occasional intervals, when it was checked by a violent gust of wind which
 swept up the streets (for it is in London that our scene lies), rattling along
 the housetops, and fiercely agitating the scanty flame of the lamps that
@@ -52,13 +53,14 @@ Next time, there won't be any sushi. Why sushi with waffles anyway?  It's like
 adorning breakfast cereal with halibut. Completely shameful.
 
 CHAPTER 4:
-The taste of stale sushi in his mouth the next morning was unbearable. He
+The taste of stable sushi in his mouth the next morning was unbearable. He
 wondered where the sushi came from as he attempted to wash the taste away with
 a bottle of 3000¥ sake. He tries to recall the cook's face.  Purple?
 
 CHAPTER 5:
 Many years later, Mr. Usagi would laugh at the memory of the earnest,
 well-intentioned Domo-Kun. Another day in the life...
+
 
 TRUISMS (1978-1983)
 JENNY HOLZER
@@ -71,9 +73,11 @@ A RELAXED MAN IS NOT NECESSARILY A BETTER MAN
 NO ONE SHOULD EVER HAVE TO USE SVN
 AN INFLEXIBLE POSITION SOMETIMES IS A SIGN OF PARALYSIS
 
-fold ALL the things!
+Fold ALL the things!
 
 This commit will change the world as we know it. For the better.
 So in a way, this changes everything. Again.
 
 I'd like to greet my mom. World peas.
+
+He blinked slowly, once, twice, thrice. The air was thick with cigarette smoke.

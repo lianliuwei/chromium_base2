@@ -34,6 +34,8 @@
 
 #if defined(USE_AURA) && defined(USE_X11) && !defined(OS_NACL)
 #include "base/message_pump_aurax11.h"
+#elif defined(USE_OZONE) && !defined(OS_NACL)
+#include "base/message_pump_ozone.h"
 #else
 #include "base/message_pump_gtk.h"
 #endif
@@ -43,12 +45,12 @@
 
 namespace base {
 class HistogramBase;
+class MessageLoopLockTest;
 class RunLoop;
 class ThreadTaskRunnerHandle;
 #if defined(OS_ANDROID)
 class MessagePumpForUI;
 #endif
-}  // namespace base
 
 // A MessageLoop is used to process events for a particular thread.  There is
 // at most one MessageLoop instance per thread.
@@ -166,9 +168,17 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
   // PostTask(from_here, task) is equivalent to
   // PostDelayedTask(from_here, task, 0).
   //
+  // The TryPostTask is meant for the cases where the calling thread cannot
+  // block. If posting the task will block, the call returns false, the task
+  // is not posted but the task is consumed anyways.
+  //
   // NOTE: These methods may be called on any thread.  The Task will be invoked
   // on the thread that executes MessageLoop::Run().
   void PostTask(
+      const tracked_objects::Location& from_here,
+      const base::Closure& task);
+
+  bool TryPostTask(
       const tracked_objects::Location& from_here,
       const base::Closure& task);
 
@@ -400,6 +410,7 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
 
  private:
   friend class base::RunLoop;
+  friend class base::MessageLoopLockTest;
 
   // A function to encapsulate all the exception handling capability in the
   // stacks around the running of a main message loop.  It will run the message
@@ -429,13 +440,21 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
   // Adds the pending task to delayed_work_queue_.
   void AddToDelayedWorkQueue(const base::PendingTask& pending_task);
 
-  // Adds the pending task to our incoming_queue_.
+  // This function attempts to add pending task to our incoming_queue_.
+  // The append can only possibly fail when |use_try_lock| is true.
   //
-  // Caller retains ownership of |pending_task|, but this function will
-  // reset the value of pending_task->task.  This is needed to ensure
-  // that the posting call stack does not retain pending_task->task
+  // When |use_try_lock| is true, then this call will avoid blocking if
+  // the related lock is already held, and will in that case (when the
+  // lock is contended) fail to perform the append, and will return false.
+  //
+  // If the call succeeds to append to the queue, then this call
+  // will return true.
+  //
+  // In all cases, the caller retains ownership of |pending_task|, but this
+  // function will reset the value of pending_task->task.  This is needed to
+  // ensure that the posting call stack does not retain pending_task->task
   // beyond this function call.
-  void AddToIncomingQueue(base::PendingTask* pending_task);
+  bool AddToIncomingQueue(base::PendingTask* pending_task, bool use_try_lock);
 
   // Load tasks from the incoming_queue_ into work_queue_ if the latter is
   // empty.  The former requires a lock to access, while the latter is directly
@@ -573,6 +592,7 @@ class BASE_EXPORT MessageLoopForUI : public MessageLoop {
   // events to the Java message loop.
   void Start();
 #elif !defined(OS_MACOSX)
+
   // Please see message_pump_win/message_pump_glib for definitions of these
   // methods.
   void AddObserver(Observer* observer);
@@ -588,6 +608,9 @@ class BASE_EXPORT MessageLoopForUI : public MessageLoop {
  protected:
 #if defined(USE_AURA) && defined(USE_X11) && !defined(OS_NACL)
   friend class base::MessagePumpAuraX11;
+#endif
+#if defined(USE_OZONE) && !defined(OS_NACL)
+  friend class base::MessagePumpOzone;
 #endif
 
   // TODO(rvargas): Make this platform independent.
@@ -704,5 +727,13 @@ class BASE_EXPORT MessageLoopForIO : public MessageLoop {
 // data that you need should be stored on the MessageLoop's pump_ instance.
 COMPILE_ASSERT(sizeof(MessageLoop) == sizeof(MessageLoopForIO),
                MessageLoopForIO_should_not_have_extra_member_variables);
+
+}  // namespace base
+
+// TODO(brettw) remove this when all users are updated to explicitly use the
+// namespace
+using base::MessageLoop;
+using base::MessageLoopForIO;
+using base::MessageLoopForUI;
 
 #endif  // BASE_MESSAGE_LOOP_H_

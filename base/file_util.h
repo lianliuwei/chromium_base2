@@ -39,44 +39,20 @@
 
 namespace base {
 class Time;
-}
+
+// Returns an absolute version of a relative path. Returns an empty path on
+// error. On POSIX, this function fails if the path does not exist. This
+// function can result in I/O so it can be slow.
+BASE_EXPORT FilePath MakeAbsoluteFilePath(const FilePath& input);
+
+}  // namespace base
 
 namespace file_util {
 
 extern bool g_bug108724_debug;
 
 //-----------------------------------------------------------------------------
-// Functions that operate purely on a path string w/o touching the filesystem:
-
-// Returns true if the given path ends with a path separator character.
-BASE_EXPORT bool EndsWithSeparator(const base::FilePath& path);
-
-// Makes sure that |path| ends with a separator IFF path is a directory that
-// exists. Returns true if |path| is an existing directory, false otherwise.
-BASE_EXPORT bool EnsureEndsWithSeparator(base::FilePath* path);
-
-// Convert provided relative path into an absolute path.  Returns false on
-// error. On POSIX, this function fails if the path does not exist.
-BASE_EXPORT bool AbsolutePath(base::FilePath* path);
-
-// Returns true if |parent| contains |child|. Both paths are converted to
-// absolute paths before doing the comparison.
-BASE_EXPORT bool ContainsPath(const base::FilePath& parent,
-                              const base::FilePath& child);
-
-//-----------------------------------------------------------------------------
 // Functions that involve filesystem access or modification:
-
-// Returns the number of files matching the current path that were
-// created on or after the given |file_time|.  Doesn't count ".." or ".".
-//
-// Note for POSIX environments: a file created before |file_time|
-// can be mis-detected as a newer file due to low precision of
-// timestmap of file creation time. If you need to avoid such
-// mis-detection perfectly, you should wait one second before
-// obtaining |file_time|.
-BASE_EXPORT int CountFilesCreatedAfter(const base::FilePath& path,
-                                       const base::Time& file_time);
 
 // Returns the total number of bytes used by all the files under |root_path|.
 // If the path does not exist the function returns 0.
@@ -85,20 +61,12 @@ BASE_EXPORT int CountFilesCreatedAfter(const base::FilePath& path,
 // particularly speedy in any platform.
 BASE_EXPORT int64 ComputeDirectorySize(const base::FilePath& root_path);
 
-// Returns the total number of bytes used by all files matching the provided
-// |pattern|, on this |directory| (without recursion). If the path does not
-// exist the function returns 0.
-//
-// This function is implemented using the FileEnumerator class so it is not
-// particularly speedy in any platform.
-BASE_EXPORT int64 ComputeFilesSize(const base::FilePath& directory,
-                                   const base::FilePath::StringType& pattern);
-
 // Deletes the given path, whether it's a file or a directory.
 // If it's a directory, it's perfectly happy to delete all of the
 // directory's contents.  Passing true to recursive deletes
 // subdirectories and their contents as well.
-// Returns true if successful, false otherwise.
+// Returns true if successful, false otherwise. It is considered successful
+// to attempt to delete a file that does not exist.
 //
 // In posix environment and if |path| is a symbolic link, this deletes only
 // the symlink. (even if the symlink points to a non-existent file)
@@ -133,7 +101,13 @@ BASE_EXPORT bool MoveUnsafe(const base::FilePath& from_path,
 // volume, or the function will fail. Destination file will be created
 // if it doesn't exist. Prefer this function over Move when dealing with
 // temporary files. On Windows it preserves attributes of the target file.
-// Returns true on success.
+// Returns true on success, leaving *error unchanged.
+// Returns false on failure and sets *error appropriately, if it is non-NULL.
+BASE_EXPORT bool ReplaceFileAndGetError(const base::FilePath& from_path,
+                                        const base::FilePath& to_path,
+                                        base::PlatformFileError* error);
+
+// Backward-compatible convenience method for the above.
 BASE_EXPORT bool ReplaceFile(const base::FilePath& from_path,
                              const base::FilePath& to_path);
 
@@ -301,12 +275,6 @@ BASE_EXPORT bool CreateDirectory(const base::FilePath& full_path);
 // Returns the file size. Returns true on success.
 BASE_EXPORT bool GetFileSize(const base::FilePath& file_path, int64* file_size);
 
-// Returns true if the given path's base name is ".".
-BASE_EXPORT bool IsDot(const base::FilePath& path);
-
-// Returns true if the given path's base name is "..".
-BASE_EXPORT bool IsDotDot(const base::FilePath& path);
-
 // Sets |real_path| to |path| with symbolic links and junctions expanded.
 // On windows, make sure the path starts with a lettered drive.
 // |path| must reference a file.  Function will fail if |path| points to
@@ -392,6 +360,13 @@ BASE_EXPORT bool SetCurrentDirectory(const base::FilePath& path);
 // existence of it with the given suffix.
 BASE_EXPORT int GetUniquePathNumber(const base::FilePath& path,
                                     const base::FilePath::StringType& suffix);
+
+#if defined(OS_POSIX)
+// Creates a directory with a guaranteed unique name based on |path|, returning
+// the pathname if successful, or an empty path if there was an error creating
+// the directory. Does not create parent directories.
+BASE_EXPORT base::FilePath MakeUniqueDirectory(const base::FilePath& path);
+#endif
 
 #if defined(OS_POSIX)
 // Test that |path| can only be changed by a given user and members of
@@ -559,11 +534,6 @@ class BASE_EXPORT FileEnumerator {
 
   DISALLOW_COPY_AND_ASSIGN(FileEnumerator);
 };
-
-// Returns whether the file has been modified since a particular date.
-BASE_EXPORT bool HasFileBeenModifiedSince(
-    const FileEnumerator::FindInfo& find_info,
-    const base::Time& cutoff_time);
 
 #if defined(OS_LINUX)
 // Broad categories of file systems as returned by statfs() on Linux.

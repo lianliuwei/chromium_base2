@@ -6,14 +6,12 @@
 
 #import <Cocoa/Cocoa.h>
 #include <crt_externs.h>
-#include <dlfcn.h>
 #include <errno.h>
 #include <mach/mach.h>
 #include <mach/mach_init.h>
 #include <mach/mach_vm.h>
 #include <mach/shared_region.h>
 #include <mach/task.h>
-#include <mach-o/nlist.h>
 #include <malloc/malloc.h>
 #import <objc/runtime.h>
 #include <signal.h>
@@ -34,12 +32,19 @@
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_mach_port.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/scoped_clear_errno.h"
 #include "base/string_util.h"
 #include "base/sys_info.h"
-#include "base/threading/thread_local.h"
 #include "third_party/apple_apsl/CFBase.h"
 #include "third_party/apple_apsl/malloc.h"
+
+#if ARCH_CPU_32_BITS
+#include <dlfcn.h>
+#include <mach-o/nlist.h>
+
+#include "base/threading/thread_local.h"
 #include "third_party/mach_override/mach_override.h"
+#endif  // ARCH_CPU_32_BITS
 
 namespace base {
 
@@ -179,313 +184,9 @@ bool NamedProcessIterator::IncludeEntry() {
 }
 
 
-// ------------------------------------------------------------------------
-// NOTE: about ProcessMetrics
-//
-// Getting a mach task from a pid for another process requires permissions in
-// general, so there doesn't really seem to be a way to do these (and spinning
-// up ps to fetch each stats seems dangerous to put in a base api for anyone to
-// call). Child processes ipc their port, so return something if available,
-// otherwise return 0.
-//
-
-ProcessMetrics::ProcessMetrics(ProcessHandle process,
-                               ProcessMetrics::PortProvider* port_provider)
-    : process_(process),
-      last_time_(0),
-      last_system_time_(0),
-      port_provider_(port_provider) {
-  processor_count_ = SysInfo::NumberOfProcessors();
-}
-
-// static
-ProcessMetrics* ProcessMetrics::CreateProcessMetrics(
-    ProcessHandle process,
-    ProcessMetrics::PortProvider* port_provider) {
-  return new ProcessMetrics(process, port_provider);
-}
-
-bool ProcessMetrics::GetIOCounters(IoCounters* io_counters) const {
-  return false;
-}
-
-static bool GetTaskInfo(mach_port_t task, task_basic_info_64* task_info_data) {
-  if (task == MACH_PORT_NULL)
-    return false;
-  mach_msg_type_number_t count = TASK_BASIC_INFO_64_COUNT;
-  kern_return_t kr = task_info(task,
-                               TASK_BASIC_INFO_64,
-                               reinterpret_cast<task_info_t>(task_info_data),
-                               &count);
-  // Most likely cause for failure: |task| is a zombie.
-  return kr == KERN_SUCCESS;
-}
-
-size_t ProcessMetrics::GetPagefileUsage() const {
-  task_basic_info_64 task_info_data;
-  if (!GetTaskInfo(TaskForPid(process_), &task_info_data))
-    return 0;
-  return task_info_data.virtual_size;
-}
-
-size_t ProcessMetrics::GetPeakPagefileUsage() const {
-  return 0;
-}
-
-size_t ProcessMetrics::GetWorkingSetSize() const {
-  task_basic_info_64 task_info_data;
-  if (!GetTaskInfo(TaskForPid(process_), &task_info_data))
-    return 0;
-  return task_info_data.resident_size;
-}
-
-size_t ProcessMetrics::GetPeakWorkingSetSize() const {
-  return 0;
-}
-
-static bool GetCPUTypeForProcess(pid_t pid, cpu_type_t* cpu_type) {
-  size_t len = sizeof(*cpu_type);
-  int result = sysctlbyname("sysctl.proc_cputype",
-                            cpu_type,
-                            &len,
-                            NULL,
-                            0);
-  if (result != 0) {
-    DPLOG(ERROR) << "sysctlbyname(""sysctl.proc_cputype"")";
-    return false;
-  }
-
-  return true;
-}
-
-static bool IsAddressInSharedRegion(mach_vm_address_t addr, cpu_type_t type) {
-  if (type == CPU_TYPE_I386)
-    return addr >= SHARED_REGION_BASE_I386 &&
-           addr < (SHARED_REGION_BASE_I386 + SHARED_REGION_SIZE_I386);
-  else if (type == CPU_TYPE_X86_64)
-    return addr >= SHARED_REGION_BASE_X86_64 &&
-           addr < (SHARED_REGION_BASE_X86_64 + SHARED_REGION_SIZE_X86_64);
-  else
-    return false;
-}
-
-// This is a rough approximation of the algorithm that libtop uses.
-// private_bytes is the size of private resident memory.
-// shared_bytes is the size of shared resident memory.
-bool ProcessMetrics::GetMemoryBytes(size_t* private_bytes,
-                                    size_t* shared_bytes) {
-  kern_return_t kr;
-  size_t private_pages_count = 0;
-  size_t shared_pages_count = 0;
-
-  if (!private_bytes && !shared_bytes)
-    return true;
-
-  mach_port_t task = TaskForPid(process_);
-  if (task == MACH_PORT_NULL) {
-    DLOG(ERROR) << "Invalid process";
-    return false;
-  }
-
-  cpu_type_t cpu_type;
-  if (!GetCPUTypeForProcess(process_, &cpu_type))
-    return false;
-
-  // The same region can be referenced multiple times. To avoid double counting
-  // we need to keep track of which regions we've already counted.
-  base::hash_set<int> seen_objects;
-
-  // We iterate through each VM region in the task's address map. For shared
-  // memory we add up all the pages that are marked as shared. Like libtop we
-  // try to avoid counting pages that are also referenced by other tasks. Since
-  // we don't have access to the VM regions of other tasks the only hint we have
-  // is if the address is in the shared region area.
-  //
-  // Private memory is much simpler. We simply count the pages that are marked
-  // as private or copy on write (COW).
-  //
-  // See libtop_update_vm_regions in
-  // http://www.opensource.apple.com/source/top/top-67/libtop.c
-  mach_vm_size_t size = 0;
-  for (mach_vm_address_t address = MACH_VM_MIN_ADDRESS;; address += size) {
-    vm_region_top_info_data_t info;
-    mach_msg_type_number_t info_count = VM_REGION_TOP_INFO_COUNT;
-    mach_port_t object_name;
-    kr = mach_vm_region(task,
-                        &address,
-                        &size,
-                        VM_REGION_TOP_INFO,
-                        (vm_region_info_t)&info,
-                        &info_count,
-                        &object_name);
-    if (kr == KERN_INVALID_ADDRESS) {
-      // We're at the end of the address space.
-      break;
-    } else if (kr != KERN_SUCCESS) {
-      DLOG(ERROR) << "Calling mach_vm_region failed with error: "
-                 << mach_error_string(kr);
-      return false;
-    }
-
-    if (IsAddressInSharedRegion(address, cpu_type) &&
-        info.share_mode != SM_PRIVATE)
-      continue;
-
-    if (info.share_mode == SM_COW && info.ref_count == 1)
-      info.share_mode = SM_PRIVATE;
-
-    switch (info.share_mode) {
-      case SM_PRIVATE:
-        private_pages_count += info.private_pages_resident;
-        private_pages_count += info.shared_pages_resident;
-        break;
-      case SM_COW:
-        private_pages_count += info.private_pages_resident;
-        // Fall through
-      case SM_SHARED:
-        if (seen_objects.count(info.obj_id) == 0) {
-          // Only count the first reference to this region.
-          seen_objects.insert(info.obj_id);
-          shared_pages_count += info.shared_pages_resident;
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  vm_size_t page_size;
-  kr = host_page_size(task, &page_size);
-  if (kr != KERN_SUCCESS) {
-    DLOG(ERROR) << "Failed to fetch host page size, error: "
-               << mach_error_string(kr);
-    return false;
-  }
-
-  if (private_bytes)
-    *private_bytes = private_pages_count * page_size;
-  if (shared_bytes)
-    *shared_bytes = shared_pages_count * page_size;
-
-  return true;
-}
-
-void ProcessMetrics::GetCommittedKBytes(CommittedKBytes* usage) const {
-}
-
-bool ProcessMetrics::GetWorkingSetKBytes(WorkingSetKBytes* ws_usage) const {
-  size_t priv = GetWorkingSetSize();
-  if (!priv)
-    return false;
-  ws_usage->priv = priv / 1024;
-  ws_usage->shareable = 0;
-  ws_usage->shared = 0;
-  return true;
-}
-
-#define TIME_VALUE_TO_TIMEVAL(a, r) do {  \
-  (r)->tv_sec = (a)->seconds;             \
-  (r)->tv_usec = (a)->microseconds;       \
-} while (0)
-
-double ProcessMetrics::GetCPUUsage() {
-  mach_port_t task = TaskForPid(process_);
-  if (task == MACH_PORT_NULL)
-    return 0;
-
-  kern_return_t kr;
-
-  // Libtop explicitly loops over the threads (libtop_pinfo_update_cpu_usage()
-  // in libtop.c), but this is more concise and gives the same results:
-  task_thread_times_info thread_info_data;
-  mach_msg_type_number_t thread_info_count = TASK_THREAD_TIMES_INFO_COUNT;
-  kr = task_info(task,
-                 TASK_THREAD_TIMES_INFO,
-                 reinterpret_cast<task_info_t>(&thread_info_data),
-                 &thread_info_count);
-  if (kr != KERN_SUCCESS) {
-    // Most likely cause: |task| is a zombie.
-    return 0;
-  }
-
-  task_basic_info_64 task_info_data;
-  if (!GetTaskInfo(task, &task_info_data))
-    return 0;
-
-  /* Set total_time. */
-  // thread info contains live time...
-  struct timeval user_timeval, system_timeval, task_timeval;
-  TIME_VALUE_TO_TIMEVAL(&thread_info_data.user_time, &user_timeval);
-  TIME_VALUE_TO_TIMEVAL(&thread_info_data.system_time, &system_timeval);
-  timeradd(&user_timeval, &system_timeval, &task_timeval);
-
-  // ... task info contains terminated time.
-  TIME_VALUE_TO_TIMEVAL(&task_info_data.user_time, &user_timeval);
-  TIME_VALUE_TO_TIMEVAL(&task_info_data.system_time, &system_timeval);
-  timeradd(&user_timeval, &task_timeval, &task_timeval);
-  timeradd(&system_timeval, &task_timeval, &task_timeval);
-
-  struct timeval now;
-  int retval = gettimeofday(&now, NULL);
-  if (retval)
-    return 0;
-
-  int64 time = TimeValToMicroseconds(now);
-  int64 task_time = TimeValToMicroseconds(task_timeval);
-
-  if ((last_system_time_ == 0) || (last_time_ == 0)) {
-    // First call, just set the last values.
-    last_system_time_ = task_time;
-    last_time_ = time;
-    return 0;
-  }
-
-  int64 system_time_delta = task_time - last_system_time_;
-  int64 time_delta = time - last_time_;
-  DCHECK_NE(0U, time_delta);
-  if (time_delta == 0)
-    return 0;
-
-  last_system_time_ = task_time;
-  last_time_ = time;
-
-  return static_cast<double>(system_time_delta * 100.0) / time_delta;
-}
-
-mach_port_t ProcessMetrics::TaskForPid(ProcessHandle process) const {
-  mach_port_t task = MACH_PORT_NULL;
-  if (port_provider_)
-    task = port_provider_->TaskForPid(process_);
-  if (task == MACH_PORT_NULL && process_ == getpid())
-    task = mach_task_self();
-  return task;
-}
-
-// ------------------------------------------------------------------------
-
-// Bytes committed by the system.
-size_t GetSystemCommitCharge() {
-  base::mac::ScopedMachPort host(mach_host_self());
-  mach_msg_type_number_t count = HOST_VM_INFO_COUNT;
-  vm_statistics_data_t data;
-  kern_return_t kr = host_statistics(host, HOST_VM_INFO,
-                                     reinterpret_cast<host_info_t>(&data),
-                                     &count);
-  if (kr) {
-    DLOG(WARNING) << "Failed to fetch host statistics.";
-    return 0;
-  }
-
-  vm_size_t page_size;
-  kr = host_page_size(host, &page_size);
-  if (kr) {
-    DLOG(ERROR) << "Failed to fetch host page size.";
-    return 0;
-  }
-
-  return (data.active_count * page_size) / 1024;
-}
-
+// These are helpers for EnableTerminationOnHeapCorruption, which is a no-op
+// on 64 bit Macs.
+#if ARCH_CPU_32_BITS
 namespace {
 
 // Finds the library path for malloc() and thus the libC part of libSystem,
@@ -508,7 +209,6 @@ malloc_error_break_t g_original_malloc_error_break = NULL;
 // as __private_extern__ and cannot be dlsym()ed. Instead, use nlist() to
 // get it.
 malloc_error_break_t LookUpMallocErrorBreak() {
-#if ARCH_CPU_32_BITS
   const char* lib_c_path = LookUpLibCPath();
   if (!lib_c_path)
     return NULL;
@@ -538,29 +238,7 @@ malloc_error_break_t LookUpMallocErrorBreak() {
   reference_addr += nl[0].n_value;
 
   return reinterpret_cast<malloc_error_break_t>(reference_addr);
-#endif  // ARCH_CPU_32_BITS
-
-  return NULL;
 }
-
-// Simple scoper that saves the current value of errno, resets it to 0, and on
-// destruction puts the old value back. This is so that CrMallocErrorBreak can
-// safely test errno free from the effects of other routines.
-class ScopedClearErrno {
- public:
-  ScopedClearErrno() : old_errno_(errno) {
-    errno = 0;
-  }
-  ~ScopedClearErrno() {
-    if (errno == 0)
-      errno = old_errno_;
-  }
-
- private:
-  int old_errno_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedClearErrno);
-};
 
 // Combines ThreadLocalBoolean with AutoReset.  It would be convenient
 // to compose ThreadLocalPointer<bool> with base::AutoReset<bool>, but that
@@ -624,14 +302,14 @@ void CrMallocErrorBreak() {
 }
 
 }  // namespace
+#endif  // ARCH_CPU_32_BITS
 
 void EnableTerminationOnHeapCorruption() {
-#ifdef ADDRESS_SANITIZER
-  // Don't do anything special on heap corruption, because it should be handled
-  // by AddressSanitizer.
+#if defined(ADDRESS_SANITIZER) || ARCH_CPU_64_BITS
+  // AddressSanitizer handles heap corruption, and on 64 bit Macs, the malloc
+  // system automatically abort()s on heap corruption.
   return;
-#endif
-
+#else
   // Only override once, otherwise CrMallocErrorBreak() will recurse
   // to itself.
   if (g_original_malloc_error_break)
@@ -650,6 +328,7 @@ void EnableTerminationOnHeapCorruption() {
 
   if (err != err_none)
     DLOG(WARNING) << "Could not override malloc_error_break; error = " << err;
+#endif  // defined(ADDRESS_SANITIZER) || ARCH_CPU_64_BITS
 }
 
 // ------------------------------------------------------------------------
@@ -748,7 +427,9 @@ memalign_type g_old_memalign_purgeable;
 
 void* oom_killer_malloc(struct _malloc_zone_t* zone,
                         size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_malloc(zone, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -758,7 +439,9 @@ void* oom_killer_malloc(struct _malloc_zone_t* zone,
 void* oom_killer_calloc(struct _malloc_zone_t* zone,
                         size_t num_items,
                         size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_calloc(zone, num_items, size);
   if (!result && num_items && size)
     debug::BreakDebugger();
@@ -767,7 +450,9 @@ void* oom_killer_calloc(struct _malloc_zone_t* zone,
 
 void* oom_killer_valloc(struct _malloc_zone_t* zone,
                         size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_valloc(zone, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -776,14 +461,18 @@ void* oom_killer_valloc(struct _malloc_zone_t* zone,
 
 void oom_killer_free(struct _malloc_zone_t* zone,
                      void* ptr) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   g_old_free(zone, ptr);
 }
 
 void* oom_killer_realloc(struct _malloc_zone_t* zone,
                          void* ptr,
                          size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_realloc(zone, ptr, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -793,7 +482,9 @@ void* oom_killer_realloc(struct _malloc_zone_t* zone,
 void* oom_killer_memalign(struct _malloc_zone_t* zone,
                           size_t alignment,
                           size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_memalign(zone, alignment, size);
   // Only die if posix_memalign would have returned ENOMEM, since there are
   // other reasons why NULL might be returned (see
@@ -807,7 +498,9 @@ void* oom_killer_memalign(struct _malloc_zone_t* zone,
 
 void* oom_killer_malloc_purgeable(struct _malloc_zone_t* zone,
                                   size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_malloc_purgeable(zone, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -817,7 +510,9 @@ void* oom_killer_malloc_purgeable(struct _malloc_zone_t* zone,
 void* oom_killer_calloc_purgeable(struct _malloc_zone_t* zone,
                                   size_t num_items,
                                   size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_calloc_purgeable(zone, num_items, size);
   if (!result && num_items && size)
     debug::BreakDebugger();
@@ -826,7 +521,9 @@ void* oom_killer_calloc_purgeable(struct _malloc_zone_t* zone,
 
 void* oom_killer_valloc_purgeable(struct _malloc_zone_t* zone,
                                   size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_valloc_purgeable(zone, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -835,14 +532,18 @@ void* oom_killer_valloc_purgeable(struct _malloc_zone_t* zone,
 
 void oom_killer_free_purgeable(struct _malloc_zone_t* zone,
                                void* ptr) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   g_old_free_purgeable(zone, ptr);
 }
 
 void* oom_killer_realloc_purgeable(struct _malloc_zone_t* zone,
                                    void* ptr,
                                    size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_realloc_purgeable(zone, ptr, size);
   if (!result && size)
     debug::BreakDebugger();
@@ -852,7 +553,9 @@ void* oom_killer_realloc_purgeable(struct _malloc_zone_t* zone,
 void* oom_killer_memalign_purgeable(struct _malloc_zone_t* zone,
                                     size_t alignment,
                                     size_t size) {
+#if ARCH_CPU_32_BITS
   ScopedClearErrno clear_errno;
+#endif  // ARCH_CPU_32_BITS
   void* result = g_old_memalign_purgeable(zone, alignment, size);
   // Only die if posix_memalign would have returned ENOMEM, since there are
   // other reasons why NULL might be returned (see
@@ -940,8 +643,10 @@ id oom_killer_allocWithZone(id self, SEL _cmd, NSZone* zone)
 
 void* UncheckedMalloc(size_t size) {
   if (g_old_malloc) {
+#if ARCH_CPU_32_BITS
     ScopedClearErrno clear_errno;
     ThreadLocalBooleanAutoReset flag(g_unchecked_malloc.Pointer(), true);
+#endif  // ARCH_CPU_32_BITS
     return g_old_malloc(malloc_default_zone(), size);
   }
   return malloc(size);

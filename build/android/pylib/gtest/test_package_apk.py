@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 
+import logging
 import os
 import shlex
 import sys
@@ -63,7 +64,7 @@ class TestPackageApk(TestPackage):
   def _WatchFifo(self, timeout, logfile=None):
     for i in range(10):
       if self.adb.FileExistsOnDevice(self._GetFifo()):
-        print 'Fifo created...'
+        logging.info('Fifo created.')
         break
       time.sleep(i)
     else:
@@ -77,6 +78,14 @@ class TestPackageApk(TestPackage):
     """Clear the application state."""
     self.adb.ClearApplicationState(self._apk_package_name)
 
+  def _StartActivity(self):
+    self.adb.StartActivity(
+        self._apk_package_name,
+        self._test_activity_name,
+        wait_for_completion=True,
+        action='android.intent.action.MAIN',
+        force_stop=True)
+
   def GetAllTests(self):
     """Returns a list of all tests available in the test suite."""
     self._CreateTestRunnerScript('--gtest_list_tests')
@@ -84,9 +93,7 @@ class TestPackageApk(TestPackage):
       self.tool.SetupEnvironment()
       # Clear and start monitoring logcat.
       self._ClearFifo()
-      self.adb.RunShellCommand(
-          'am start -n ' + self._apk_package_name + '/' +
-          self._test_activity_name)
+      self._StartActivity()
       # Wait for native test to complete.
       p = self._WatchFifo(timeout=30 * self.tool.GetTimeoutScale())
       p.expect("<<ScopedMainEntryLogger")
@@ -106,20 +113,27 @@ class TestPackageApk(TestPackage):
     try:
       self.tool.SetupEnvironment()
       self._ClearFifo()
-      self.adb.RunShellCommand(
-        'am start -n ' + self._apk_package_name + '/' +
-        self._test_activity_name)
+      self._StartActivity()
     finally:
       self.tool.CleanUpEnvironment()
     logfile = android_commands.NewLineNormalizer(sys.stdout)
     return self._WatchTestOutput(self._WatchFifo(timeout=10, logfile=logfile))
 
+  def _NeedsInstall(self):
+    installed_apk_path = self.adb.GetApplicationPath(self._apk_package_name)
+    if installed_apk_path:
+      return not self.adb.CheckMd5Sum(
+          self.test_suite_full, installed_apk_path, ignore_paths=True)
+    else:
+      return True
+
   def StripAndCopyExecutable(self):
     self.tool.CopyFiles()
-    # Always uninstall the previous one (by activity name); we don't
-    # know what was embedded in it.
-    self.adb.ManagedInstall(self.test_suite_full, False,
-                            package_name=self._apk_package_name)
+    if self._NeedsInstall():
+      # Always uninstall the previous one (by activity name); we don't
+      # know what was embedded in it.
+      self.adb.ManagedInstall(self.test_suite_full, False,
+                              package_name=self._apk_package_name)
 
   def _GetTestSuiteBaseName(self):
     """Returns the  base name of the test suite."""

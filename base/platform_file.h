@@ -19,14 +19,6 @@
 
 namespace base {
 
-#if defined(OS_WIN)
-typedef HANDLE PlatformFile;
-const PlatformFile kInvalidPlatformFileValue = INVALID_HANDLE_VALUE;
-#elif defined(OS_POSIX)
-typedef int PlatformFile;
-const PlatformFile kInvalidPlatformFileValue = -1;
-#endif
-
 // PLATFORM_FILE_(OPEN|CREATE).* are mutually exclusive. You should specify
 // exactly one of the five (possibly combining with other flags) when opening
 // or creating a file.
@@ -55,6 +47,8 @@ enum PlatformFileFlags {
 
   PLATFORM_FILE_TERMINAL_DEVICE = 1 << 16,   // Serial port flags
   PLATFORM_FILE_BACKUP_SEMANTICS = 1 << 17,  // Used on Windows only
+
+  PLATFORM_FILE_EXECUTE = 1 << 18,           // Used on Windows only
 };
 
 // PLATFORM_FILE_ERROR_ACCESS_DENIED is returned when a call fails because of
@@ -77,8 +71,9 @@ enum PlatformFileError {
   PLATFORM_FILE_ERROR_NOT_A_FILE = -13,
   PLATFORM_FILE_ERROR_NOT_EMPTY = -14,
   PLATFORM_FILE_ERROR_INVALID_URL = -15,
+  PLATFORM_FILE_ERROR_IO = -16,
   // Put new entries here and increment PLATFORM_FILE_ERROR_MAX.
-  PLATFORM_FILE_ERROR_MAX = -16
+  PLATFORM_FILE_ERROR_MAX = -17
 };
 
 // This explicit mapping matches both FILE_ on Windows and SEEK_ on Linux.
@@ -115,6 +110,16 @@ struct BASE_EXPORT PlatformFileInfo {
   // The creation time of a file.
   base::Time creation_time;
 };
+
+#if defined(OS_WIN)
+typedef HANDLE PlatformFile;
+const PlatformFile kInvalidPlatformFileValue = INVALID_HANDLE_VALUE;
+PlatformFileError LastErrorToPlatformFileError(DWORD saved_errno);
+#elif defined(OS_POSIX)
+typedef int PlatformFile;
+const PlatformFile kInvalidPlatformFileValue = -1;
+PlatformFileError ErrnoToPlatformFileError(int saved_errno);
+#endif
 
 // Creates or opens the given file. If |created| is provided, it will be set to
 // true if a new file was created [or an old one truncated to zero length to

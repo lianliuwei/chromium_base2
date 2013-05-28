@@ -64,6 +64,10 @@ def AddTestRunnerOptions(option_parser, default_timeout=60):
   option_parser.add_option('-c', dest='cleanup_test_files',
                            help='Cleanup test files on the device after run',
                            action='store_true')
+  option_parser.add_option('--num_retries', dest='num_retries', type='int',
+                           default=2,
+                           help='Number of retries for a test before '
+                           'giving up.')
   option_parser.add_option('-v',
                            '--verbose',
                            dest='verbose_count',
@@ -117,41 +121,37 @@ def AddGTestOptions(option_parser):
                            help='Use Xvfb around tests (ignored if not Linux).')
   option_parser.add_option('--webkit', action='store_true',
                            help='Run the tests from a WebKit checkout.')
-  option_parser.add_option('--repeat', dest='repeat', type='int',
-                           default=2,
-                           help='Repeat count on test timeout.')
   option_parser.add_option('--exit_code', action='store_true',
                            help='If set, the exit code will be total number '
                            'of failures.')
   option_parser.add_option('--exe', action='store_true',
                            help='If set, use the exe test runner instead of '
                            'the APK.')
+  option_parser.add_option('--abi', default='armeabi-v7a',
+                           help='Platform of emulators to launch.')
 
 
 def AddCommonInstrumentationOptions(option_parser):
   """Decorates OptionParser with base instrumentation tests options."""
 
   AddTestRunnerOptions(option_parser)
-  option_parser.add_option('-w', '--wait_debugger', dest='wait_for_debugger',
-                           action='store_true', help='Wait for debugger.')
   option_parser.add_option('-f', '--test_filter',
                            help='Test filter (if not fully qualified, '
                            'will run all matches).')
-  option_parser.add_option('-A', '--annotation', dest='annotation_str',
-                           help=('Run only tests with any of the given '
-                                 'annotations. '
-                                 'An annotation can be either a key or a '
-                                 'key-values pair. '
-                                 'A test that has no annotation is '
-                                 'considered "SmallTest".'))
+  option_parser.add_option(
+      '-A', '--annotation', dest='annotation_str',
+      help=('Comma-separated list of annotations. Run only tests with any of '
+            'the given annotations. An annotation can be either a key or a '
+            'key-values pair. A test that has no annotation is considered '
+            '"SmallTest".'))
+  option_parser.add_option(
+      '-E', '--exclude-annotation', dest='exclude_annotation_str',
+      help=('Comma-separated list of annotations. Exclude tests with these '
+            'annotations.'))
   option_parser.add_option('-j', '--java_only', action='store_true',
                            help='Run only the Java tests.')
   option_parser.add_option('-p', '--python_only', action='store_true',
                            help='Run only the Python tests.')
-  option_parser.add_option('-n', '--run_count', type='int',
-                           dest='number_of_runs', default=1,
-                           help=('How many times to run each test, regardless '
-                                 'of the result. (Default is 1)'))
   option_parser.add_option('--screenshot', dest='screenshot_failures',
                            action='store_true',
                            help='Capture screenshots of test failures')
@@ -192,13 +192,15 @@ def AddInstrumentationOptions(option_parser):
   """Decorates OptionParser with instrumentation tests options."""
 
   AddCommonInstrumentationOptions(option_parser)
+  option_parser.add_option('-w', '--wait_debugger', dest='wait_for_debugger',
+                           action='store_true', help='Wait for debugger.')
   option_parser.add_option('-I', dest='install_apk',
                            help='Install APK.', action='store_true')
-  option_parser.add_option('--test-apk', dest='test_apk',
-                           help=('The name of the apk containing the tests '
-                                 '(without the .apk extension). For SDK '
-                                 'builds, the apk name without the debug '
-                                 'suffix(for example, ContentShellTest).'))
+  option_parser.add_option(
+      '--test-apk', dest='test_apk',
+      help=('The name of the apk containing the tests (without the .apk '
+            'extension; e.g. "ContentShellTest"). Alternatively, this can '
+            'be a full path to the apk.'))
 
 
 def AddUIAutomatorOptions(option_parser):
@@ -209,11 +211,10 @@ def AddUIAutomatorOptions(option_parser):
       '--package-name',
       help=('The package name used by the apk containing the application.'))
   option_parser.add_option(
-      '--uiautomator-jar',
-      help=('Path to the uiautomator jar to be installed on the device.'))
-  option_parser.add_option(
-      '--uiautomator-info-jar',
-      help=('Path to the uiautomator jar for use by proguard.'))
+      '--test-jar', dest='test_jar',
+      help=('The name of the dexed jar containing the tests (without the '
+            '.dex.jar extension). Alternatively, this can be a full path to '
+            'the jar.'))
 
 
 def ValidateCommonInstrumentationOptions(option_parser, options, args):
@@ -233,11 +234,16 @@ def ValidateCommonInstrumentationOptions(option_parser, options, args):
     options.run_java_tests = False
 
   if options.annotation_str:
-    options.annotation = options.annotation_str.split()
+    options.annotations = options.annotation_str.split(',')
   elif options.test_filter:
-    options.annotation = []
+    options.annotations = []
   else:
-    options.annotation = ['Smoke', 'SmallTest', 'MediumTest', 'LargeTest']
+    options.annotations = ['Smoke', 'SmallTest', 'MediumTest', 'LargeTest']
+
+  if options.exclude_annotation_str:
+    options.exclude_annotations = options.exclude_annotation_str.split(',')
+  else:
+    options.exclude_annotations = []
 
 
 def ValidateInstrumentationOptions(option_parser, options, args):
@@ -269,9 +275,17 @@ def ValidateUIAutomatorOptions(option_parser, options, args):
   if not options.package_name:
     option_parser.error('--package-name must be specified.')
 
-  if not options.uiautomator_jar:
-    option_parser.error('--uiautomator-jar must be specified.')
+  if not options.test_jar:
+    option_parser.error('--test-jar must be specified.')
 
-  if not options.uiautomator_info_jar:
-    option_parser.error('--uiautomator-info-jar must be specified.')
+  if os.path.exists(options.test_jar):
+    # The dexed JAR is fully qualified, assume the info JAR lives along side.
+    options.uiautomator_jar = options.test_jar
+  else:
+    options.uiautomator_jar = os.path.join(
+        _SDK_OUT_DIR, options.build_type, constants.SDK_BUILD_JAVALIB_DIR,
+        '%s.dex.jar' % options.test_jar)
+  options.uiautomator_info_jar = (
+      options.uiautomator_jar[:options.uiautomator_jar.find('.dex.jar')] +
+      '_java.jar')
 

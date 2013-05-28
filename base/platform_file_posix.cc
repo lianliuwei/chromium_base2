@@ -11,6 +11,7 @@
 
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/metrics/sparse_histogram.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/utf_string_conversions.h"
@@ -122,39 +123,8 @@ PlatformFile CreatePlatformFileUnsafe(const FilePath& name,
   if (error) {
     if (descriptor >= 0)
       *error = PLATFORM_FILE_OK;
-    else {
-      switch (errno) {
-        case EACCES:
-        case EISDIR:
-        case EROFS:
-        case EPERM:
-          *error = PLATFORM_FILE_ERROR_ACCESS_DENIED;
-          break;
-        case ETXTBSY:
-          *error = PLATFORM_FILE_ERROR_IN_USE;
-          break;
-        case EEXIST:
-          *error = PLATFORM_FILE_ERROR_EXISTS;
-          break;
-        case ENOENT:
-          *error = PLATFORM_FILE_ERROR_NOT_FOUND;
-          break;
-        case EMFILE:
-          *error = PLATFORM_FILE_ERROR_TOO_MANY_OPENED;
-          break;
-        case ENOMEM:
-          *error = PLATFORM_FILE_ERROR_NO_MEMORY;
-          break;
-        case ENOSPC:
-          *error = PLATFORM_FILE_ERROR_NO_SPACE;
-          break;
-        case ENOTDIR:
-          *error = PLATFORM_FILE_ERROR_NOT_A_DIRECTORY;
-          break;
-        default:
-          *error = PLATFORM_FILE_ERROR_FAILED;
-      }
-    }
+    else
+      *error = ErrnoToPlatformFileError(errno);
   }
 
   return descriptor;
@@ -301,7 +271,21 @@ bool TouchPlatformFile(PlatformFile file, const base::Time& last_access_time,
   timeval times[2];
   times[0] = last_access_time.ToTimeVal();
   times[1] = last_modified_time.ToTimeVal();
+
+#ifdef __USE_XOPEN2K8
+  // futimens should be available, but futimes might not be
+  // http://pubs.opengroup.org/onlinepubs/9699919799/
+
+  timespec ts_times[2];
+  ts_times[0].tv_sec  = times[0].tv_sec;
+  ts_times[0].tv_nsec = times[0].tv_usec * 1000;
+  ts_times[1].tv_sec  = times[1].tv_sec;
+  ts_times[1].tv_nsec = times[1].tv_usec * 1000;
+
+  return !futimens(file, ts_times);
+#else
   return !futimes(file, times);
+#endif
 }
 
 bool GetPlatformFileInfo(PlatformFile file, PlatformFileInfo* info) {
@@ -319,6 +303,36 @@ bool GetPlatformFileInfo(PlatformFile file, PlatformFileInfo* info) {
   info->last_accessed = base::Time::FromTimeT(file_info.st_atime);
   info->creation_time = base::Time::FromTimeT(file_info.st_ctime);
   return true;
+}
+
+PlatformFileError ErrnoToPlatformFileError(int saved_errno) {
+  switch (saved_errno) {
+    case EACCES:
+    case EISDIR:
+    case EROFS:
+    case EPERM:
+      return PLATFORM_FILE_ERROR_ACCESS_DENIED;
+    case ETXTBSY:
+      return PLATFORM_FILE_ERROR_IN_USE;
+    case EEXIST:
+      return PLATFORM_FILE_ERROR_EXISTS;
+    case ENOENT:
+      return PLATFORM_FILE_ERROR_NOT_FOUND;
+    case EMFILE:
+      return PLATFORM_FILE_ERROR_TOO_MANY_OPENED;
+    case ENOMEM:
+      return PLATFORM_FILE_ERROR_NO_MEMORY;
+    case ENOSPC:
+      return PLATFORM_FILE_ERROR_NO_SPACE;
+    case ENOTDIR:
+      return PLATFORM_FILE_ERROR_NOT_A_DIRECTORY;
+    default:
+#if !defined(OS_NACL)  // NaCl build has no metrics code.
+      UMA_HISTOGRAM_SPARSE_SLOWLY("PlatformFile.UnknownErrors.Posix",
+                                  saved_errno);
+#endif
+      return PLATFORM_FILE_ERROR_FAILED;
+  }
 }
 
 }  // namespace base
