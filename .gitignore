@@ -44,7 +44,10 @@ v8.log
 /ash/resources/google_wallpapers/
 /breakpad/src/
 /build/Debug
+/build/Debug_x64
 /build/Release
+/build/Release_x64
+/build/gomacc.lock
 /build/ipch/
 /build/util/LASTCHANGE
 /build/util/support
@@ -228,6 +231,7 @@ v8.log
 /third_party/mtpd/source/
 /third_party/nacl_sdk_binaries/
 /third_party/nss
+/third_party/openmax_dl/
 /third_party/openssl
 /third_party/opus/src
 /third_party/ots
@@ -262,6 +266,7 @@ v8.log
 /third_party/tsan/
 /third_party/undoview
 /third_party/usb_ids
+/third_party/usrsctp/usrsctplib
 /third_party/v8-i18n
 /third_party/valgrind
 /third_party/webdriver/pylib
