@@ -37,11 +37,12 @@
 #endif
 
 #if defined(__linux__)
-#define DEEP_HEAP_PROFILE 1
+#define USE_DEEP_HEAP_PROFILE 1
 #endif
 
 #include "addressmap-inl.h"
 #include "heap-profile-table.h"
+#include "memory_region_map.h"
 
 class DeepHeapProfile {
  public:
@@ -85,7 +86,7 @@ class DeepHeapProfile {
   int FillOrderedProfile(char raw_buffer[], int buffer_size);
 
  private:
-#ifdef DEEP_HEAP_PROFILE
+#ifdef USE_DEEP_HEAP_PROFILE
   typedef HeapProfileTable::Stats Stats;
   typedef HeapProfileTable::Bucket Bucket;
   typedef HeapProfileTable::AllocValue AllocValue;
@@ -135,7 +136,7 @@ class DeepHeapProfile {
 
     bool AppendChar(char v);
     bool AppendString(const char* v, int d);
-    bool AppendInt(int v, int d);
+    bool AppendInt(int v, int d, bool leading_zero);
     bool AppendLong(long v, int d);
     bool AppendUnsignedLong(unsigned long v, int d);
     bool AppendInt64(int64 v, int d);
@@ -270,6 +271,11 @@ class DeepHeapProfile {
                             AllocValue* alloc_value,
                             DeepHeapProfile* deep_profile);
 
+    DeepBucket* GetInformationOfMemoryRegion(
+        const MemoryRegionMap::RegionIterator& mmap_iter,
+        const MemoryResidenceInfoGetterInterface* memory_residence_info_getter,
+        DeepHeapProfile* deep_profile);
+
     // All RegionStats members in this class contain the bytes of virtual
     // memory and committed memory.
     // TODO(dmikurube): These regions should be classified more precisely later
@@ -302,7 +308,7 @@ class DeepHeapProfile {
   char* profiler_buffer_;  // Buffer we use many times.
 
   DeepBucketTable deep_table_;
-#endif  // DEEP_HEAP_PROFILE
+#endif  // USE_DEEP_HEAP_PROFILE
 
   HeapProfileTable* heap_profile_;
 
