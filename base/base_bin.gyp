@@ -4,6 +4,7 @@
     'chromium_code': 1,
     'bin_path': '..\\build\\$(ConfigurationName)',
     'lib_path': '<(bin_path)\\lib',
+    'dest_lib_path': '$(OutDir)\\lib\\',
   },
   
   'includes': [
@@ -31,7 +32,7 @@
               'base.lib',
             ],
             'AdditionalLibraryDirectories': [
-              '<(lib_path)'
+              '<(dest_lib_path)'
             ],
           },
         },
@@ -45,7 +46,7 @@
           ],
         },
         {
-          'destination': '$(OutDir)\\lib\\',
+          'destination': '<(dest_lib_path)',
           'files': [
             '<(lib_path)\\base.lib'
           ],
@@ -116,7 +117,7 @@
           ],
         },
         {
-          'destination': '$(OutDir)\\lib\\',
+          'destination': '<(dest_lib_path)',
           'files': [
             '<(lib_path)\\base_i18n.lib'
           ],
@@ -177,7 +178,7 @@
           ],
         },
         {
-          'destination': '$(OutDir)\\lib\\',
+          'destination': '<(dest_lib_path)',
           'files': [
             '<(lib_path)\\base_prefs.lib'
           ],
@@ -241,7 +242,7 @@
       },
       'copies': [
         {
-          'destination': '$(OutDir)\\lib\\',
+          'destination': '<(dest_lib_path)',
           'files': [
             '<(lib_path)\\base_prefs_test_support.lib'
           ],
@@ -279,7 +280,7 @@
       },
       'copies': [
         {
-          'destination': '$(OutDir)\\lib\\',
+          'destination': '<(dest_lib_path)',
           'files': [
             '<(lib_path)\\test_support_base.lib'
           ],
@@ -379,7 +380,7 @@
       },
       'copies': [
         {
-          'destination': '$(OutDir)\\lib\\',
+          'destination': '<(dest_lib_path)',
           'files': [
             '<(lib_path)\\test_support_perf.lib'
           ],
@@ -408,7 +409,7 @@
       },
       'copies': [
         {
-          'destination': '$(OutDir)\\lib\\',
+          'destination': '<(dest_lib_path)',
           'files': [
             '<(lib_path)\\base_static.lib',
           ],
@@ -438,7 +439,7 @@
       },
       'copies': [
         {
-          'destination': '$(OutDir)\\lib\\',
+          'destination': '<(dest_lib_path)',
           'files': [
             '<(lib_path)\\run_all_unittests.lib'
           ],
