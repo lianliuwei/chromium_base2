@@ -68,7 +68,7 @@ TEST(MacroTest, TestString){
 
 TEST(MacroTest, TestFloat){
     float m = 1e7;
-    float n = 1e-7;
+    float n = 1e-7f;
     EXPECT_FLOAT_EQ(m + n, m);
     EXPECT_PRED_FORMAT2(testing::FloatLE, m, n);
 }
@@ -107,8 +107,8 @@ public:
 };
 
 TEST(TypeAssertionTest, Demo){
-    FooType<bool> fooType;
-    //fooType.Bar(); //can not be compiled
+    // FooType<bool> fooType;
+    // fooType.Bar(); //can not be compiled
 }
 
 class FooCalcTest : public testing::Test

@@ -1,6 +1,5 @@
 #include "gtest/gtest.h"
 
-#include "base/test/main_hook.h"
 #include "base/test/test_suite.h"
 
 static int kCount = 0;
@@ -20,7 +19,6 @@ private:
 
 
 int main(int argc, char** argv) {
-  MainHook hook(main, argc, argv);
   testing::AddGlobalTestEnvironment(new FooEnvironment());
   return base::TestSuite(argc, argv).Run();
 }
