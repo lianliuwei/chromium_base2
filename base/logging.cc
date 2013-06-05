@@ -29,8 +29,8 @@ typedef HANDLE MutexHandle;
 #if defined(OS_POSIX)
 #include <errno.h>
 #include <pthread.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #define MAX_PATH PATH_MAX
@@ -49,8 +49,8 @@ typedef pthread_mutex_t* MutexHandle;
 #include "base/debug/alias.h"
 #include "base/debug/debugger.h"
 #include "base/debug/stack_trace.h"
-#include "base/eintr_wrapper.h"
-#include "base/string_piece.h"
+#include "base/posix/eintr_wrapper.h"
+#include "base/strings/string_piece.h"
 #include "base/synchronization/lock_impl.h"
 #include "base/threading/platform_thread.h"
 #include "base/utf_string_conversions.h"
@@ -66,6 +66,14 @@ typedef pthread_mutex_t* MutexHandle;
 namespace logging {
 
 DcheckState g_dcheck_state = DISABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS;
+
+DcheckState get_dcheck_state() {
+  return g_dcheck_state;
+}
+
+void set_dcheck_state(DcheckState state) {
+  g_dcheck_state = state;
+}
 
 namespace {
 
@@ -163,6 +171,8 @@ void CloseFile(FileHandle log) {
 void DeleteFilePath(const PathString& log_name) {
 #if defined(OS_WIN)
   DeleteFile(log_name.c_str());
+#elif defined (OS_NACL)
+  // Do nothing; unlink() isn't supported on NaCl.
 #else
   unlink(log_name.c_str());
 #endif
@@ -348,9 +358,11 @@ bool BaseInitLoggingImpl(const PathChar* new_log_file,
                          LogLockingState lock_log,
                          OldFileDeletionState delete_old,
                          DcheckState dcheck_state) {
+#if defined(OS_NACL)
+  CHECK(logging_dest == LOG_NONE ||
+        logging_dest == LOG_ONLY_TO_SYSTEM_DEBUG_LOG);
+#endif
   g_dcheck_state = dcheck_state;
-// TODO(bbudge) Hook this up to NaCl logging.
-#if !defined(OS_NACL)
   CommandLine* command_line = CommandLine::ForCurrentProcess();
   // Don't bother initializing g_vlog_info unless we use one of the
   // vlog switches.
@@ -393,9 +405,6 @@ bool BaseInitLoggingImpl(const PathChar* new_log_file,
     DeleteFilePath(*log_file_name);
 
   return InitializeLogFileHandle();
-#else
-  return true;
-#endif  // !defined(OS_NACL)
 }
 
 void SetMinLogLevel(int level) {
@@ -580,7 +589,8 @@ LogMessage::~LogMessage() {
 #if defined(OS_WIN)
     OutputDebugStringA(str_newline.c_str());
 #elif defined(OS_ANDROID)
-    android_LogPriority priority = ANDROID_LOG_UNKNOWN;
+    android_LogPriority priority =
+        (severity_ < 0) ? ANDROID_LOG_VERBOSE : ANDROID_LOG_UNKNOWN;
     switch (severity_) {
       case LOG_INFO:
         priority = ANDROID_LOG_INFO;
@@ -852,6 +862,14 @@ void RawLog(int level, const char* message) {
 
 // This was defined at the beginning of this file.
 #undef write
+
+#if defined(OS_WIN)
+std::wstring GetLogFileFullPath() {
+  if (log_file_name)
+    return *log_file_name;
+  return std::wstring();
+}
+#endif
 
 }  // namespace logging
 

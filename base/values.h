@@ -29,6 +29,7 @@
 #include "base/base_export.h"
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/string16.h"
 
 // This file declares "using base::Value", etc. at the bottom, so that
@@ -66,10 +67,9 @@ class BASE_EXPORT Value {
 
   virtual ~Value();
 
-  // Convenience methods for creating Value objects for various
-  // kinds of values without thinking about which class implements them.
-  // These can always be expected to return a valid Value*.
   static Value* CreateNullValue();
+  // DEPRECATED: Do not use the following 5 functions. Instead, use
+  // new FundamentalValue or new StringValue.
   static FundamentalValue* CreateBooleanValue(bool in_value);
   static FundamentalValue* CreateIntegerValue(int in_value);
   static FundamentalValue* CreateDoubleValue(double in_value);
@@ -115,16 +115,13 @@ class BASE_EXPORT Value {
   static bool Equals(const Value* a, const Value* b);
 
  protected:
-  // This isn't safe for end-users (they should use the Create*Value()
-  // static methods above), but it's useful for subclasses.
+  // These aren't safe for end-users, but they are useful for subclasses.
   explicit Value(Type type);
+  Value(const Value& that);
+  Value& operator=(const Value& that);
 
  private:
-  Value();
-
   Type type_;
-
-  DISALLOW_COPY_AND_ASSIGN(Value);
 };
 
 // FundamentalValue represents the simple fundamental types of values.
@@ -148,8 +145,6 @@ class BASE_EXPORT FundamentalValue : public Value {
     int integer_value_;
     double double_value_;
   };
-
-  DISALLOW_COPY_AND_ASSIGN(FundamentalValue);
 };
 
 class BASE_EXPORT StringValue : public Value {
@@ -170,39 +165,36 @@ class BASE_EXPORT StringValue : public Value {
 
  private:
   std::string value_;
-
-  DISALLOW_COPY_AND_ASSIGN(StringValue);
 };
 
 class BASE_EXPORT BinaryValue: public Value {
  public:
-  virtual ~BinaryValue();
+  // Creates a BinaryValue with a null buffer and size of 0.
+  BinaryValue();
 
-  // Creates a Value to represent a binary buffer.  The new object takes
-  // ownership of the pointer passed in, if successful.
-  // Returns NULL if buffer is NULL.
-  static BinaryValue* Create(char* buffer, size_t size);
+  // Creates a BinaryValue, taking ownership of the bytes pointed to by
+  // |buffer|.
+  BinaryValue(scoped_ptr<char[]> buffer, size_t size);
+
+  virtual ~BinaryValue();
 
   // For situations where you want to keep ownership of your buffer, this
   // factory method creates a new BinaryValue by copying the contents of the
   // buffer that's passed in.
-  // Returns NULL if buffer is NULL.
   static BinaryValue* CreateWithCopiedBuffer(const char* buffer, size_t size);
 
   size_t GetSize() const { return size_; }
-  char* GetBuffer() { return buffer_; }
-  const char* GetBuffer() const { return buffer_; }
+
+  // May return NULL.
+  char* GetBuffer() { return buffer_.get(); }
+  const char* GetBuffer() const { return buffer_.get(); }
 
   // Overridden from Value:
   virtual BinaryValue* DeepCopy() const OVERRIDE;
   virtual bool Equals(const Value* other) const OVERRIDE;
 
  private:
-  // Constructor is private so that only objects with valid buffer pointers
-  // and size values can be created.
-  BinaryValue(char* buffer, size_t size);
-
-  char* buffer_;
+  scoped_ptr<char[]> buffer_;
   size_t size_;
 
   DISALLOW_COPY_AND_ASSIGN(BinaryValue);
@@ -256,6 +248,15 @@ class BASE_EXPORT DictionaryValue : public Value {
   // be used as paths.
   void SetWithoutPathExpansion(const std::string& key, Value* in_value);
 
+  // Convenience forms of SetWithoutPathExpansion().
+  void SetBooleanWithoutPathExpansion(const std::string& path, bool in_value);
+  void SetIntegerWithoutPathExpansion(const std::string& path, int in_value);
+  void SetDoubleWithoutPathExpansion(const std::string& path, double in_value);
+  void SetStringWithoutPathExpansion(const std::string& path,
+                                     const std::string& in_value);
+  void SetStringWithoutPathExpansion(const std::string& path,
+                                     const string16& in_value);
+
   // Gets the Value associated with the given path starting from this object.
   // A path has the form "<key>" or "<key>.<key>.[...]", where "." indexes
   // into the next DictionaryValue down.  If the path can be resolved
@@ -288,6 +289,8 @@ class BASE_EXPORT DictionaryValue : public Value {
   bool GetWithoutPathExpansion(const std::string& key,
                                const Value** out_value) const;
   bool GetWithoutPathExpansion(const std::string& key, Value** out_value);
+  bool GetBooleanWithoutPathExpansion(const std::string& key,
+                                      bool* out_value) const;
   bool GetIntegerWithoutPathExpansion(const std::string& key,
                                       int* out_value) const;
   bool GetDoubleWithoutPathExpansion(const std::string& key,
@@ -333,40 +336,13 @@ class BASE_EXPORT DictionaryValue : public Value {
   // Swaps contents with the |other| dictionary.
   virtual void Swap(DictionaryValue* other);
 
-  // This class provides an iterator for the keys in the dictionary.
-  // It can't be used to modify the dictionary.
-  //
-  // YOU SHOULD ALWAYS USE THE XXXWithoutPathExpansion() APIs WITH THESE, NOT
-  // THE NORMAL XXX() APIs.  This makes sure things will work correctly if any
-  // keys have '.'s in them.
-  class BASE_EXPORT key_iterator
-      : private std::iterator<std::input_iterator_tag, const std::string> {
-   public:
-    explicit key_iterator(ValueMap::const_iterator itr);
-    // Not explicit, because this is a copy constructor.
-    key_iterator(const key_iterator& rhs);
-    key_iterator operator++() {
-      ++itr_;
-      return *this;
-    }
-    const std::string& operator*() { return itr_->first; }
-    bool operator!=(const key_iterator& other) { return itr_ != other.itr_; }
-    bool operator==(const key_iterator& other) { return itr_ == other.itr_; }
-
-   private:
-    ValueMap::const_iterator itr_;
-  };
-
-  key_iterator begin_keys() const { return key_iterator(dictionary_.begin()); }
-  key_iterator end_keys() const { return key_iterator(dictionary_.end()); }
-
   // This class provides an iterator over both keys and values in the
   // dictionary.  It can't be used to modify the dictionary.
   class BASE_EXPORT Iterator {
    public:
     explicit Iterator(const DictionaryValue& target);
 
-    bool HasNext() const { return it_ != target_.dictionary_.end(); }
+    bool IsAtEnd() const { return it_ == target_.dictionary_.end(); }
     void Advance() { ++it_; }
 
     const std::string& key() const { return it_->first; }
@@ -447,10 +423,21 @@ class BASE_EXPORT ListValue : public Value {
 
   // Removes the element at |iter|. If |out_value| is NULL, the value will be
   // deleted, otherwise ownership of the value is passed back to the caller.
-  void Erase(iterator iter, Value** out_value);
+  // Returns an iterator pointing to the location of the element that
+  // followed the erased element.
+  iterator Erase(iterator iter, Value** out_value);
 
   // Appends a Value to the end of the list.
   void Append(Value* in_value);
+
+  // Convenience forms of Append.
+  void AppendBoolean(bool in_value);
+  void AppendInteger(int in_value);
+  void AppendDouble(double in_value);
+  void AppendString(const std::string& in_value);
+  void AppendString(const string16& in_value);
+  void AppendStrings(const std::vector<std::string>& in_values);
+  void AppendStrings(const std::vector<string16>& in_values);
 
   // Appends a Value if it's not already present. Takes ownership of the
   // |in_value|. Returns true if successful, or false if the value was already
@@ -504,6 +491,32 @@ class BASE_EXPORT ValueSerializer {
   // error message including the location of the error if appropriate.
   virtual Value* Deserialize(int* error_code, std::string* error_str) = 0;
 };
+
+// Stream operator so Values can be used in assertion statements.  In order that
+// gtest uses this operator to print readable output on test failures, we must
+// override each specific type. Otherwise, the default template implementation
+// is preferred over an upcast.
+BASE_EXPORT std::ostream& operator<<(std::ostream& out, const Value& value);
+
+BASE_EXPORT inline std::ostream& operator<<(std::ostream& out,
+                                            const FundamentalValue& value) {
+  return out << static_cast<const Value&>(value);
+}
+
+BASE_EXPORT inline std::ostream& operator<<(std::ostream& out,
+                                            const StringValue& value) {
+  return out << static_cast<const Value&>(value);
+}
+
+BASE_EXPORT inline std::ostream& operator<<(std::ostream& out,
+                                            const DictionaryValue& value) {
+  return out << static_cast<const Value&>(value);
+}
+
+BASE_EXPORT inline std::ostream& operator<<(std::ostream& out,
+                                            const ListValue& value) {
+  return out << static_cast<const Value&>(value);
+}
 
 }  // namespace base
 

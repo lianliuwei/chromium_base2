@@ -21,9 +21,10 @@
 class NSImage;
 #endif  // __OBJC__
 
+namespace base {
+
 class FilePath;
 
-namespace base {
 namespace mac {
 
 // Full screen modes, in increasing order of priority.  More permissive modes
@@ -121,6 +122,10 @@ BASE_EXPORT bool WasLaunchedAsLoginOrResumeItem();
 // 'Login Item' with 'hide on startup' flag. Used to suppress opening windows.
 BASE_EXPORT bool WasLaunchedAsHiddenLoginItem();
 
+// Remove the quarantine xattr from the given file. Returns false if there was
+// an error, or true otherwise.
+BASE_EXPORT bool RemoveQuarantineAttribute(const FilePath& file_path);
+
 // Run-time OS version checks. Use these instead of
 // base::SysInfo::OperatingSystemVersionNumbers. Prefer the "OrEarlier" and
 // "OrLater" variants to those that check for a specific version, unless you
@@ -140,9 +145,8 @@ BASE_EXPORT bool IsOSMountainLionOrLater();
 
 // This should be infrequently used. It only makes sense to use this to avoid
 // codepaths that are very likely to break on future (unreleased, untested,
-// unborn) OS releases.
-BASE_EXPORT
-    bool IsOSDangerouslyLaterThanMountainLionForUseByCFAllocatorReplacement();
+// unborn) OS releases, or to log when the OS is newer than any known version.
+BASE_EXPORT bool IsOSLaterThanMountainLion_DontCallThis();
 
 // When the deployment target is set, the code produced cannot run on earlier
 // OS releases. That enables some of the IsOS* family to be implemented as
@@ -173,8 +177,7 @@ inline bool IsOSMountainLionOrLater() { return true; }
     MAC_OS_X_VERSION_MIN_REQUIRED > MAC_OS_X_VERSION_10_8
 #define BASE_MAC_MAC_UTIL_H_INLINED_GT_10_8
 inline bool IsOSMountainLion() { return false; }
-inline bool IsOSDangerouslyLaterThanMountainLionForUseByCFAllocatorReplacement()
-{
+inline bool IsOSLaterThanMountainLion_DontCallThis() {
   return true;
 }
 #endif

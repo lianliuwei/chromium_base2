@@ -26,9 +26,9 @@
 #define CDECL
 #endif
 
-class FilePath;
-
 namespace base {
+
+class FilePath;
 
 #if defined(OS_WIN)
 typedef HMODULE NativeLibrary;
@@ -37,9 +37,15 @@ enum NativeLibraryType {
   BUNDLE,
   DYNAMIC_LIB
 };
+enum NativeLibraryObjCStatus {
+  OBJC_UNKNOWN,
+  OBJC_PRESENT,
+  OBJC_NOT_PRESENT,
+};
 struct NativeLibraryStruct {
   NativeLibraryType type;
   CFBundleRefNum bundle_resource_ref;
+  NativeLibraryObjCStatus objc_status;
   union {
     CFBundleRef bundle;
     void* dylib;

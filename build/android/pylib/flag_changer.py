@@ -2,12 +2,14 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import constants
+import logging
 import traceback
 import warnings
 
 
 # Location where chrome reads command line flags from
-CHROME_COMMAND_FILE = '/data/local/tmp/chrome-command-line'
+CHROME_COMMAND_FILE = '/data/local/chrome-command-line'
 
 class FlagChanger(object):
   """Changes the flags Chrome runs with.
@@ -85,14 +87,14 @@ class FlagChanger(object):
 
   def _UpdateCommandLineFile(self):
     """Writes out the command line to the file, or removes it if empty."""
-    print "Current flags: ", self._current_flags
+    logging.info('Current flags: %s', self._current_flags)
 
     if self._current_flags:
-      self._android_cmd.SetFileContents(CHROME_COMMAND_FILE,
+      self._android_cmd.SetProtectedFileContents(CHROME_COMMAND_FILE,
                                         'chrome ' +
                                         ' '.join(self._current_flags))
     else:
-      self._android_cmd.RunShellCommand('rm ' + CHROME_COMMAND_FILE)
+      self._android_cmd.RunShellCommand('su -c rm ' + CHROME_COMMAND_FILE)
 
   def _TokenizeFlags(self, line):
     """Changes the string containing the command line into a list of flags.

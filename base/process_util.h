@@ -37,9 +37,13 @@ typedef struct _malloc_zone_t malloc_zone_t;
 #include <vector>
 
 #include "base/base_export.h"
-#include "base/file_descriptor_shuffle.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/process.h"
+#include "base/process/process_metrics.h"
+
+#if defined(OS_POSIX)
+#include "base/posix/file_descriptor_shuffle.h"
+#endif
 
 class CommandLine;
 
@@ -50,9 +54,6 @@ struct ProcessEntry : public PROCESSENTRY32 {
   ProcessId pid() const { return th32ProcessID; }
   ProcessId parent_pid() const { return th32ParentProcessID; }
   const wchar_t* exe_file() const { return szExeFile; }
-};
-
-struct IoCounters : public IO_COUNTERS {
 };
 
 // Process access masks. These constants provide platform-independent
@@ -76,7 +77,7 @@ const uint32 kProcessAccessQueryLimitedInfomation =
 const uint32 kProcessAccessWaitForTermination     = SYNCHRONIZE;
 #elif defined(OS_POSIX)
 
-struct ProcessEntry {
+struct BASE_EXPORT ProcessEntry {
   ProcessEntry();
   ~ProcessEntry();
 
@@ -93,15 +94,6 @@ struct ProcessEntry {
   ProcessId gid_;
   std::string exe_file_;
   std::vector<std::string> cmd_line_args_;
-};
-
-struct IoCounters {
-  uint64_t ReadOperationCount;
-  uint64_t WriteOperationCount;
-  uint64_t OtherOperationCount;
-  uint64_t ReadTransferCount;
-  uint64_t WriteTransferCount;
-  uint64_t OtherTransferCount;
 };
 
 // Process access masks. They are not used on Posix because access checking
@@ -136,6 +128,12 @@ enum TerminationStatus {
 
 #if defined(USE_LINUX_BREAKPAD)
 BASE_EXPORT extern size_t g_oom_size;
+#endif
+
+#if defined(OS_WIN)
+// Output multi-process printf, cout, cerr, etc to the cmd.exe console that ran
+// chrome. This is not thread-safe: only call from main thread.
+BASE_EXPORT void RouteStdioToConsole();
 #endif
 
 // Returns the id of the current process.
@@ -183,10 +181,11 @@ BASE_EXPORT FilePath GetProcessExecutablePath(ProcessHandle process);
 #endif
 
 #if defined(OS_LINUX) || defined(OS_ANDROID)
-// Parse the data found in /proc/<pid>/stat and return the sum of the
-// CPU-related ticks.  Returns -1 on parse error.
-// Exposed for testing.
-BASE_EXPORT int ParseProcStatCPU(const std::string& input);
+// Get the number of threads of |process| as available in /proc/<pid>/stat.
+// This should be used with care as no synchronization with running threads is
+// done. This is mostly useful to guarantee being single-threaded.
+// Returns 0 on failure.
+BASE_EXPORT int GetNumberOfThreads(ProcessHandle process);
 
 // The maximum allowed value for the OOM score.
 const int kMaxOomScore = 1000;
@@ -199,11 +198,18 @@ const int kMaxOomScore = 1000;
 // translate the given value into [0, 15].  Some aliasing of values
 // may occur in that case, of course.
 BASE_EXPORT bool AdjustOOMScore(ProcessId process, int score);
+
+// /proc/self/exe refers to the current executable.
+BASE_EXPORT extern const char kProcSelfExe[];
 #endif  // defined(OS_LINUX) || defined(OS_ANDROID)
 
 #if defined(OS_POSIX)
 // Returns the ID for the parent of the given process.
 BASE_EXPORT ProcessId GetParentProcessId(ProcessHandle process);
+
+// Returns the maximum number of file descriptors that can be open by a process
+// at once. If the number is unavailable, a conservative best guess is returned.
+size_t GetMaxFds();
 
 // Close all file descriptors, except those which are a destination in the
 // given multimap. Only call this function in a child process where you know
@@ -214,34 +220,34 @@ BASE_EXPORT void CloseSuperfluousFds(const InjectiveMultimap& saved_map);
 typedef std::vector<std::pair<std::string, std::string> > EnvironmentVector;
 typedef std::vector<std::pair<int, int> > FileHandleMappingVector;
 
-#if defined(OS_MACOSX)
-// Used with LaunchOptions::synchronize and LaunchSynchronize, a
-// LaunchSynchronizationHandle is an opaque value that LaunchProcess will
-// create and set, and that LaunchSynchronize will consume and destroy.
-typedef int* LaunchSynchronizationHandle;
-#endif  // defined(OS_MACOSX)
-
 // Options for launching a subprocess that are passed to LaunchProcess().
 // The default constructor constructs the object with default options.
 struct LaunchOptions {
-  LaunchOptions() : wait(false),
+  LaunchOptions()
+      : wait(false),
 #if defined(OS_WIN)
-                    start_hidden(false), inherit_handles(false), as_user(NULL),
-                    empty_desktop_name(false), job_handle(NULL)
+        start_hidden(false),
+        inherit_handles(false),
+        as_user(NULL),
+        empty_desktop_name(false),
+        job_handle(NULL),
+        stdin_handle(NULL),
+        stdout_handle(NULL),
+        stderr_handle(NULL),
+        force_breakaway_from_job_(false)
 #else
-                    environ(NULL), fds_to_remap(NULL), maximize_rlimits(NULL),
-                    new_process_group(false)
+        environ(NULL),
+        fds_to_remap(NULL),
+        maximize_rlimits(NULL),
+        new_process_group(false)
 #if defined(OS_LINUX)
-                  , clone_flags(0)
+        , clone_flags(0)
 #endif  // OS_LINUX
 #if defined(OS_CHROMEOS)
-                  , ctrl_terminal_fd(-1)
+        , ctrl_terminal_fd(-1)
 #endif  // OS_CHROMEOS
-#if defined(OS_MACOSX)
-                  , synchronize(NULL)
-#endif  // defined(OS_MACOSX)
 #endif  // !defined(OS_WIN)
-      {}
+        {}
 
   // If true, wait for the process to complete.
   bool wait;
@@ -249,7 +255,10 @@ struct LaunchOptions {
 #if defined(OS_WIN)
   bool start_hidden;
 
-  // If true, the new process inherits handles from the parent.
+  // If true, the new process inherits handles from the parent. In production
+  // code this flag should be used only when running short-lived, trusted
+  // binaries, because open handles from other libraries and subsystems will
+  // leak to the child process, causing errors such as open socket hangs.
   bool inherit_handles;
 
   // If non-NULL, runs as if the user represented by the token had launched it.
@@ -268,6 +277,19 @@ struct LaunchOptions {
   // be terminated immediately and LaunchProcess() will fail if assignment to
   // the job object fails.
   HANDLE job_handle;
+
+  // Handles for the redirection of stdin, stdout and stderr. The handles must
+  // be inheritable. Caller should either set all three of them or none (i.e.
+  // there is no way to redirect stderr without redirecting stdin). The
+  // |inherit_handles| flag must be set to true when redirecting stdio stream.
+  HANDLE stdin_handle;
+  HANDLE stdout_handle;
+  HANDLE stderr_handle;
+
+  // If set to true, ensures that the child process is launched with the
+  // CREATE_BREAKAWAY_FROM_JOB flag which allows it to breakout of the parent
+  // job if any.
+  bool force_breakaway_from_job_;
 #else
   // If non-NULL, set/unset environment variables.
   // See documentation of AlterEnvironment().
@@ -301,27 +323,6 @@ struct LaunchOptions {
   // process' controlling terminal.
   int ctrl_terminal_fd;
 #endif  // defined(OS_CHROMEOS)
-
-#if defined(OS_MACOSX)
-  // When non-NULL, a new LaunchSynchronizationHandle will be created and
-  // stored in *synchronize whenever LaunchProcess returns true in the parent
-  // process. The child process will have been created (with fork) but will
-  // be waiting (before exec) for the parent to call LaunchSynchronize with
-  // this handle. Only when LaunchSynchronize is called will the child be
-  // permitted to continue execution and call exec. LaunchSynchronize
-  // destroys the handle created by LaunchProcess.
-  //
-  // When synchronize is non-NULL, the parent must call LaunchSynchronize
-  // whenever LaunchProcess returns true. No exceptions.
-  //
-  // Synchronization is useful when the parent process needs to guarantee that
-  // it can take some action (such as recording the newly-forked child's
-  // process ID) before the child does something (such as using its process ID
-  // to communicate with its parent).
-  //
-  // |synchronize| and |wait| must not both be set simultaneously.
-  LaunchSynchronizationHandle* synchronize;
-#endif  // defined(OS_MACOSX)
 
 #endif  // !defined(OS_WIN)
 };
@@ -394,15 +395,6 @@ BASE_EXPORT bool LaunchProcess(const std::vector<std::string>& argv,
 // The returned array is allocated using new[] and must be freed by the caller.
 BASE_EXPORT char** AlterEnvironment(const EnvironmentVector& changes,
                                     const char* const* const env);
-
-#if defined(OS_MACOSX)
-
-// After a successful call to LaunchProcess with LaunchOptions::synchronize
-// set, the parent process must call LaunchSynchronize to allow the child
-// process to proceed, and to destroy the LaunchSynchronizationHandle.
-BASE_EXPORT void LaunchSynchronize(LaunchSynchronizationHandle handle);
-
-#endif  // defined(OS_MACOSX)
 #endif  // defined(OS_POSIX)
 
 #if defined(OS_WIN)
@@ -493,6 +485,15 @@ BASE_EXPORT bool KillProcessById(ProcessId process_id, int exit_code,
 // will no longer be available).
 BASE_EXPORT TerminationStatus GetTerminationStatus(ProcessHandle handle,
                                                    int* exit_code);
+
+#if defined(OS_POSIX)
+// Wait for the process to exit and get the termination status. See
+// GetTerminationStatus for more information. On POSIX systems, we can't call
+// WaitForExitCode and then GetTerminationStatus as the child will be reaped
+// when WaitForExitCode return and this information will be lost.
+BASE_EXPORT TerminationStatus WaitForTerminationStatus(ProcessHandle handle,
+                                                       int* exit_code);
+#endif  // defined(OS_POSIX)
 
 // Waits for process to exit. On POSIX systems, if the process hasn't been
 // signaled then puts the exit code in |exit_code|; otherwise it's considered
@@ -627,189 +628,6 @@ class BASE_EXPORT NamedProcessIterator : public ProcessIterator {
   DISALLOW_COPY_AND_ASSIGN(NamedProcessIterator);
 };
 
-// Working Set (resident) memory usage broken down by
-//
-// On Windows:
-// priv (private): These pages (kbytes) cannot be shared with any other process.
-// shareable:      These pages (kbytes) can be shared with other processes under
-//                 the right circumstances.
-// shared :        These pages (kbytes) are currently shared with at least one
-//                 other process.
-//
-// On Linux:
-// priv:           Pages mapped only by this process
-// shared:         PSS or 0 if the kernel doesn't support this
-// shareable:      0
-//
-// On OS X: TODO(thakis): Revise.
-// priv:           Memory.
-// shared:         0
-// shareable:      0
-struct WorkingSetKBytes {
-  WorkingSetKBytes() : priv(0), shareable(0), shared(0) {}
-  size_t priv;
-  size_t shareable;
-  size_t shared;
-};
-
-// Committed (resident + paged) memory usage broken down by
-// private: These pages cannot be shared with any other process.
-// mapped:  These pages are mapped into the view of a section (backed by
-//          pagefile.sys)
-// image:   These pages are mapped into the view of an image section (backed by
-//          file system)
-struct CommittedKBytes {
-  CommittedKBytes() : priv(0), mapped(0), image(0) {}
-  size_t priv;
-  size_t mapped;
-  size_t image;
-};
-
-// Free memory (Megabytes marked as free) in the 2G process address space.
-// total : total amount in megabytes marked as free. Maximum value is 2048.
-// largest : size of the largest contiguous amount of memory found. It is
-//   always smaller or equal to FreeMBytes::total.
-// largest_ptr: starting address of the largest memory block.
-struct FreeMBytes {
-  size_t total;
-  size_t largest;
-  void* largest_ptr;
-};
-
-// Convert a POSIX timeval to microseconds.
-BASE_EXPORT int64 TimeValToMicroseconds(const struct timeval& tv);
-
-// Provides performance metrics for a specified process (CPU usage, memory and
-// IO counters). To use it, invoke CreateProcessMetrics() to get an instance
-// for a specific process, then access the information with the different get
-// methods.
-class BASE_EXPORT ProcessMetrics {
- public:
-  ~ProcessMetrics();
-
-  // Creates a ProcessMetrics for the specified process.
-  // The caller owns the returned object.
-#if !defined(OS_MACOSX) || defined(OS_IOS)
-  static ProcessMetrics* CreateProcessMetrics(ProcessHandle process);
-#else
-  class PortProvider {
-   public:
-    // Should return the mach task for |process| if possible, or else
-    // |MACH_PORT_NULL|. Only processes that this returns tasks for will have
-    // metrics on OS X (except for the current process, which always gets
-    // metrics).
-    virtual mach_port_t TaskForPid(ProcessHandle process) const = 0;
-  };
-
-  // The port provider needs to outlive the ProcessMetrics object returned by
-  // this function. If NULL is passed as provider, the returned object
-  // only returns valid metrics if |process| is the current process.
-  static ProcessMetrics* CreateProcessMetrics(ProcessHandle process,
-                                              PortProvider* port_provider);
-#endif  // !defined(OS_MACOSX) || defined(OS_IOS)
-
-  // Returns the current space allocated for the pagefile, in bytes (these pages
-  // may or may not be in memory).  On Linux, this returns the total virtual
-  // memory size.
-  size_t GetPagefileUsage() const;
-  // Returns the peak space allocated for the pagefile, in bytes.
-  size_t GetPeakPagefileUsage() const;
-  // Returns the current working set size, in bytes.  On Linux, this returns
-  // the resident set size.
-  size_t GetWorkingSetSize() const;
-  // Returns the peak working set size, in bytes.
-  size_t GetPeakWorkingSetSize() const;
-  // Returns private and sharedusage, in bytes. Private bytes is the amount of
-  // memory currently allocated to a process that cannot be shared. Returns
-  // false on platform specific error conditions.  Note: |private_bytes|
-  // returns 0 on unsupported OSes: prior to XP SP2.
-  bool GetMemoryBytes(size_t* private_bytes,
-                      size_t* shared_bytes);
-  // Fills a CommittedKBytes with both resident and paged
-  // memory usage as per definition of CommittedBytes.
-  void GetCommittedKBytes(CommittedKBytes* usage) const;
-  // Fills a WorkingSetKBytes containing resident private and shared memory
-  // usage in bytes, as per definition of WorkingSetBytes.
-  bool GetWorkingSetKBytes(WorkingSetKBytes* ws_usage) const;
-
-  // Computes the current process available memory for allocation.
-  // It does a linear scan of the address space querying each memory region
-  // for its free (unallocated) status. It is useful for estimating the memory
-  // load and fragmentation.
-  bool CalculateFreeMemory(FreeMBytes* free) const;
-
-  // Returns the CPU usage in percent since the last time this method was
-  // called. The first time this method is called it returns 0 and will return
-  // the actual CPU info on subsequent calls.
-  // On Windows, the CPU usage value is for all CPUs. So if you have 2 CPUs and
-  // your process is using all the cycles of 1 CPU and not the other CPU, this
-  // method returns 50.
-  double GetCPUUsage();
-
-  // Retrieves accounting information for all I/O operations performed by the
-  // process.
-  // If IO information is retrieved successfully, the function returns true
-  // and fills in the IO_COUNTERS passed in. The function returns false
-  // otherwise.
-  bool GetIOCounters(IoCounters* io_counters) const;
-
- private:
-#if !defined(OS_MACOSX) || defined(OS_IOS)
-  explicit ProcessMetrics(ProcessHandle process);
-#else
-  ProcessMetrics(ProcessHandle process, PortProvider* port_provider);
-#endif  // !defined(OS_MACOSX) || defined(OS_IOS)
-
-  ProcessHandle process_;
-
-  int processor_count_;
-
-  // Used to store the previous times and CPU usage counts so we can
-  // compute the CPU usage between calls.
-  int64 last_time_;
-  int64 last_system_time_;
-
-#if !defined(OS_IOS)
-#if defined(OS_MACOSX)
-  // Queries the port provider if it's set.
-  mach_port_t TaskForPid(ProcessHandle process) const;
-
-  PortProvider* port_provider_;
-#elif defined(OS_POSIX)
-  // Jiffie count at the last_time_ we updated.
-  int last_cpu_;
-#endif  // defined(OS_POSIX)
-#endif  // !defined(OS_IOS)
-
-  DISALLOW_COPY_AND_ASSIGN(ProcessMetrics);
-};
-
-#if defined(OS_LINUX) || defined(OS_ANDROID)
-// Data from /proc/meminfo about system-wide memory consumption.
-// Values are in KB.
-struct BASE_EXPORT SystemMemoryInfoKB {
-  SystemMemoryInfoKB();
-
-  int total;
-  int free;
-  int buffers;
-  int cached;
-  int active_anon;
-  int inactive_anon;
-  int active_file;
-  int inactive_file;
-  int shmem;
-};
-// Retrieves data from /proc/meminfo about system-wide memory consumption.
-// Fills in the provided |meminfo| structure. Returns true on success.
-// Exposed for memory debugging widget.
-BASE_EXPORT bool GetSystemMemoryInfo(SystemMemoryInfoKB* meminfo);
-#endif  // defined(OS_LINUX) || defined(OS_ANDROID)
-
-// Returns the memory committed by the system in KBytes.
-// Returns 0 if it can't compute the commit charge.
-BASE_EXPORT size_t GetSystemCommitCharge();
-
 // Enables low fragmentation heap (LFH) for every heaps of this process. This
 // won't have any effect on heaps created after this function call. It will not
 // modify data allocated in the heaps before calling this function. So it is
@@ -825,16 +643,6 @@ BASE_EXPORT void EnableTerminationOnHeapCorruption();
 // Turns on process termination if memory runs out.
 BASE_EXPORT void EnableTerminationOnOutOfMemory();
 
-#if defined(OS_MACOSX)
-// Exposed for testing.
-BASE_EXPORT malloc_zone_t* GetPurgeableZone();
-#endif  // defined(OS_MACOSX)
-
-// Enables stack dump to console output on exception and signals.
-// When enabled, the process will quit immediately. This is meant to be used in
-// unit_tests only!
-BASE_EXPORT bool EnableInProcessStackDumping();
-
 // If supported on the platform, and the user has sufficent rights, increase
 // the current process's scheduling priority to a high priority.
 BASE_EXPORT void RaiseProcessToHighPriority();
@@ -848,6 +656,20 @@ BASE_EXPORT void RaiseProcessToHighPriority();
 // in the child after forking will restore the standard exception handler.
 // See http://crbug.com/20371/ for more details.
 void RestoreDefaultExceptionHandler();
+#endif  // defined(OS_MACOSX)
+
+#if defined(OS_MACOSX)
+// Very large images or svg canvases can cause huge mallocs.  Skia
+// does tricks on tcmalloc-based systems to allow malloc to fail with
+// a NULL rather than hit the oom crasher.  This replicates that for
+// OSX.
+//
+// IF YOU USE THIS WITHOUT CONSULTING YOUR FRIENDLY OSX DEVELOPER,
+// YOUR CODE IS LIKELY TO BE REVERTED.  THANK YOU.
+//
+// TODO(shess): Weird place to put it, but this is where the OOM
+// killer currently lives.
+BASE_EXPORT void* UncheckedMalloc(size_t size);
 #endif  // defined(OS_MACOSX)
 
 }  // namespace base

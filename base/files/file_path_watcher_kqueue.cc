@@ -12,6 +12,7 @@
 
 #include "base/bind.h"
 #include "base/file_util.h"
+#include "base/logging.h"
 #include "base/message_loop.h"
 #include "base/message_loop_proxy.h"
 #include "base/stringprintf.h"
@@ -25,7 +26,6 @@
 #endif
 
 namespace base {
-namespace files {
 
 namespace {
 
@@ -64,7 +64,8 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
 
   // FilePathWatcher::PlatformDelegate overrides.
   virtual bool Watch(const FilePath& path,
-                     FilePathWatcher::Delegate* delegate) OVERRIDE;
+                     bool recursive,
+                     const FilePathWatcher::Callback& callback) OVERRIDE;
   virtual void Cancel() OVERRIDE;
 
  protected:
@@ -93,7 +94,7 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
                               bool* target_file_affected,
                               bool* update_watches);
 
-  // Respond to a move of deletion of the path component represented by
+  // Respond to a move or deletion of the path component represented by
   // |event|. Sets |target_file_affected| to true if |target_| is affected.
   // Sets |update_watches| to true if |events_| need to be updated.
   void HandleDeleteOrMoveChange(const EventVector::iterator& event,
@@ -122,14 +123,16 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
 
   // Returns a file descriptor that will not block the system from deleting
   // the file it references.
-  static int FileDescriptorForPath(const FilePath& path);
+  static uintptr_t FileDescriptorForPath(const FilePath& path);
+
+  static const uintptr_t kNoFileDescriptor = static_cast<uintptr_t>(-1);
 
   // Closes |*fd| and sets |*fd| to -1.
-  static void CloseFileDescriptor(int* fd);
+  static void CloseFileDescriptor(uintptr_t* fd);
 
   // Returns true if kevent has open file descriptor.
   static bool IsKeventFileDescriptorOpen(const struct kevent& event) {
-    return event.ident != static_cast<uintptr_t>(-1);
+    return event.ident != kNoFileDescriptor;
   }
 
   static EventData* EventDataForKevent(const struct kevent& event) {
@@ -139,7 +142,7 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
   EventVector events_;
   scoped_refptr<base::MessageLoopProxy> io_message_loop_;
   MessageLoopForIO::FileDescriptorWatcher kqueue_watcher_;
-  scoped_refptr<FilePathWatcher::Delegate> delegate_;
+  FilePathWatcher::Callback callback_;
   FilePath target_;
   int kqueue_;
 
@@ -147,7 +150,7 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
 };
 
 void FilePathWatcherImpl::ReleaseEvent(struct kevent& event) {
-  CloseFileDescriptor(reinterpret_cast<int*>(&event.ident));
+  CloseFileDescriptor(&event.ident);
   EventData* entry = EventDataForKevent(event);
   delete entry;
   event.udata = NULL;
@@ -168,17 +171,17 @@ int FilePathWatcherImpl::EventsForPath(FilePath path, EventVector* events) {
   int last_existing_entry = 0;
   FilePath built_path;
   bool path_still_exists = true;
-  for(std::vector<FilePath::StringType>::iterator i = components.begin();
+  for (std::vector<FilePath::StringType>::iterator i = components.begin();
       i != components.end(); ++i) {
     if (i == components.begin()) {
       built_path = FilePath(*i);
     } else {
       built_path = built_path.Append(*i);
     }
-    int fd = -1;
+    uintptr_t fd = kNoFileDescriptor;
     if (path_still_exists) {
       fd = FileDescriptorForPath(built_path);
-      if (fd == -1) {
+      if (fd == kNoFileDescriptor) {
         path_still_exists = false;
       } else {
         ++last_existing_entry;
@@ -195,19 +198,22 @@ int FilePathWatcherImpl::EventsForPath(FilePath path, EventVector* events) {
   return last_existing_entry;
 }
 
-int FilePathWatcherImpl::FileDescriptorForPath(const FilePath& path) {
-  return HANDLE_EINTR(open(path.value().c_str(), O_EVTONLY));
+uintptr_t FilePathWatcherImpl::FileDescriptorForPath(const FilePath& path) {
+  int fd = HANDLE_EINTR(open(path.value().c_str(), O_EVTONLY));
+  if (fd == -1)
+    return kNoFileDescriptor;
+  return fd;
 }
 
-void FilePathWatcherImpl::CloseFileDescriptor(int *fd) {
-  if (*fd == -1) {
+void FilePathWatcherImpl::CloseFileDescriptor(uintptr_t* fd) {
+  if (*fd == kNoFileDescriptor) {
     return;
   }
 
   if (HANDLE_EINTR(close(*fd)) != 0) {
     DPLOG(ERROR) << "close";
   }
-  *fd = -1;
+  *fd = kNoFileDescriptor;
 }
 
 bool FilePathWatcherImpl::AreKeventValuesValid(struct kevent* kevents,
@@ -235,7 +241,7 @@ bool FilePathWatcherImpl::AreKeventValuesValid(struct kevent* kevents,
       }
       if (path_name.empty()) {
         path_name = base::StringPrintf(
-            "fd %d", *reinterpret_cast<int*>(&kevents[i].ident));
+            "fd %ld", reinterpret_cast<long>(&kevents[i].ident));
       }
       DLOG(ERROR) << "Error: " << kevents[i].data << " for " << path_name;
       valid = false;
@@ -251,8 +257,8 @@ void FilePathWatcherImpl::HandleAttributesChange(
   EventVector::iterator next_event = event + 1;
   EventData* next_event_data = EventDataForKevent(*next_event);
   // Check to see if the next item in path is still accessible.
-  int have_access = FileDescriptorForPath(next_event_data->path_);
-  if (have_access == -1) {
+  uintptr_t have_access = FileDescriptorForPath(next_event_data->path_);
+  if (have_access == kNoFileDescriptor) {
     *target_file_affected = true;
     *update_watches = true;
     EventVector::iterator local_event(event);
@@ -261,7 +267,7 @@ void FilePathWatcherImpl::HandleAttributesChange(
       // potentially rendering other events in |updates| invalid.
       // There is no need to remove the events from |kqueue_| because this
       // happens as a side effect of closing the file descriptor.
-      CloseFileDescriptor(reinterpret_cast<int*>(&local_event->ident));
+      CloseFileDescriptor(&local_event->ident);
     }
   } else {
     CloseFileDescriptor(&have_access);
@@ -280,7 +286,7 @@ void FilePathWatcherImpl::HandleDeleteOrMoveChange(
     // potentially rendering other events in |updates| invalid.
     // There is no need to remove the events from |kqueue_| because this
     // happens as a side effect of closing the file descriptor.
-    CloseFileDescriptor(reinterpret_cast<int*>(&local_event->ident));
+    CloseFileDescriptor(&local_event->ident);
   }
 }
 
@@ -290,10 +296,9 @@ void FilePathWatcherImpl::HandleCreateItemChange(
     bool* update_watches) {
   // Get the next item in the path.
   EventVector::iterator next_event = event + 1;
-  EventData* next_event_data = EventDataForKevent(*next_event);
-
   // Check to see if it already has a valid file descriptor.
   if (!IsKeventFileDescriptorOpen(*next_event)) {
+    EventData* next_event_data = EventDataForKevent(*next_event);
     // If not, attempt to open a file descriptor for it.
     next_event->ident = FileDescriptorForPath(next_event_data->path_);
     if (IsKeventFileDescriptorOpen(*next_event)) {
@@ -362,7 +367,7 @@ void FilePathWatcherImpl::OnFileCanReadWithoutBlocking(int fd) {
   // Error values are stored within updates, so check to make sure that no
   // errors occurred.
   if (!AreKeventValuesValid(&updates[0], count)) {
-    delegate_->OnFilePathError(target_);
+    callback_.Run(target_, true /* error */);
     Cancel();
     return;
   }
@@ -380,7 +385,7 @@ void FilePathWatcherImpl::OnFileCanReadWithoutBlocking(int fd) {
         break;
       }
     }
-    if (!IsKeventFileDescriptorOpen(*event) || event == events_.end()) {
+    if (event == events_.end() || !IsKeventFileDescriptorOpen(*event)) {
       // The event may no longer exist in |events_| because another event
       // modified |events_| in such a way to make it invalid. For example if
       // the path is /foo/bar/bam and foo is deleted, NOTE_DELETE events for
@@ -409,13 +414,13 @@ void FilePathWatcherImpl::OnFileCanReadWithoutBlocking(int fd) {
 
   if (update_watches) {
     if (!UpdateWatches(&send_notification)) {
-      delegate_->OnFilePathError(target_);
+      callback_.Run(target_, true /* error */);
       Cancel();
     }
   }
 
   if (send_notification) {
-    delegate_->OnFilePathChanged(target_);
+    callback_.Run(target_, false);
   }
 }
 
@@ -428,13 +433,20 @@ void FilePathWatcherImpl::WillDestroyCurrentMessageLoop() {
 }
 
 bool FilePathWatcherImpl::Watch(const FilePath& path,
-                                FilePathWatcher::Delegate* delegate) {
+                                bool recursive,
+                                const FilePathWatcher::Callback& callback) {
   DCHECK(MessageLoopForIO::current());
   DCHECK(target_.value().empty());  // Can only watch one path.
-  DCHECK(delegate);
+  DCHECK(!callback.is_null());
   DCHECK_EQ(kqueue_, -1);
 
-  delegate_ = delegate;
+  if (recursive) {
+    // Recursive watch is not supported on this platform.
+    NOTIMPLEMENTED();
+    return false;
+  }
+
+  callback_ = callback;
   target_ = path;
 
   MessageLoop::current()->AddDestructionObserver(this);
@@ -485,12 +497,15 @@ void FilePathWatcherImpl::CancelOnMessageLoopThread() {
   if (!is_cancelled()) {
     set_cancelled();
     kqueue_watcher_.StopWatchingFileDescriptor();
-    CloseFileDescriptor(&kqueue_);
+    if (HANDLE_EINTR(close(kqueue_)) != 0) {
+      DPLOG(ERROR) << "close kqueue";
+    }
+    kqueue_ = -1;
     std::for_each(events_.begin(), events_.end(), ReleaseEvent);
     events_.clear();
     io_message_loop_ = NULL;
     MessageLoop::current()->RemoveDestructionObserver(this);
-    delegate_ = NULL;
+    callback_.Reset();
   }
 }
 
@@ -500,5 +515,4 @@ FilePathWatcher::FilePathWatcher() {
   impl_ = new FilePathWatcherImpl();
 }
 
-}  // namespace files
 }  // namespace base

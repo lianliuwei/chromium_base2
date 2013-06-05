@@ -8,8 +8,8 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/process_util.h"
 #include "base/shared_memory.h"
-#include "base/string_piece.h"
 #include "base/string_util.h"
+#include "base/strings/string_piece.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_local_storage.h"
 #include "base/utf_string_conversions.h"
@@ -248,7 +248,7 @@ struct StatsTable::TLSData {
 };
 
 // We keep a singleton table which can be easily accessed.
-StatsTable* StatsTable::global_table_ = NULL;
+StatsTable* global_table = NULL;
 
 StatsTable::StatsTable(const std::string& name, int max_threads,
                        int max_counters)
@@ -281,8 +281,16 @@ StatsTable::~StatsTable() {
   delete impl_;
 
   // If we are the global table, unregister ourselves.
-  if (global_table_ == this)
-    global_table_ = NULL;
+  if (global_table == this)
+    global_table = NULL;
+}
+
+StatsTable* StatsTable::current() {
+  return global_table;
+}
+
+void StatsTable::set_current(StatsTable* value) {
+  global_table = value;
 }
 
 int StatsTable::GetSlot() const {
@@ -431,8 +439,8 @@ int* StatsTable::FindLocation(const char* name) {
   // Get the slot for this thread.  Try to register
   // it if none exists.
   int slot = table->GetSlot();
-  if (!slot && !(slot = table->RegisterThread("")))
-      return NULL;
+  if (!slot && !(slot = table->RegisterThread(std::string())))
+    return NULL;
 
   // Find the counter id for the counter.
   std::string str_name(name);

@@ -5,6 +5,7 @@
 #include "base/message_pump_aurax11.h"
 
 #include <glib.h>
+#include <X11/X.h>
 #include <X11/extensions/XInput2.h>
 #include <X11/XKBlib.h>
 
@@ -39,12 +40,16 @@ GSourceFuncs XSourceFuncs = {
   NULL
 };
 
-// The message-pump opens a connection to the display and owns it.
+// The connection is essentially a global that's accessed through a static
+// method and destroyed whenever ~MessagePumpAuraX11() is called. We do this
+// for historical reasons so user code can call
+// MessagePumpForUI::GetDefaultXDisplay() where MessagePumpForUI is a typedef
+// to whatever type in the current build.
+//
+// TODO(erg): This can be changed to something more sane like
+// MessagePumpAuraX11::Current()->display() once MessagePumpGtk goes away.
 Display* g_xdisplay = NULL;
-
-// The default dispatcher to process native events when no dispatcher
-// is specified.
-base::MessagePumpDispatcher* g_default_dispatcher = NULL;
+int g_xinput_opcode = -1;
 
 bool InitializeXInput2Internal() {
   Display* display = base::MessagePumpAuraX11::GetDefaultXDisplay();
@@ -58,6 +63,7 @@ bool InitializeXInput2Internal() {
     DVLOG(1) << "X Input extension not available.";
     return false;
   }
+  g_xinput_opcode = xiopcode;
 
 #if defined(USE_XI2_MT)
   // USE_XI2_MT also defines the required XI2 minor minimum version.
@@ -78,6 +84,15 @@ bool InitializeXInput2Internal() {
 #endif
 
   return true;
+}
+
+Window FindEventTarget(const base::NativeEvent& xev) {
+  Window target = xev->xany.window;
+  if (xev->type == GenericEvent &&
+      static_cast<XIEvent*>(xev->xcookie.data)->extension == g_xinput_opcode) {
+    target = static_cast<XIDeviceEvent*>(xev->xcookie.data)->event;
+  }
+  return target;
 }
 
 bool InitializeXInput2() {
@@ -118,6 +133,10 @@ MessagePumpAuraX11::MessagePumpAuraX11() : MessagePumpGlib(),
   InitializeXInput2();
   InitializeXkb();
   InitXSource();
+
+  // Can't put this in the initializer list because g_xdisplay may not exist
+  // until after InitXSource().
+  x_root_window_ = DefaultRootWindow(g_xdisplay);
 }
 
 // static
@@ -133,17 +152,36 @@ bool MessagePumpAuraX11::HasXInput2() {
 }
 
 // static
-void MessagePumpAuraX11::SetDefaultDispatcher(
+MessagePumpAuraX11* MessagePumpAuraX11::Current() {
+  MessageLoopForUI* loop = MessageLoopForUI::current();
+  return static_cast<MessagePumpAuraX11*>(loop->pump_ui());
+}
+
+void MessagePumpAuraX11::AddDispatcherForWindow(
+    MessagePumpDispatcher* dispatcher,
+    unsigned long xid) {
+  dispatchers_.insert(std::make_pair(xid, dispatcher));
+}
+
+void MessagePumpAuraX11::RemoveDispatcherForWindow(unsigned long xid) {
+  dispatchers_.erase(xid);
+}
+
+void MessagePumpAuraX11::AddDispatcherForRootWindow(
     MessagePumpDispatcher* dispatcher) {
-  DCHECK(!g_default_dispatcher || !dispatcher);
-  g_default_dispatcher = dispatcher;
+  root_window_dispatchers_.AddObserver(dispatcher);
+}
+
+void MessagePumpAuraX11::RemoveDispatcherForRootWindow(
+    MessagePumpDispatcher* dispatcher) {
+  root_window_dispatchers_.RemoveObserver(dispatcher);
 }
 
 bool MessagePumpAuraX11::DispatchXEvents() {
   Display* display = GetDefaultXDisplay();
   DCHECK(display);
   MessagePumpDispatcher* dispatcher =
-      GetDispatcher() ? GetDispatcher() : g_default_dispatcher;
+      GetDispatcher() ? GetDispatcher() : this;
 
   // In the general case, we want to handle all pending events before running
   // the tasks. This is what happens in the message_pump_glib case.
@@ -154,6 +192,23 @@ bool MessagePumpAuraX11::DispatchXEvents() {
       return TRUE;
   }
   return TRUE;
+}
+
+void MessagePumpAuraX11::BlockUntilWindowMapped(unsigned long xid) {
+  XEvent event;
+
+  Display* display = GetDefaultXDisplay();
+  DCHECK(display);
+
+  MessagePumpDispatcher* dispatcher =
+      GetDispatcher() ? GetDispatcher() : this;
+
+  do {
+    // Block until there's a message of |event_mask| type on |w|. Then remove
+    // it from the queue and stuff it in |event|.
+    XWindowEvent(display, xid, StructureNotifyMask, &event);
+    ProcessXEvent(dispatcher, &event);
+  } while (event.type != MapNotify);
 }
 
 MessagePumpAuraX11::~MessagePumpAuraX11() {
@@ -219,6 +274,34 @@ bool MessagePumpAuraX11::WillProcessXEvent(XEvent* xevent) {
 
 void MessagePumpAuraX11::DidProcessXEvent(XEvent* xevent) {
   FOR_EACH_OBSERVER(MessagePumpObserver, observers(), DidProcessEvent(xevent));
+}
+
+MessagePumpDispatcher* MessagePumpAuraX11::GetDispatcherForXEvent(
+    const base::NativeEvent& xev) const {
+  ::Window x_window = FindEventTarget(xev);
+  DispatchersMap::const_iterator it = dispatchers_.find(x_window);
+  return it != dispatchers_.end() ? it->second : NULL;
+}
+
+bool MessagePumpAuraX11::Dispatch(const base::NativeEvent& xev) {
+  // MappingNotify events (meaning that the keyboard or pointer buttons have
+  // been remapped) aren't associated with a window; send them to all
+  // dispatchers.
+  if (xev->type == MappingNotify) {
+    for (DispatchersMap::const_iterator it = dispatchers_.begin();
+         it != dispatchers_.end(); ++it) {
+      it->second->Dispatch(xev);
+    }
+    return true;
+  }
+
+  if (FindEventTarget(xev) == x_root_window_) {
+    FOR_EACH_OBSERVER(MessagePumpDispatcher, root_window_dispatchers_,
+                      Dispatch(xev));
+    return true;
+  }
+  MessagePumpDispatcher* dispatcher = GetDispatcherForXEvent(xev);
+  return dispatcher ? dispatcher->Dispatch(xev) : true;
 }
 
 }  // namespace base

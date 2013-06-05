@@ -16,7 +16,7 @@
 #      'android/java/src/org/chromium/base/SystemMessageHandler.java',
 #    ],
 #    'variables': {
-#      'jni_gen_dir': 'base',
+#      'jni_gen_package': 'base',
 #    },
 #    'includes': [ '../build/jni_generator.gypi' ],
 #  },
@@ -39,14 +39,16 @@
         '<(jni_generator)',
       ],
       'outputs': [
-        '<(SHARED_INTERMEDIATE_DIR)/<(jni_gen_dir)/jni/<(RULE_INPUT_ROOT)_jni.h',
+        '<(SHARED_INTERMEDIATE_DIR)/<(jni_gen_package)/jni/<(RULE_INPUT_ROOT)_jni.h',
       ],
       'action': [
         '<(jni_generator)',
         '--input_file',
         '<(RULE_INPUT_PATH)',
         '--output_dir',
-        '<(SHARED_INTERMEDIATE_DIR)/<(jni_gen_dir)/jni',
+        '<(SHARED_INTERMEDIATE_DIR)/<(jni_gen_package)/jni',
+        '--optimize_generation',
+        '<(optimize_jni_generation)',
       ],
       'message': 'Generating JNI bindings from <(RULE_INPUT_PATH)',
       'process_outputs_as_sources': 1,

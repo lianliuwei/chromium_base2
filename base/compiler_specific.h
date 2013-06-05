@@ -40,19 +40,6 @@
 #define MSVC_DISABLE_OPTIMIZE() __pragma(optimize("", off))
 #define MSVC_ENABLE_OPTIMIZE() __pragma(optimize("", on))
 
-// Allows |this| to be passed as an argument in constructor initializer lists.
-// This uses push/pop instead of the seemingly simpler suppress feature to avoid
-// having the warning be disabled for more than just |code|.
-//
-// Example usage:
-// Foo::Foo() : x(NULL), ALLOW_THIS_IN_INITIALIZER_LIST(y(this)), z(3) {}
-//
-// Compiler warning C4355: 'this': used in base member initializer list:
-// http://msdn.microsoft.com/en-us/library/3c594ae3(VS.80).aspx
-#define ALLOW_THIS_IN_INITIALIZER_LIST(code) MSVC_PUSH_DISABLE_WARNING(4355) \
-                                             code \
-                                             MSVC_POP_WARNING()
-
 // Allows exporting a class that inherits from a non-exported base class.
 // This uses suppress instead of push/pop because the delimiter after the
 // declaration (either "," or "{") has to be placed before the pop macro.
@@ -76,7 +63,6 @@
 #define MSVC_POP_WARNING()
 #define MSVC_DISABLE_OPTIMIZE()
 #define MSVC_ENABLE_OPTIMIZE()
-#define ALLOW_THIS_IN_INITIALIZER_LIST(code) code
 #define NON_EXPORTED_BASE(code) code
 
 #endif  // COMPILER_MSVC
@@ -137,6 +123,20 @@
 #define OVERRIDE
 #endif
 
+// Annotate a virtual method indicating that subclasses must not override it,
+// or annotate a class to indicate that it cannot be subclassed.
+// Use like:
+//   virtual void foo() FINAL;
+//   class B FINAL : public A {};
+#if defined(COMPILER_MSVC)
+// TODO(jered): Change this to "final" when chromium no longer uses MSVC 2010.
+#define FINAL sealed
+#elif defined(__clang__)
+#define FINAL final
+#else
+#define FINAL
+#endif
+
 // Annotate a function indicating the caller must examine the return value.
 // Use like:
 //   int foo() WARN_UNUSED_RESULT;
@@ -165,5 +165,20 @@
 #define WPRINTF_FORMAT(format_param, dots_param)
 // If available, it would look like:
 //   __attribute__((format(wprintf, format_param, dots_param)))
+
+
+// MemorySanitizer annotations.
+#ifdef MEMORY_SANITIZER
+extern "C" {
+void __msan_unpoison(const void *p, unsigned long s);
+}  // extern "C"
+
+// Mark a memory region fully initialized.
+// Use this to annotate code that deliberately reads uninitialized data, for
+// example a GC scavenging root set pointers from the stack.
+#define MSAN_UNPOISON(p, s)  __msan_unpoison(p, s)
+#else  // MEMORY_SANITIZER
+#define MSAN_UNPOISON(p, s)
+#endif  // MEMORY_SANITIZER
 
 #endif  // BASE_COMPILER_SPECIFIC_H_

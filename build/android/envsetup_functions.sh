@@ -25,15 +25,30 @@ common_check_toolchain() {
 # based on CHROME_SRC and ANDROID_TOOLCHAIN, along with DEFINES for GYP_DEFINES.
 ################################################################################
 common_vars_defines() {
-
   # Set toolchain path according to product architecture.
-  toolchain_arch="arm"
-  if [[ "${TARGET_PRODUCT}" =~ .*x86.* ]]; then
-    toolchain_arch="x86"
-  fi
+  case "${TARGET_ARCH}" in
+    "arm")
+      toolchain_arch="arm-linux-androideabi"
+      ;;
+    "x86")
+      toolchain_arch="x86"
+      ;;
+    "mips")
+      toolchain_arch="mipsel-linux-android"
+      ;;
+    *)
+      echo "TARGET_ARCH: ${TARGET_ARCH} is not supported." >& 2
+      print_usage
+      return 1
+      ;;
+  esac
 
+  toolchain_version="4.6"
+  # We directly set the gcc_version since we know what we use, and it should
+  # be set to xx instead of x.x. Refer the output of compiler_version.py.
+  gcc_version="46"
   toolchain_target=$(basename \
-    ${ANDROID_NDK_ROOT}/toolchains/${toolchain_arch}-*)
+    ${ANDROID_NDK_ROOT}/toolchains/${toolchain_arch}-${toolchain_version})
   toolchain_path="${ANDROID_NDK_ROOT}/toolchains/${toolchain_target}"\
 "/prebuilt/${toolchain_dir}/bin/"
 
@@ -47,6 +62,13 @@ common_vars_defines() {
   export PATH=$PATH:${ANDROID_NDK_ROOT}
   export PATH=$PATH:${ANDROID_SDK_ROOT}/tools
   export PATH=$PATH:${ANDROID_SDK_ROOT}/platform-tools
+
+  # This must be set before ANDROID_TOOLCHAIN, so that clang could find the
+  # gold linker.
+  # TODO(michaelbai): Remove this path once the gold linker become the default
+  # linker.
+  export PATH=$PATH:${CHROME_SRC}/build/android/${toolchain_arch}-gold
+
   # Must have tools like arm-linux-androideabi-gcc on the path for ninja
   export PATH=$PATH:${ANDROID_TOOLCHAIN}
 
@@ -54,6 +76,7 @@ common_vars_defines() {
   # Must be after CHROME_SRC is set.
   export PATH=$PATH:${CHROME_SRC}/build/android
 
+  # TODO(beverloo): Remove these once all consumers updated to --strip-binary.
   export OBJCOPY=$(echo ${ANDROID_TOOLCHAIN}/*-objcopy)
   export STRIP=$(echo ${ANDROID_TOOLCHAIN}/*-strip)
 
@@ -61,8 +84,9 @@ common_vars_defines() {
   # to canonicalize them (remove double '/', remove trailing '/', etc).
   DEFINES="OS=android"
   DEFINES+=" host_os=${host_os}"
+  DEFINES+=" gcc_version=${gcc_version}"
 
-  if [ -n "$CHROME_ANDROID_OFFICIAL_BUILD" ]; then
+  if [[ -n "$CHROME_ANDROID_OFFICIAL_BUILD" ]]; then
     DEFINES+=" branding=Chrome"
     DEFINES+=" buildtype=Official"
 
@@ -72,10 +96,6 @@ common_vars_defines() {
     export OFFICIAL_BUILD=1
     export CHROMIUM_BUILD="_google_chrome"
     export CHROME_BUILD_TYPE="_official"
-
-    # Used by chrome_version_info_posix.cc to display the channel name.
-    # Valid values: "unstable", "stable", "dev", "beta".
-    export CHROME_VERSION_EXTRA="beta"
   fi
 
   # The order file specifies the order of symbols in the .text section of the
@@ -87,31 +107,26 @@ common_vars_defines() {
 
   # The following defines will affect ARM code generation of both C/C++ compiler
   # and V8 mksnapshot.
-  case "${TARGET_PRODUCT}" in
-    "passion"|"soju"|"sojua"|"sojus"|"yakju"|"mysid"|"nakasi")
-      DEFINES+=" target_arch=arm"
-      DEFINES+=" arm_neon=1 armv7=1 arm_thumb=1"
+  case "${TARGET_ARCH}" in
+    "arm")
       DEFINES+=" ${ORDER_DEFINES}"
-      ;;
-    "trygon"|"tervigon")
       DEFINES+=" target_arch=arm"
-      DEFINES+=" arm_neon=0 armv7=1 arm_thumb=1 arm_fpu=vfpv3-d16"
-      DEFINES+=" ${ORDER_DEFINES}"
       ;;
-    "full")
-      DEFINES+=" target_arch=arm"
-      DEFINES+=" arm_neon=0 armv7=0 arm_thumb=1 arm_fpu=vfp"
-      ;;
-    *x86*)
+    "x86")
     # TODO(tedbo): The ia32 build fails on ffmpeg, so we disable it here.
-      DEFINES+=" target_arch=ia32 use_libffmpeg=0"
+      DEFINES+=" use_libffmpeg=0"
 
       host_arch=$(uname -m | sed -e \
         's/i.86/ia32/;s/x86_64/x64/;s/amd64/x64/;s/arm.*/arm/;s/i86pc/ia32/')
       DEFINES+=" host_arch=${host_arch}"
+      DEFINES+=" target_arch=ia32"
+      ;;
+    "mips")
+      DEFINES+=" target_arch=mipsel"
       ;;
     *)
-      echo "TARGET_PRODUCT: ${TARGET_PRODUCT} is not supported." >& 2
+      echo "TARGET_ARCH: ${TARGET_ARCH} is not supported." >& 2
+      print_usage
       return 1
   esac
 }
@@ -122,7 +137,16 @@ common_vars_defines() {
 ################################################################################
 common_gyp_vars() {
   export GYP_DEFINES="${DEFINES}"
-  export GYP_GENERATORS="make-android"
+
+  # Set GYP_GENERATORS to ninja if it's currently unset or null.
+  if [ -z "$GYP_GENERATORS" ]; then
+    echo "Defaulting GYP_GENERATORS to ninja."
+    GYP_GENERATORS=ninja
+  elif [ "$GYP_GENERATORS" != "ninja" ]; then
+    echo "Warning: GYP_GENERATORS set to '$GYP_GENERATORS'."
+    echo "Only GYP_GENERATORS=ninja has continuous coverage."
+  fi
+  export GYP_GENERATORS
 
   # Use our All target as the default
   export GYP_GENERATOR_FLAGS="${GYP_GENERATOR_FLAGS} default_target=All"
@@ -133,32 +157,80 @@ common_gyp_vars() {
 
 
 ################################################################################
+# Prints out help message on usage.
+################################################################################
+print_usage() {
+  echo "usage: ${0##*/} [--target-arch=value] [--help]" >& 2
+  echo "--target-arch=value     target CPU architecture (arm=default, x86)" >& 2
+  echo "--host-os=value         override host OS detection (linux, mac)" >&2
+  echo "--try-32bit-host        try building a 32-bit host architecture" >&2
+  echo "--help                  this help" >& 2
+}
+
+################################################################################
+# Process command line options.
+# --target-arch=  Specifices target CPU architecture. Currently supported
+#                 architectures are "arm" (default), and "x86".
+# --help          Prints out help message.
+################################################################################
+process_options() {
+  host_os=$(uname -s | sed -e 's/Linux/linux/;s/Darwin/mac/')
+  try_32bit_host_build=
+  while [[ -n $1 ]]; do
+    case "$1" in
+      --target-arch=*)
+        target_arch="$(echo "$1" | sed 's/^[^=]*=//')"
+        ;;
+      --host-os=*)
+        host_os="$(echo "$1" | sed 's/^[^=]*=//')"
+        ;;
+      --try-32bit-host)
+        try_32bit_host_build=true
+        ;;
+      --help)
+        print_usage
+        return 1
+        ;;
+      *)
+        # Ignore other command line options
+        echo "Unknown option: $1"
+        ;;
+    esac
+    shift
+  done
+
+  # Sets TARGET_ARCH. Defaults to arm if not specified.
+  TARGET_ARCH=${target_arch:-arm}
+}
+
+################################################################################
 # Initializes environment variables for NDK/SDK build. Only Android NDK Revision
 # 7 on Linux or Mac is offically supported. To run this script, the system
 # environment ANDROID_NDK_ROOT must be set to Android NDK's root path.  The
 # ANDROID_SDK_ROOT only needs to be set to override the default SDK which is in
 # the tree under $ROOT/src/third_party/android_tools/sdk.
-# TODO(navabi): Add NDK to $ROOT/src/third_party/android_tools/ndk.
 # To build Chromium for Android with NDK/SDK follow the steps below:
 #  > export ANDROID_NDK_ROOT=<android ndk root>
 #  > export ANDROID_SDK_ROOT=<android sdk root> # to override the default sdk
-#  > . build/android/envsetup.sh --sdk
+#  > . build/android/envsetup.sh
 #  > make
 ################################################################################
 sdk_build_init() {
   # If ANDROID_NDK_ROOT is set when envsetup is run, use the ndk pointed to by
   # the environment variable.  Otherwise, use the default ndk from the tree.
-  if [ ! -d "${ANDROID_NDK_ROOT}" ]; then
+  if [[ -z "${ANDROID_NDK_ROOT}" || ! -d "${ANDROID_NDK_ROOT}" ]]; then
     export ANDROID_NDK_ROOT="${CHROME_SRC}/third_party/android_tools/ndk/"
   fi
 
-  # If ANDROID_SDK_ROOT is set when envsetup is run, use the sdk pointed to by
-  # the environment variable.  Otherwise, use the default sdk from the tree.
-  if [ ! -d "${ANDROID_SDK_ROOT}" ]; then
+  # If ANDROID_SDK_ROOT is set when envsetup is run, and if it has the
+  # right SDK-compatible directory layout, use the sdk pointed to by the
+  # environment variable.  Otherwise, use the default sdk from the tree.
+  local sdk_suffix=platforms/android-${ANDROID_SDK_VERSION}
+  if [[ -z "${ANDROID_SDK_ROOT}" || \
+       ! -d "${ANDROID_SDK_ROOT}/${sdk_suffix}" ]]; then
     export ANDROID_SDK_ROOT="${CHROME_SRC}/third_party/android_tools/sdk/"
   fi
 
-  # Makes sure ANDROID_BUILD_TOP is unset if build has option --sdk
   unset ANDROID_BUILD_TOP
 
   # Set default target.
@@ -169,33 +241,9 @@ sdk_build_init() {
   unset ANDROID_TOOLCHAIN
 
   common_vars_defines
-
-  DEFINES+=" sdk_build=1"
-  # If we are building NDK/SDK, and in the upstream (open source) tree,
-  # define a special variable for bringup purposes.
-  case "${ANDROID_BUILD_TOP-undefined}" in
-    "undefined")
-      DEFINES+=" android_upstream_bringup=1"
-      ;;
-  esac
-
-  # Sets android specific directories to NOT_SDK_COMPLIANT.  This will allow
-  # android_gyp to generate make files, but will cause errors when (and only
-  # when) building targets that depend on these directories.
-  DEFINES+=" android_src='NOT_SDK_COMPLIANT'"
-  DEFINES+=" android_product_out=${CHROME_SRC}/out/android"
-  DEFINES+=" android_lib='NOT_SDK_COMPLIANT'"
-  DEFINES+=" android_static_lib='NOT_SDK_COMPLIANT'"
-  DEFINES+=\
-" android_sdk=${ANDROID_SDK_ROOT}/platforms/android-${ANDROID_SDK_VERSION}"
-  DEFINES+=" android_sdk_root=${ANDROID_SDK_ROOT}"
-  DEFINES+=" android_sdk_tools=${ANDROID_SDK_ROOT}/platform-tools"
-  DEFINES+=" android_sdk_version=${ANDROID_SDK_VERSION}"
-  DEFINES+=" android_toolchain=${ANDROID_TOOLCHAIN}"
-
   common_gyp_vars
 
-  if [ -n "$CHROME_ANDROID_BUILD_WEBVIEW" ]; then
+  if [[ -n "$CHROME_ANDROID_BUILD_WEBVIEW" ]]; then
     # Can not build WebView with NDK/SDK because it needs the Android build
     # system and build inside an Android source tree.
     echo "Can not build WebView with NDK/SDK.  Requires android source tree." \
@@ -206,69 +254,46 @@ sdk_build_init() {
 
 }
 
-
-################################################################################
-# Initializes environment variables for build with android source.  This expects
-# android environment to be set up along with lunch.  To build:
-#  > . build/envsetup.sh
-#  >  lunch <lunch-type>
-#  > . build/android/envsetup.sh
-#  > make
-#############################################################################
-non_sdk_build_init() {
-  # We export "TOP" here so that "mmm" can be run to build Java code without
-  # having to cd to $ANDROID_BUILD_TOP.
-  export TOP="$ANDROID_BUILD_TOP"
-
-  # We export "ANDROID_NDK_ROOT" for building Chromium for Android by NDK.
-  export ANDROID_NDK_ROOT=${ANDROID_BUILD_TOP}/prebuilts/ndk/android-ndk-r7
-
-  # We export "ANDROID_SDK_ROOT" for building Java source with the SDK.
-  export ANDROID_SDK_ROOT=${ANDROID_BUILD_TOP}/prebuilts/sdk/\
-${ANDROID_SDK_VERSION}
-  # Needed by android antfiles when creating apks.
-  export ANDROID_SDK_HOME=${ANDROID_SDK_ROOT}
-
-  common_vars_defines
-
-  DEFINES+=" sdk_build=0"
-  DEFINES+=" android_product_out=${ANDROID_PRODUCT_OUT}"
-
-  if [ -n "$CHROME_ANDROID_BUILD_WEBVIEW" ]; then
-    webview_build_init
-    return
-  fi
-
-  # The non-SDK build currently requires the SDK path to build the framework
-  # Java aidl files. TODO(steveblock): Investigate avoiding this requirement.
-  DEFINES+=" android_sdk=${ANDROID_SDK_ROOT}"
-  DEFINES+=" android_sdk_root=${ANDROID_SDK_ROOT}"
-  DEFINES+=" android_sdk_tools=${ANDROID_SDK_ROOT}/../tools/linux"
-  DEFINES+=" android_sdk_version=${ANDROID_SDK_VERSION}"
-  DEFINES+=" android_toolchain=${ANDROID_TOOLCHAIN}"
-
-  common_gyp_vars
-}
-
 ################################################################################
 # To build WebView, we use the Android build system and build inside an Android
 # source tree. This method is called from non_sdk_build_init() and adds to the
 # settings specified there.
 #############################################################################
 webview_build_init() {
+  # For the WebView build we always use the NDK and SDK in the Android tree,
+  # and we don't touch ANDROID_TOOLCHAIN which is already set by Android.
+  export ANDROID_NDK_ROOT=${ANDROID_BUILD_TOP}/prebuilts/ndk/8
+  export ANDROID_SDK_ROOT=${ANDROID_BUILD_TOP}/prebuilts/sdk/\
+${ANDROID_SDK_VERSION}
+
+  common_vars_defines
+
   # We need to supply SDK paths relative to the top of the Android tree to make
   # sure the generated Android makefiles are portable, as they will be checked
   # into the Android tree.
   ANDROID_SDK=$(python -c \
-      "import os.path; print os.path.relpath('${ANDROID_SDK_ROOT}', '${TOP}')")
-  ANDROID_SDK_TOOLS=$(python -c \
-      "import os.path; \
-      print os.path.relpath('${ANDROID_SDK_ROOT}/../tools/linux', \
-      '${TOP}')")
+      "import os.path; print os.path.relpath('${ANDROID_SDK_ROOT}', \
+      '${ANDROID_BUILD_TOP}')")
+  case "${host_os}" in
+    "linux")
+      ANDROID_SDK_TOOLS=$(python -c \
+          "import os.path; \
+          print os.path.relpath('${ANDROID_SDK_ROOT}/../tools/linux', \
+          '${ANDROID_BUILD_TOP}')")
+      ;;
+    "mac")
+      ANDROID_SDK_TOOLS=$(python -c \
+          "import os.path; \
+          print os.path.relpath('${ANDROID_SDK_ROOT}/../tools/darwin', \
+          '${ANDROID_BUILD_TOP}')")
+      ;;
+  esac
+  DEFINES+=" android_webview_build=1"
+  # temporary until all uses of android_build_type are gone (crbug.com/184431)
   DEFINES+=" android_build_type=1"
-  DEFINES+=" android_upstream_bringup=1"
+  DEFINES+=" android_src=\$(GYP_ABS_ANDROID_TOP_DIR)"
   DEFINES+=" android_sdk=\$(GYP_ABS_ANDROID_TOP_DIR)/${ANDROID_SDK}"
-  DEFINES+=" android_sdk_root=${ANDROID_SDK_ROOT}"
+  DEFINES+=" android_sdk_root=\$(GYP_ABS_ANDROID_TOP_DIR)/${ANDROID_SDK}"
   DEFINES+=" android_sdk_tools=\$(GYP_ABS_ANDROID_TOP_DIR)/${ANDROID_SDK_TOOLS}"
   DEFINES+=" android_sdk_version=${ANDROID_SDK_VERSION}"
   DEFINES+=" android_toolchain=${ANDROID_TOOLCHAIN}"
@@ -280,6 +305,5 @@ webview_build_init() {
   export GYP_GENERATOR_FLAGS="${GYP_GENERATOR_FLAGS} limit_to_target_all=1"
   export GYP_GENERATOR_FLAGS="${GYP_GENERATOR_FLAGS} auto_regeneration=0"
 
-  # TODO(torne): This isn't upstream yet. Upstream it or remove this setting.
-  export CHROMIUM_GYP_FILE="${CHROME_SRC}/build/all_android_webview.gyp"
+  export CHROMIUM_GYP_FILE="${CHROME_SRC}/android_webview/all_webview.gyp"
 }

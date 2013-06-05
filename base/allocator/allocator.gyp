@@ -6,8 +6,12 @@
   'variables': {
     'jemalloc_dir': '../../third_party/jemalloc/chromium',
     'tcmalloc_dir': '../../third_party/tcmalloc/chromium',
+    'use_vtable_verify%': 0,
   },
   'targets': [
+    # Only executables and not libraries should depend on the
+    # allocator target; only the application (the final executable)
+    # knows what allocator makes sense.
     {
       'target_name': 'allocator',
       'type': 'static_library',
@@ -47,6 +51,7 @@
         # Generated for our configuration from tcmalloc's build
         # and checked in.
         '<(tcmalloc_dir)/src/config.h',
+        '<(tcmalloc_dir)/src/config_android.h',
         '<(tcmalloc_dir)/src/config_linux.h',
         '<(tcmalloc_dir)/src/config_win.h',
 
@@ -202,6 +207,7 @@
 
         'allocator_shim.cc',
         'allocator_shim.h',
+        'debugallocation_shim.cc',
         'generic_allocators.cc',
         'win_allocator.cc',
       ],
@@ -210,6 +216,10 @@
         # Included by allocator_shim.cc for maximal inlining.
         'generic_allocators.cc',
         'win_allocator.cc',
+
+        # Included by debugallocation_shim.cc.
+        '<(tcmalloc_dir)/src/debugallocation.cc',
+        '<(tcmalloc_dir)/src/tcmalloc.cc',
 
         # We simply don't use these, but list them above so that IDE
         # users can view the full available source for reference, etc.
@@ -285,8 +295,6 @@
         # TODO(sgk):  merge this with build/common.gypi settings
         'VCLibrarianTool': {
           'AdditionalOptions': ['/ignore:4006,4221'],
-          'AdditionalLibraryDirectories':
-            ['<(DEPTH)/third_party/platformsdk_win7/files/Lib'],
         },
         'VCLinkerTool': {
           'AdditionalOptions': ['/ignore:4006'],
@@ -299,9 +307,37 @@
               'RuntimeLibrary': '0',
             },
           },
+          'variables': {
+            # Provide a way to force disable debugallocation in Debug builds,
+            # e.g. for profiling (it's more rare to profile Debug builds,
+            # but people sometimes need to do that).
+            'disable_debugallocation%': 0,
+          },
+          'conditions': [
+            ['disable_debugallocation==0', {
+              'defines': [
+                # Use debugallocation for Debug builds to catch problems early
+                # and cleanly, http://crbug.com/30715 .
+                'TCMALLOC_FOR_DEBUGALLOCATION',
+              ],
+            }],
+          ],
         },
       },
       'conditions': [
+        ['OS=="linux" and clang_type_profiler==1', {
+          'dependencies': [
+            'type_profiler_tcmalloc',
+          ],
+          # It is undoing dependencies and cflags_cc for type_profiler which
+          # build/common.gypi injects into all targets.
+          'dependencies!': [
+            'type_profiler',
+          ],
+          'cflags_cc!': [
+            '-fintercept-allocation-functions',
+          ],
+        }],
         ['OS=="win"', {
           'defines': [
             'PERFTOOLS_DLL_DECL=',
@@ -315,6 +351,7 @@
             'libcmt',
           ],
           'include_dirs': [
+            '<(jemalloc_dir)',
             '<(tcmalloc_dir)/src/windows',
           ],
           'sources!': [
@@ -331,7 +368,7 @@
             '<(tcmalloc_dir)/src/system-alloc.h',
 
             # included by allocator_shim.cc
-            '<(tcmalloc_dir)/src/tcmalloc.cc',
+            'debugallocation_shim.cc',
 
             # heap-profiler/checker/cpuprofiler
             '<(tcmalloc_dir)/src/base/thread_lister.c',
@@ -350,12 +387,9 @@
             '<(tcmalloc_dir)/src/profile-handler.cc',
             '<(tcmalloc_dir)/src/profile-handler.h',
             '<(tcmalloc_dir)/src/profiler.cc',
-
-            # debugallocation
-            '<(tcmalloc_dir)/src/debugallocation.cc',
           ],
         }],
-        ['OS=="linux" or OS=="freebsd" or OS=="solaris"', {
+        ['OS=="linux" or OS=="freebsd" or OS=="solaris" or OS=="android"', {
           'sources!': [
             '<(tcmalloc_dir)/src/system-alloc.h',
             '<(tcmalloc_dir)/src/windows/port.cc',
@@ -394,18 +428,9 @@
               '-Wl,-u_ZN15HeapLeakChecker12IgnoreObjectEPKv,-u_ZN15HeapLeakChecker14UnIgnoreObjectEPKv',
           ]},
         }],
-        [ 'linux_use_debugallocation==1', {
-          'sources!': [
-            # debugallocation.cc #includes tcmalloc.cc,
-            # so only one of them should be used.
-            '<(tcmalloc_dir)/src/tcmalloc.cc',
-          ],
-          'defines': [
-            'TCMALLOC_FOR_DEBUGALLOCATION',
-          ],
-        }, { # linux_use_debugallocation != 1
-          'sources!': [
-            '<(tcmalloc_dir)/src/debugallocation.cc',
+        [ 'use_vtable_verify==1', {
+          'cflags': [
+            '-fvtable-verify=preinit',
           ],
         }],
         [ 'linux_keep_shadow_stacks==1', {
@@ -430,6 +455,18 @@
           # Disable the heap checker in tcmalloc.
           'defines': [
             'NO_HEAP_CHECK',
+           ],
+        }],
+        [ 'clang==1', {
+          'cflags': [
+            '-Wno-non-literal-null-conversion',
+          ],
+        }],
+        ['order_profiling != 0', {
+          'target_conditions' : [
+            ['_toolset=="target"', {
+              'cflags!': [ '-finstrument-functions' ],
+            }],
           ],
         }],
       ],
@@ -447,6 +484,18 @@
       'toolsets': ['host', 'target'],
       'include_dirs': [
         '../../'
+      ],
+      'conditions': [
+        ['OS=="linux" and clang_type_profiler==1', {
+          # It is undoing dependencies and cflags_cc for type_profiler which
+          # build/common.gypi injects into all targets.
+          'dependencies!': [
+            'type_profiler',
+          ],
+          'cflags_cc!': [
+            '-fintercept-allocation-functions',
+          ],
+        }],
       ],
     },
    ],
@@ -470,6 +519,7 @@
                 'prep_libc.py',
                 '$(VCInstallDir)lib',
                 '<(SHARED_INTERMEDIATE_DIR)/allocator',
+                '<(target_arch)',
               ],
             },
           ],
@@ -495,6 +545,27 @@
           ],
         },
         {
+          'target_name': 'tcmalloc_unittest',
+          'type': 'executable',
+          'sources': [
+            'tcmalloc_unittest.cc',
+          ],
+          'include_dirs': [
+            '../..',
+            # For constants of TCMalloc.
+            '<(tcmalloc_dir)/src',
+          ],
+          'dependencies': [
+            '../../testing/gtest.gyp:gtest',
+            '../base.gyp:base',
+            'allocator',
+          ],
+        },
+      ],
+    }],
+    ['OS=="win" and target_arch=="ia32"', {
+      'targets': [
+        {
           'target_name': 'allocator_extension_thunks_win64',
           'type': 'static_library',
           'sources': [
@@ -511,23 +582,93 @@
             },
           },
         },
-      {
-        'target_name': 'tcmalloc_unittest',
-        'type': 'executable',
-        'sources': [
-          'tcmalloc_unittest.cc',
-        ],
-        'include_dirs': [
-          '../..',
-          # For constants of TCMalloc.
-          '<(tcmalloc_dir)/src',
-        ],
-        'dependencies': [
-          '../../testing/gtest.gyp:gtest',
-          '../base.gyp:base',
-          'allocator',
-        ],
-      },
+      ],
+    }],
+    ['OS=="linux" and clang_type_profiler==1', {
+      # Some targets in this section undo dependencies and cflags_cc for
+      # type_profiler which build/common.gypi injects into all targets.
+      'targets': [
+        {
+          'target_name': 'type_profiler',
+          'type': 'static_library',
+          'dependencies!': [
+            'type_profiler',
+          ],
+          'cflags_cc!': [
+            '-fintercept-allocation-functions',
+          ],
+          'include_dirs': [
+            '../..',
+          ],
+          'sources': [
+            'type_profiler.cc',
+            'type_profiler.h',
+            'type_profiler_control.h',
+          ],
+          'toolsets': ['host', 'target'],
+        },
+        {
+          'target_name': 'type_profiler_tcmalloc',
+          'type': 'static_library',
+          'dependencies!': [
+            'type_profiler',
+          ],
+          'cflags_cc!': [
+            '-fintercept-allocation-functions',
+          ],
+          'include_dirs': [
+            '<(tcmalloc_dir)/src',
+            '../..',
+          ],
+          'sources': [
+            'type_profiler_tcmalloc.cc',
+            'type_profiler_tcmalloc.h',
+            '<(tcmalloc_dir)/src/gperftools/type_profiler_map.h',
+            '<(tcmalloc_dir)/src/type_profiler_map.cc',
+          ],
+        },
+        {
+          'target_name': 'type_profiler_unittests',
+          'type': 'executable',
+          'dependencies': [
+            '../../testing/gtest.gyp:gtest',
+            '../base.gyp:base',
+            'allocator',
+            'type_profiler_tcmalloc',
+          ],
+          'include_dirs': [
+            '../..',
+          ],
+          'sources': [
+            'type_profiler_control.cc',
+            'type_profiler_control.h',
+            'type_profiler_unittests.cc',
+          ],
+        },
+        {
+          'target_name': 'type_profiler_map_unittests',
+          'type': 'executable',
+          'dependencies': [
+            '../../testing/gtest.gyp:gtest',
+            '../base.gyp:base',
+            'allocator',
+          ],
+          'dependencies!': [
+            'type_profiler',
+          ],
+          'cflags_cc!': [
+            '-fintercept-allocation-functions',
+          ],
+          'include_dirs': [
+            '<(tcmalloc_dir)/src',
+            '../..',
+          ],
+          'sources': [
+            'type_profiler_map_unittests.cc',
+            '<(tcmalloc_dir)/src/gperftools/type_profiler_map.h',
+            '<(tcmalloc_dir)/src/type_profiler_map.cc',
+          ],
+        },
       ],
     }],
   ],

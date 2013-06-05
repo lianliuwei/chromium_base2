@@ -56,11 +56,10 @@
 #include "base/location.h"
 #include "base/time.h"
 
-class MessageLoop;
-
 namespace base {
 
 class BaseTimerTaskInternal;
+class MessageLoop;
 
 //-----------------------------------------------------------------------------
 // This class wraps MessageLoop::PostDelayedTask to manage delayed and repeating
@@ -183,6 +182,13 @@ template <class Receiver, bool kIsRepeating>
 class BaseTimerMethodPointer : public Timer {
  public:
   typedef void (Receiver::*ReceiverMethod)();
+
+  // This is here to work around the fact that Timer::Start is "hidden" by the
+  // Start definition below, rather than being overloaded.
+  // TODO(tim): We should remove uses of BaseTimerMethodPointer::Start below
+  // and convert callers to use the base::Closure version in Timer::Start,
+  // see bug 148832.
+  using Timer::Start;
 
   BaseTimerMethodPointer() : Timer(kIsRepeating, kIsRepeating) {}
 

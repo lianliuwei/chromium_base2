@@ -6,10 +6,13 @@
 
 #import <Cocoa/Cocoa.h>
 #import <IOKit/IOKitLib.h>
+
+#include <errno.h>
 #include <string.h>
 #include <sys/utsname.h>
+#include <sys/xattr.h>
 
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
@@ -17,28 +20,37 @@
 #include "base/mac/scoped_cftyperef.h"
 #include "base/memory/scoped_generic_obj.h"
 #include "base/memory/scoped_nsobject.h"
-#include "base/string_number_conversions.h"
-#include "base/string_piece.h"
-#include "base/sys_string_conversions.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_piece.h"
+#include "base/strings/sys_string_conversions.h"
 
 namespace base {
 namespace mac {
+
+// Replicate specific 10.7 SDK declarations for building with prior SDKs.
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+
+enum {
+  NSApplicationPresentationFullScreen = 1 << 10
+};
+
+#endif  // MAC_OS_X_VERSION_10_7
 
 namespace {
 
 // The current count of outstanding requests for full screen mode from browser
 // windows, plugins, etc.
-int g_full_screen_requests[kNumFullScreenModes] = { 0, 0, 0};
+int g_full_screen_requests[kNumFullScreenModes] = { 0 };
 
-// Sets the appropriate SystemUIMode based on the current full screen requests.
-// Since only one SystemUIMode can be active at a given time, full screen
-// requests are ordered by priority.  If there are no outstanding full screen
-// requests, reverts to normal mode.  If the correct SystemUIMode is already
-// set, does nothing.
+// Sets the appropriate application presentation option based on the current
+// full screen requests.  Since only one presentation option can be active at a
+// given time, full screen requests are ordered by priority.  If there are no
+// outstanding full screen requests, reverts to normal mode.  If the correct
+// presentation option is already set, does nothing.
 void SetUIMode() {
-  // Get the current UI mode.
-  SystemUIMode current_mode;
-  GetSystemUIMode(&current_mode, NULL);
+  NSApplicationPresentationOptions current_options =
+      [NSApp presentationOptions];
 
   // Determine which mode should be active, based on which requests are
   // currently outstanding.  More permissive requests take precedence.  For
@@ -46,19 +58,33 @@ void SetUIMode() {
   // windows request |kFullScreenModeHideDock| when the fullscreen overlay is
   // down.  Precedence goes to plugins in this case, so AutoHideAll wins over
   // HideDock.
-  SystemUIMode desired_mode = kUIModeNormal;
-  SystemUIOptions desired_options = 0;
+  NSApplicationPresentationOptions desired_options =
+      NSApplicationPresentationDefault;
   if (g_full_screen_requests[kFullScreenModeAutoHideAll] > 0) {
-    desired_mode = kUIModeAllHidden;
-    desired_options = kUIOptionAutoShowMenuBar;
+    desired_options = NSApplicationPresentationHideDock |
+                      NSApplicationPresentationAutoHideMenuBar;
   } else if (g_full_screen_requests[kFullScreenModeHideDock] > 0) {
-    desired_mode = kUIModeContentHidden;
+    desired_options = NSApplicationPresentationHideDock;
   } else if (g_full_screen_requests[kFullScreenModeHideAll] > 0) {
-    desired_mode = kUIModeAllHidden;
+    desired_options = NSApplicationPresentationHideDock |
+                      NSApplicationPresentationHideMenuBar;
   }
 
-  if (current_mode != desired_mode)
-    SetSystemUIMode(desired_mode, desired_options);
+  // Mac OS X bug: if the window is fullscreened (Lion-style) and
+  // NSApplicationPresentationDefault is requested, the result is that the menu
+  // bar doesn't auto-hide. rdar://13576498 http://www.openradar.me/13576498
+  //
+  // As a workaround, in that case, explicitly set the presentation options to
+  // the ones that are set by the system as it fullscreens a window.
+  if (desired_options == NSApplicationPresentationDefault &&
+      current_options & NSApplicationPresentationFullScreen) {
+    desired_options |= NSApplicationPresentationFullScreen |
+                       NSApplicationPresentationAutoHideMenuBar |
+                       NSApplicationPresentationAutoHideDock;
+  }
+
+  if (current_options != desired_options)
+    [NSApp setPresentationOptions:desired_options];
 }
 
 // Looks into Shared File Lists corresponding to Login Items for the item
@@ -154,6 +180,9 @@ void RequestFullScreen(FullScreenMode mode) {
     return;
 
   DCHECK_GE(g_full_screen_requests[mode], 0);
+  if (mode < 0)
+    return;
+
   g_full_screen_requests[mode] = std::max(g_full_screen_requests[mode] + 1, 1);
   SetUIMode();
 }
@@ -164,7 +193,10 @@ void ReleaseFullScreen(FullScreenMode mode) {
   if (mode >= kNumFullScreenModes)
     return;
 
-  DCHECK_GT(g_full_screen_requests[mode], 0);
+  DCHECK_GE(g_full_screen_requests[mode], 0);
+  if (mode < 0)
+    return;
+
   g_full_screen_requests[mode] = std::max(g_full_screen_requests[mode] - 1, 0);
   SetUIMode();
 }
@@ -484,6 +516,12 @@ bool WasLaunchedAsHiddenLoginItem() {
   return IsHiddenLoginItem(item);
 }
 
+bool RemoveQuarantineAttribute(const FilePath& file_path) {
+  const char kQuarantineAttrName[] = "com.apple.quarantine";
+  int status = removexattr(file_path.value().c_str(), kQuarantineAttrName, 0);
+  return status == 0 || errno == ENOATTR;
+}
+
 namespace {
 
 // Returns the running system's Darwin major version. Don't call this, it's
@@ -604,7 +642,7 @@ bool IsOSMountainLionOrLater() {
 #endif
 
 #if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_8)
-bool IsOSDangerouslyLaterThanMountainLionForUseByCFAllocatorReplacement() {
+bool IsOSLaterThanMountainLion_DontCallThis() {
   return MacOSXMinorVersion() > MOUNTAIN_LION_MINOR_VERSION;
 }
 #endif

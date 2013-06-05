@@ -23,7 +23,7 @@
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
-#include "base/utf_string_conversion_utils.h"
+#include "base/strings/utf_string_conversion_utils.h"
 #include "base/utf_string_conversions.h"
 #include "base/third_party/icu/icu_utf.h"
 
@@ -115,54 +115,6 @@ const std::wstring& EmptyWString() {
 const string16& EmptyString16() {
   return EmptyStrings::GetInstance()->s16;
 }
-
-#define WHITESPACE_UNICODE \
-  0x0009, /* <control-0009> to <control-000D> */ \
-  0x000A,                                        \
-  0x000B,                                        \
-  0x000C,                                        \
-  0x000D,                                        \
-  0x0020, /* Space */                            \
-  0x0085, /* <control-0085> */                   \
-  0x00A0, /* No-Break Space */                   \
-  0x1680, /* Ogham Space Mark */                 \
-  0x180E, /* Mongolian Vowel Separator */        \
-  0x2000, /* En Quad to Hair Space */            \
-  0x2001,                                        \
-  0x2002,                                        \
-  0x2003,                                        \
-  0x2004,                                        \
-  0x2005,                                        \
-  0x2006,                                        \
-  0x2007,                                        \
-  0x2008,                                        \
-  0x2009,                                        \
-  0x200A,                                        \
-  0x200C, /* Zero Width Non-Joiner */            \
-  0x2028, /* Line Separator */                   \
-  0x2029, /* Paragraph Separator */              \
-  0x202F, /* Narrow No-Break Space */            \
-  0x205F, /* Medium Mathematical Space */        \
-  0x3000, /* Ideographic Space */                \
-  0
-
-const wchar_t kWhitespaceWide[] = {
-  WHITESPACE_UNICODE
-};
-const char16 kWhitespaceUTF16[] = {
-  WHITESPACE_UNICODE
-};
-const char kWhitespaceASCII[] = {
-  0x09,    // <control-0009> to <control-000D>
-  0x0A,
-  0x0B,
-  0x0C,
-  0x0D,
-  0x20,    // Space
-  0
-};
-
-const char kUtf8ByteOrderMark[] = "\xEF\xBB\xBF";
 
 template<typename STR>
 bool ReplaceCharsT(const STR& input,
@@ -750,8 +702,7 @@ size_t Tokenize(const base::StringPiece& str,
 }
 
 template<typename STR>
-static STR JoinStringT(const std::vector<STR>& parts,
-                       typename STR::value_type sep) {
+static STR JoinStringT(const std::vector<STR>& parts, const STR& sep) {
   if (parts.empty())
     return STR();
 
@@ -768,11 +719,21 @@ static STR JoinStringT(const std::vector<STR>& parts,
 }
 
 std::string JoinString(const std::vector<std::string>& parts, char sep) {
-  return JoinStringT(parts, sep);
+  return JoinStringT(parts, std::string(1, sep));
 }
 
 string16 JoinString(const std::vector<string16>& parts, char16 sep) {
-  return JoinStringT(parts, sep);
+  return JoinStringT(parts, string16(1, sep));
+}
+
+std::string JoinString(const std::vector<std::string>& parts,
+                       const std::string& separator) {
+  return JoinStringT(parts, separator);
+}
+
+string16 JoinString(const std::vector<string16>& parts,
+                    const string16& separator) {
+  return JoinStringT(parts, separator);
 }
 
 template<class FormatStringType, class OutStringType>

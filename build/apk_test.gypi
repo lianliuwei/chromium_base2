@@ -19,55 +19,24 @@
 #
 
 {
-  'variables': {
-    'input_jars_paths': [],
-  },
-  'target_conditions': [
-    ['_toolset == "target"', {
-      'conditions': [
-        ['OS == "android" and gtest_target_type == "shared_library"', {
-          'actions': [{
-            'action_name': 'apk_<(test_suite_name)',
-            'message': 'Building <(test_suite_name) test apk.',
-            'inputs': [
-              '<(DEPTH)/testing/android/AndroidManifest.xml',
-              '<(DEPTH)/testing/android/generate_native_test.py',
-              '<(input_shlib_path)',
-              '>@(input_jars_paths)',
-            ],
-            'outputs': [
-              '<(PRODUCT_DIR)/<(test_suite_name)_apk/<(test_suite_name)-debug.apk',
-            ],
-            'action': [
-              '<(DEPTH)/testing/android/generate_native_test.py',
-              '--native_library',
-              '<(input_shlib_path)',
-              '--jars',
-              '">@(input_jars_paths)"',
-              '--output',
-              '<(PRODUCT_DIR)/<(test_suite_name)_apk',
-              '--app_abi',
-              '<(android_app_abi)',
-              '--sdk-build=<(sdk_build)',
-              '--ant-args',
-              '-DPRODUCT_DIR=<(ant_build_out)',
-              '--ant-args',
-              '-DANDROID_SDK=<(android_sdk)',
-              '--ant-args',
-              '-DANDROID_SDK_ROOT=<(android_sdk_root)',
-              '--ant-args',
-              '-DANDROID_SDK_TOOLS=<(android_sdk_tools)',
-              '--ant-args',
-              '-DANDROID_SDK_VERSION=<(android_sdk_version)',
-              '--ant-args',
-              '-DANDROID_TOOLCHAIN=<(android_toolchain)',
-              '--ant-args',
-              '-DCHROMIUM_SRC=<(ant_build_out)/../..',
-              '--ant-compile'
-            ],
-          }],
-        }],  # 'OS == "android" and gtest_target_type == "shared_library"
-      ],  # conditions
-    }],
-  ],  # target_conditions
+  'dependencies': [
+    '<(DEPTH)/base/base.gyp:base_java',
+    '<(DEPTH)/tools/android/android_tools.gyp:android_tools',
+  ],
+  'conditions': [
+     ['OS == "android" and gtest_target_type == "shared_library"', {
+       'variables': {
+         # These are used to configure java_apk.gypi included below.
+         'apk_name': '<(test_suite_name)',
+         'intermediate_dir': '<(PRODUCT_DIR)/<(test_suite_name)_apk',
+         'final_apk_path': '<(intermediate_dir)/<(test_suite_name)-debug.apk',
+         'java_in_dir': '<(DEPTH)/testing/android/java',
+         'android_manifest_path': '<(DEPTH)/testing/android/AndroidManifest.xml',
+         'native_lib_target': 'lib<(test_suite_name)',
+         # TODO(yfriedman, cjhopman): Support managed installs for gtests.
+         'gyp_managed_install': 0,
+       },
+       'includes': [ 'java_apk.gypi' ],
+     }],  # 'OS == "android" and gtest_target_type == "shared_library"
+  ],  # conditions
 }

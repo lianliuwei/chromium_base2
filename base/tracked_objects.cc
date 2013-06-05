@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdlib.h>
 
+#include "base/compiler_specific.h"
 #include "base/format_macros.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/process_util.h"
@@ -74,7 +75,9 @@ DeathData::DeathData(int count) {
 void DeathData::RecordDeath(const int32 queue_duration,
                             const int32 run_duration,
                             int32 random_number) {
-  ++count_;
+  // We'll just clamp at INT_MAX, but we should note this in the UI as such.
+  if (count_ < INT_MAX)
+    ++count_;
   queue_duration_sum_ += queue_duration;
   run_duration_sum_ += run_duration;
 
@@ -89,11 +92,7 @@ void DeathData::RecordDeath(const int32 queue_duration,
   // don't clamp count_... but that should be inconsequentially likely).
   // We ignore the fact that we correlated our selection of a sample to the run
   // and queue times (i.e., we used them to generate random_number).
-  if (count_ <= 0) {  // Handle wrapping of count_, such as in bug 138961.
-    CHECK_GE(count_ - 1, 0);  // Detect memory corruption.
-    // We'll just clamp at INT_MAX, but we should note this in the UI as such.
-    count_ = INT_MAX;
-  }
+  CHECK_GT(count_, 0);
   if (0 == (random_number % count_)) {
     queue_duration_sample_ = queue_duration;
     run_duration_sample_ = run_duration;
@@ -260,6 +259,7 @@ void ThreadData::PushToHeadOfList() {
   // Toss in a hint of randomness (atop the uniniitalized value).
   (void)VALGRIND_MAKE_MEM_DEFINED_IF_ADDRESSABLE(&random_number_,
                                                  sizeof(random_number_));
+  MSAN_UNPOISON(&random_number_, sizeof(random_number_));
   random_number_ += static_cast<int32>(this - static_cast<ThreadData*>(0));
   random_number_ ^= (Now() - TrackedTime()).InMilliseconds();
 
@@ -507,10 +507,10 @@ void ThreadData::TallyRunOnWorkerThreadIfTracking(
   // TODO(jar): Support the option to coalesce all worker-thread activity under
   // one ThreadData instance that uses locks to protect *all* access.  This will
   // reduce memory (making it provably bounded), but run incrementally slower
-  // (since we'll use locks on TallyBirth and TallyDeath).  The good news is
-  // that the locks on TallyDeath will be *after* the worker thread has run, and
-  // hence nothing will be waiting for the completion (... besides some other
-  // thread that might like to run).  Also, the worker threads tasks are
+  // (since we'll use locks on TallyABirth and TallyADeath).  The good news is
+  // that the locks on TallyADeath will be *after* the worker thread has run,
+  // and hence nothing will be waiting for the completion (... besides some
+  // other thread that might like to run).  Also, the worker threads tasks are
   // generally longer, and hence the cost of the lock may perchance be amortized
   // over the long task's lifetime.
   ThreadData* current_thread_data = Get();
@@ -551,8 +551,6 @@ void ThreadData::TallyRunInAScopedRegionIfTracking(
     run_duration = (end_of_run - start_of_run).InMilliseconds();
   current_thread_data->TallyADeath(*birth, queue_duration, run_duration);
 }
-
-const std::string ThreadData::thread_name() const { return thread_name_; }
 
 // static
 void ThreadData::SnapshotAllExecutedTasks(bool reset_max,

@@ -4,18 +4,21 @@
 
 #include "base/path_service.h"
 
-#ifdef OS_WIN
+#if defined(OS_WIN)
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #endif
 
-#include "base/file_path.h"
 #include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/hash_tables.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/synchronization/lock.h"
+
+using base::FilePath;
+using base::MakeAbsoluteFilePath;
 
 namespace base {
   bool PathProvider(int key, FilePath* result);
@@ -26,6 +29,8 @@ namespace base {
 #elif defined(OS_ANDROID)
   bool PathProviderAndroid(int key, FilePath* result);
 #elif defined(OS_POSIX)
+  // PathProviderPosix is the default path provider on POSIX OSes other than
+  // Mac and Android.
   bool PathProviderPosix(int key, FilePath* result);
 #endif
 }
@@ -85,8 +90,8 @@ Provider base_provider_android = {
   base::PathProviderAndroid,
   &base_provider,
 #ifndef NDEBUG
-  0,
-  0,
+  base::PATH_ANDROID_START,
+  base::PATH_ANDROID_END,
 #endif
   true
 };
@@ -97,8 +102,8 @@ Provider base_provider_posix = {
   base::PathProviderPosix,
   &base_provider,
 #ifndef NDEBUG
-  0,
-  0,
+  base::PATH_POSIX_START,
+  base::PATH_POSIX_END,
 #endif
   true
 };
@@ -110,8 +115,9 @@ struct PathData {
   PathMap cache;        // Cache mappings from path key to path value.
   PathMap overrides;    // Track path overrides.
   Provider* providers;  // Linked list of path service providers.
+  bool cache_disabled;  // Don't use cache if true;
 
-  PathData() {
+  PathData() : cache_disabled(false) {
 #if defined(OS_WIN)
     providers = &base_provider_win;
 #elif defined(OS_MACOSX)
@@ -140,14 +146,10 @@ static PathData* GetPathData() {
   return g_path_data.Pointer();
 }
 
-}  // namespace
-
-
-// static
-bool PathService::GetFromCache(int key, FilePath* result) {
-  PathData* path_data = GetPathData();
-  base::AutoLock scoped_lock(path_data->lock);
-
+// Tries to find |key| in the cache. |path_data| should be locked by the caller!
+bool LockedGetFromCache(int key, const PathData* path_data, FilePath* result) {
+  if (path_data->cache_disabled)
+    return false;
   // check for a cached version
   PathMap::const_iterator it = path_data->cache.find(key);
   if (it != path_data->cache.end()) {
@@ -157,27 +159,21 @@ bool PathService::GetFromCache(int key, FilePath* result) {
   return false;
 }
 
-// static
-bool PathService::GetFromOverrides(int key, FilePath* result) {
-  PathData* path_data = GetPathData();
-  base::AutoLock scoped_lock(path_data->lock);
-
+// Tries to find |key| in the overrides map. |path_data| should be locked by the
+// caller!
+bool LockedGetFromOverrides(int key, PathData* path_data, FilePath* result) {
   // check for an overridden version.
   PathMap::const_iterator it = path_data->overrides.find(key);
   if (it != path_data->overrides.end()) {
+    if (!path_data->cache_disabled)
+      path_data->cache[key] = it->second;
     *result = it->second;
     return true;
   }
   return false;
 }
 
-// static
-void PathService::AddToCache(int key, const FilePath& path) {
-  PathData* path_data = GetPathData();
-  base::AutoLock scoped_lock(path_data->lock);
-  // Save the computed path in our cache.
-  path_data->cache[key] = path;
-}
+}  // namespace
 
 // TODO(brettw): this function does not handle long paths (filename > MAX_PATH)
 // characters). This isn't supported very well by Windows right now, so it is
@@ -193,18 +189,23 @@ bool PathService::Get(int key, FilePath* result) {
   if (key == base::DIR_CURRENT)
     return file_util::GetCurrentDirectory(result);
 
-  if (GetFromCache(key, result))
-    return true;
+  Provider* provider = NULL;
+  {
+    base::AutoLock scoped_lock(path_data->lock);
+    if (LockedGetFromCache(key, path_data, result))
+      return true;
 
-  if (GetFromOverrides(key, result))
-    return true;
+    if (LockedGetFromOverrides(key, path_data, result))
+      return true;
+
+    // Get the beginning of the list while it is still locked.
+    provider = path_data->providers;
+  }
 
   FilePath path;
 
-  // search providers for the requested path
-  // NOTE: it should be safe to iterate here without the lock
-  // since RegisterProvider always prepends.
-  Provider* provider = path_data->providers;
+  // Iterating does not need the lock because only the list head might be
+  // modified on another thread.
   while (provider) {
     if (provider->func(key, &path))
       break;
@@ -215,17 +216,28 @@ bool PathService::Get(int key, FilePath* result) {
   if (path.empty())
     return false;
 
-  AddToCache(key, path);
-
+  if (path.ReferencesParent()) {
+    // Make sure path service never returns a path with ".." in it.
+    path = MakeAbsoluteFilePath(path);
+    if (path.empty())
+      return false;
+  }
   *result = path;
+
+  base::AutoLock scoped_lock(path_data->lock);
+  if (!path_data->cache_disabled)
+    path_data->cache[key] = path;
+
   return true;
 }
 
+// static
 bool PathService::Override(int key, const FilePath& path) {
   // Just call the full function with true for the value of |create|.
   return OverrideAndCreateIfNeeded(key, path, true);
 }
 
+// static
 bool PathService::OverrideAndCreateIfNeeded(int key,
                                             const FilePath& path,
                                             bool create) {
@@ -239,17 +251,16 @@ bool PathService::OverrideAndCreateIfNeeded(int key,
   // fore we protect this call with a flag.
   if (create) {
     // Make sure the directory exists. We need to do this before we translate
-    // this to the absolute path because on POSIX, AbsolutePath fails if called
-    // on a non-existent path.
+    // this to the absolute path because on POSIX, MakeAbsoluteFilePath fails
+    // if called on a non-existent path.
     if (!file_util::PathExists(file_path) &&
         !file_util::CreateDirectory(file_path))
       return false;
   }
 
-  // We need to have an absolute path, as extensions and plugins don't like
-  // relative paths, and will gladly crash the browser in CHECK()s if they get a
-  // relative path.
-  if (!file_util::AbsolutePath(&file_path))
+  // We need to have an absolute path.
+  file_path = MakeAbsoluteFilePath(file_path);
+  if (file_path.empty())
     return false;
 
   base::AutoLock scoped_lock(path_data->lock);
@@ -258,38 +269,68 @@ bool PathService::OverrideAndCreateIfNeeded(int key,
   // on the value we are overriding, and are now out of sync with reality.
   path_data->cache.clear();
 
-  path_data->cache[key] = file_path;
   path_data->overrides[key] = file_path;
 
   return true;
 }
 
+// static
+bool PathService::RemoveOverride(int key) {
+  PathData* path_data = GetPathData();
+  DCHECK(path_data);
+
+  base::AutoLock scoped_lock(path_data->lock);
+
+  if (path_data->overrides.find(key) == path_data->overrides.end())
+    return false;
+
+  // Clear the cache now. Some of its entries could have depended on the value
+  // we are going to remove, and are now out of sync.
+  path_data->cache.clear();
+
+  path_data->overrides.erase(key);
+
+  return true;
+}
+
+// static
 void PathService::RegisterProvider(ProviderFunc func, int key_start,
                                    int key_end) {
   PathData* path_data = GetPathData();
   DCHECK(path_data);
   DCHECK_GT(key_end, key_start);
 
-  base::AutoLock scoped_lock(path_data->lock);
-
   Provider* p;
-
-#ifndef NDEBUG
-  p = path_data->providers;
-  while (p) {
-    DCHECK(key_start >= p->key_end || key_end <= p->key_start) <<
-      "path provider collision";
-    p = p->next;
-  }
-#endif
 
   p = new Provider;
   p->is_static = false;
   p->func = func;
-  p->next = path_data->providers;
 #ifndef NDEBUG
   p->key_start = key_start;
   p->key_end = key_end;
 #endif
+
+  base::AutoLock scoped_lock(path_data->lock);
+
+#ifndef NDEBUG
+  Provider *iter = path_data->providers;
+  while (iter) {
+    DCHECK(key_start >= iter->key_end || key_end <= iter->key_start) <<
+      "path provider collision";
+    iter = iter->next;
+  }
+#endif
+
+  p->next = path_data->providers;
   path_data->providers = p;
+}
+
+// static
+void PathService::DisableCache() {
+  PathData* path_data = GetPathData();
+  DCHECK(path_data);
+
+  base::AutoLock scoped_lock(path_data->lock);
+  path_data->cache.clear();
+  path_data->cache_disabled = true;
 }

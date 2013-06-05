@@ -8,10 +8,10 @@
 #include <ostream>
 
 #include "base/basictypes.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/string_split.h"
 #include "base/string_util.h"
+#include "base/strings/string_split.h"
 #include "base/utf_string_conversions.h"
 #include "build/build_config.h"
 
@@ -19,6 +19,8 @@
 #include <windows.h>
 #include <shellapi.h>
 #endif
+
+using base::FilePath;
 
 CommandLine* CommandLine::current_process_commandline_ = NULL;
 
@@ -50,7 +52,8 @@ bool IsSwitch(const CommandLine::StringType& string,
               CommandLine::StringType* switch_value) {
   switch_string->clear();
   switch_value->clear();
-  if (GetSwitchPrefixLength(string) == 0)
+  size_t prefix_length = GetSwitchPrefixLength(string);
+  if (prefix_length == 0 || prefix_length == string.length())
     return false;
 
   const size_t equals_position = string.find(kSwitchValueSeparator);
@@ -227,31 +230,42 @@ CommandLine::StringType CommandLine::GetCommandLineString() const {
 #if defined(OS_WIN)
   string = QuoteForCommandLineToArgvW(string);
 #endif
+  StringType params(GetArgumentsString());
+  if (!params.empty()) {
+    string.append(StringType(FILE_PATH_LITERAL(" ")));
+    string.append(params);
+  }
+  return string;
+}
+
+CommandLine::StringType CommandLine::GetArgumentsString() const {
+  StringType params;
   // Append switches and arguments.
   bool parse_switches = true;
   for (size_t i = 1; i < argv_.size(); ++i) {
-    CommandLine::StringType arg = argv_[i];
-    CommandLine::StringType switch_string;
-    CommandLine::StringType switch_value;
+    StringType arg = argv_[i];
+    StringType switch_string;
+    StringType switch_value;
     parse_switches &= arg != kSwitchTerminator;
-    string.append(StringType(FILE_PATH_LITERAL(" ")));
+    if (i > 1)
+      params.append(StringType(FILE_PATH_LITERAL(" ")));
     if (parse_switches && IsSwitch(arg, &switch_string, &switch_value)) {
-      string.append(switch_string);
+      params.append(switch_string);
       if (!switch_value.empty()) {
 #if defined(OS_WIN)
         switch_value = QuoteForCommandLineToArgvW(switch_value);
 #endif
-        string.append(kSwitchValueSeparator + switch_value);
+        params.append(kSwitchValueSeparator + switch_value);
       }
     }
     else {
 #if defined(OS_WIN)
       arg = QuoteForCommandLineToArgvW(arg);
 #endif
-      string.append(arg);
+      params.append(arg);
     }
   }
-  return string;
+  return params;
 }
 
 FilePath CommandLine::GetProgram() const {

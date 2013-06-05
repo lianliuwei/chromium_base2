@@ -12,12 +12,29 @@
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
+#include "base/path_service.h"
+#include "base/process_util.h"
+#include "base/string_util.h"
 #include "base/synchronization/lock.h"
+#include "base/win/windows_version.h"
 
 namespace base {
 namespace debug {
 
 namespace {
+
+// Previous unhandled filter. Will be called if not NULL when we intercept an
+// exception. Only used in unit tests.
+LPTOP_LEVEL_EXCEPTION_FILTER g_previous_filter = NULL;
+
+// Prints the exception call stack.
+// This is the unit tests exception filter.
+long WINAPI StackDumpExceptionFilter(EXCEPTION_POINTERS* info) {
+  debug::StackTrace(info).PrintBacktrace();
+  if (g_previous_filter)
+    return g_previous_filter(info);
+  return EXCEPTION_CONTINUE_SEARCH;
+}
 
 // SymbolContext is a threadsafe singleton that wraps the DbgHelp Sym* family
 // of functions.  The Sym* family of functions may only be invoked by one
@@ -115,9 +132,7 @@ class SymbolContext {
     SymSetOptions(SYMOPT_DEFERRED_LOADS |
                   SYMOPT_UNDNAME |
                   SYMOPT_LOAD_LINES);
-    if (SymInitialize(GetCurrentProcess(), NULL, TRUE)) {
-      init_error_ = ERROR_SUCCESS;
-    } else {
+    if (!SymInitialize(GetCurrentProcess(), NULL, TRUE)) {
       init_error_ = GetLastError();
       // TODO(awong): Handle error: SymInitialize can fail with
       // ERROR_INVALID_PARAMETER.
@@ -125,6 +140,41 @@ class SymbolContext {
       // process (prevents future tests from running or kills the browser
       // process).
       DLOG(ERROR) << "SymInitialize failed: " << init_error_;
+      return;
+    }
+
+    init_error_ = ERROR_SUCCESS;
+
+    // Work around a mysterious hang on Windows XP.
+    if (base::win::GetVersion() < base::win::VERSION_VISTA)
+      return;
+
+    // When transferring the binaries e.g. between bots, path put
+    // into the executable will get off. To still retrieve symbols correctly,
+    // add the directory of the executable to symbol search path.
+    // All following errors are non-fatal.
+    wchar_t symbols_path[1024];
+
+    // Note: The below function takes buffer size as number of characters,
+    // not number of bytes!
+    if (!SymGetSearchPathW(GetCurrentProcess(),
+                           symbols_path,
+                           arraysize(symbols_path))) {
+      DLOG(WARNING) << "SymGetSearchPath failed: ";
+      return;
+    }
+
+    FilePath module_path;
+    if (!PathService::Get(FILE_EXE, &module_path)) {
+      DLOG(WARNING) << "PathService::Get(FILE_EXE) failed.";
+      return;
+    }
+
+    std::wstring new_path(std::wstring(symbols_path) +
+                          L";" + module_path.DirName().value());
+    if (!SymSetSearchPathW(GetCurrentProcess(), new_path.c_str())) {
+      DLOG(WARNING) << "SymSetSearchPath failed.";
+      return;
     }
   }
 
@@ -134,6 +184,14 @@ class SymbolContext {
 };
 
 }  // namespace
+
+bool EnableInProcessStackDumping() {
+  // Add stack dumping support on exception on windows. Similar to OS_POSIX
+  // signal() handling in process_util_posix.cc.
+  g_previous_filter = SetUnhandledExceptionFilter(&StackDumpExceptionFilter);
+  RouteStdioToConsole();
+  return true;
+}
 
 // Disable optimizations for the StackTrace::StackTrace function. It is
 // important to disable at least frame pointer optimization ("y"), since

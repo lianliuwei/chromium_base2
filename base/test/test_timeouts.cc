@@ -6,12 +6,14 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/test_switches.h"
 
 namespace {
 
-#ifdef ADDRESS_SANITIZER
+// ASan and TSan instrument each memory access. This may slow the execution
+// down significantly.
+#if defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER)
 static const int kTimeoutMultiplier = 2;
 #else
 static const int kTimeoutMultiplier = 1;
@@ -54,7 +56,11 @@ bool TestTimeouts::initialized_ = false;
 // static
 int TestTimeouts::tiny_timeout_ms_ = 100;
 int TestTimeouts::action_timeout_ms_ = 10000;
+#ifndef NDEBUG
 int TestTimeouts::action_max_timeout_ms_ = 45000;
+#else
+int TestTimeouts::action_max_timeout_ms_ = 30000;
+#endif  // NDEBUG
 int TestTimeouts::large_test_timeout_ms_ = 10 * 60 * 1000;
 
 // static

@@ -141,10 +141,23 @@ Time Time::NowFromSystemTime() {
 
 // static
 Time Time::FromFileTime(FILETIME ft) {
+  if (bit_cast<int64, FILETIME>(ft) == 0)
+    return Time();
+  if (ft.dwHighDateTime == std::numeric_limits<DWORD>::max() &&
+      ft.dwLowDateTime == std::numeric_limits<DWORD>::max())
+    return Max();
   return Time(FileTimeToMicroseconds(ft));
 }
 
 FILETIME Time::ToFileTime() const {
+  if (is_null())
+    return bit_cast<FILETIME, int64>(0);
+  if (is_max()) {
+    FILETIME result;
+    result.dwHighDateTime = std::numeric_limits<DWORD>::max();
+    result.dwLowDateTime = std::numeric_limits<DWORD>::max();
+    return result;
+  }
   FILETIME utc_ft;
   MicrosecondsToFileTime(us_, &utc_ft);
   return utc_ft;
@@ -362,13 +375,7 @@ class HighResNowSingleton {
   int64 GetQPCDriftMicroseconds() {
     if (!IsUsingHighResClock())
       return 0;
-
-    // The static_cast<long> is needed as a hint to VS 2008 to tell it
-    // which version of abs() to use. Other compilers don't seem to
-    // need it, including VS 2010, but to keep code identical we use it
-    // everywhere.
-    // TODO(joi): Remove the hint if/when we no longer support VS 2008.
-    return abs(static_cast<long>((UnreliableNow() - ReliableNow()) - skew_));
+    return abs((UnreliableNow() - ReliableNow()) - skew_);
   }
 
   int64 QPCValueToMicroseconds(LONGLONG qpc_value) {
@@ -431,8 +438,11 @@ class HighResNowSingleton {
 // static
 TimeTicks::TickFunctionType TimeTicks::SetMockTickFunction(
     TickFunctionType ticker) {
+  base::AutoLock locked(rollover_lock);
   TickFunctionType old = tick_function;
   tick_function = ticker;
+  rollover_ms = 0;
+  last_seen_now = 0;
   return old;
 }
 

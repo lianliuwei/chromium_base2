@@ -3,18 +3,19 @@
 // found in the LICENSE file.
 
 // Time represents an absolute point in time, internally represented as
-// microseconds (s/1,000,000) since a platform-dependent epoch.  Each
-// platform's epoch, along with other system-dependent clock interface
-// routines, is defined in time_PLATFORM.cc.
+// microseconds (s/1,000,000) since the Windows epoch (1601-01-01 00:00:00 UTC)
+// (See http://crbug.com/14734).  System-dependent clock interface routines are
+// defined in time_PLATFORM.cc.
 //
 // TimeDelta represents a duration of time, internally represented in
 // microseconds.
 //
-// TimeTicks represents an abstract time that is always incrementing for use
-// in measuring time durations. It is internally represented in microseconds.
-// It can not be converted to a human-readable time, but is guaranteed not to
-// decrease (if the user changes the computer clock, Time::Now() may actually
-// decrease or jump).
+// TimeTicks represents an abstract time that is most of the time incrementing
+// for use in measuring time durations. It is internally represented in
+// microseconds.  It can not be converted to a human-readable time, but is
+// guaranteed not to decrease (if the user changes the computer clock,
+// Time::Now() may actually decrease or jump).  But note that TimeTicks may
+// "stand still", for example if the computer suspended.
 //
 // These classes are represented as only a 64-bit value, so they can be
 // efficiently passed by value.
@@ -44,6 +45,8 @@
 // See TODO(iyengar) below.
 #include <windows.h>
 #endif
+
+#include <limits>
 
 namespace base {
 
@@ -238,12 +241,17 @@ class BASE_EXPORT Time {
   };
 
   // Contains the NULL time. Use Time::Now() to get the current time.
-  explicit Time() : us_(0) {
+  Time() : us_(0) {
   }
 
   // Returns true if the time object has not been initialized.
   bool is_null() const {
     return us_ == 0;
+  }
+
+  // Returns true if the time object is the maximum time.
+  bool is_max() const {
+    return us_ == std::numeric_limits<int64>::max();
   }
 
   // Returns the time for epoch in Unix-like system (Jan 1, 1970).
@@ -253,6 +261,10 @@ class BASE_EXPORT Time {
   // in which case time will actually go backwards. We don't guarantee that
   // times are increasing, or that two calls to Now() won't be the same.
   static Time Now();
+
+  // Returns the maximum time, which should be greater than any reasonable time
+  // with which we might compare it.
+  static Time Max();
 
   // Returns the current time. Same as Now() except that this function always
   // uses system time so that there are no discrepancies between the returned
@@ -343,10 +355,17 @@ class BASE_EXPORT Time {
   // Converts a string representation of time to a Time object.
   // An example of a time string which is converted is as below:-
   // "Tue, 15 Nov 1994 12:45:26 GMT". If the timezone is not specified
-  // in the input string, we assume local time.
+  // in the input string, FromString assumes local time and FromUTCString
+  // assumes UTC. A timezone that cannot be parsed (e.g. "UTC" which is not
+  // specified in RFC822) is treated as if the timezone is not specified.
   // TODO(iyengar) Move the FromString/FromTimeT/ToTimeT/FromFileTime to
   // a new time converter class.
-  static bool FromString(const char* time_string, Time* parsed_time);
+  static bool FromString(const char* time_string, Time* parsed_time) {
+    return FromStringInternal(time_string, true, parsed_time);
+  }
+  static bool FromUTCString(const char* time_string, Time* parsed_time) {
+    return FromStringInternal(time_string, false, parsed_time);
+  }
 
   // For serializing, use FromInternalValue to reconstitute. Please don't use
   // this and do arithmetic on it, as it is more error prone than using the
@@ -429,6 +448,17 @@ class BASE_EXPORT Time {
   // Unexplodes a given time assuming the source is either local time
   // |is_local = true| or UTC |is_local = false|.
   static Time FromExploded(bool is_local, const Exploded& exploded);
+
+  // Converts a string representation of time to a Time object.
+  // An example of a time string which is converted is as below:-
+  // "Tue, 15 Nov 1994 12:45:26 GMT". If the timezone is not specified
+  // in the input string, local time |is_local = true| or
+  // UTC |is_local = false| is assumed. A timezone that cannot be parsed
+  // (e.g. "UTC" which is not specified in RFC822) is treated as if the
+  // timezone is not specified.
+  static bool FromStringInternal(const char* time_string,
+                                 bool is_local,
+                                 Time* parsed_time);
 
   // The representation of Jan 1, 1970 UTC in microseconds since the
   // platform-dependent epoch.

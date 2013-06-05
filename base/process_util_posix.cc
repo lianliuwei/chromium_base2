@@ -17,15 +17,16 @@
 #include <limits>
 #include <set>
 
+#include "base/allocator/type_profiler_control.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/debug/debugger.h"
 #include "base/debug/stack_trace.h"
-#include "base/eintr_wrapper.h"
 #include "base/file_util.h"
 #include "base/files/dir_reader_posix.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/posix/eintr_wrapper.h"
 #include "base/process_util.h"
 #include "base/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
@@ -105,10 +106,10 @@ int WaitpidWithTimeout(ProcessHandle handle, int64 wait_milliseconds,
   int64 double_sleep_time = 0;
 
   // If the process hasn't exited yet, then sleep and try again.
-  Time wakeup_time = Time::Now() +
+  TimeTicks wakeup_time = TimeTicks::Now() +
       TimeDelta::FromMilliseconds(wait_milliseconds);
   while (ret_pid == 0) {
-    Time now = Time::Now();
+    TimeTicks now = TimeTicks::Now();
     if (now > wakeup_time)
       break;
     // Guaranteed to be non-negative!
@@ -134,66 +135,13 @@ int WaitpidWithTimeout(ProcessHandle handle, int64 wait_milliseconds,
   return status;
 }
 
-// Android has built-in crash handling.
-#if !defined(OS_ANDROID)
-void StackDumpSignalHandler(int signal, siginfo_t* info, ucontext_t* context) {
-  if (debug::BeingDebugged())
-    debug::BreakDebugger();
-
-  DLOG(ERROR) << "Received signal " << signal;
-  debug::StackTrace().PrintBacktrace();
-
-  // TODO(shess): Port to Linux.
-#if defined(OS_MACOSX)
-  // TODO(shess): Port to 64-bit.
-#if ARCH_CPU_32_BITS
-  char buf[1024];
-  size_t len;
-
-  // NOTE: Even |snprintf()| is not on the approved list for signal
-  // handlers, but buffered I/O is definitely not on the list due to
-  // potential for |malloc()|.
-  len = static_cast<size_t>(
-      snprintf(buf, sizeof(buf),
-               "ax: %x, bx: %x, cx: %x, dx: %x\n",
-               context->uc_mcontext->__ss.__eax,
-               context->uc_mcontext->__ss.__ebx,
-               context->uc_mcontext->__ss.__ecx,
-               context->uc_mcontext->__ss.__edx));
-  write(STDERR_FILENO, buf, std::min(len, sizeof(buf) - 1));
-
-  len = static_cast<size_t>(
-      snprintf(buf, sizeof(buf),
-               "di: %x, si: %x, bp: %x, sp: %x, ss: %x, flags: %x\n",
-               context->uc_mcontext->__ss.__edi,
-               context->uc_mcontext->__ss.__esi,
-               context->uc_mcontext->__ss.__ebp,
-               context->uc_mcontext->__ss.__esp,
-               context->uc_mcontext->__ss.__ss,
-               context->uc_mcontext->__ss.__eflags));
-  write(STDERR_FILENO, buf, std::min(len, sizeof(buf) - 1));
-
-  len = static_cast<size_t>(
-      snprintf(buf, sizeof(buf),
-               "ip: %x, cs: %x, ds: %x, es: %x, fs: %x, gs: %x\n",
-               context->uc_mcontext->__ss.__eip,
-               context->uc_mcontext->__ss.__cs,
-               context->uc_mcontext->__ss.__ds,
-               context->uc_mcontext->__ss.__es,
-               context->uc_mcontext->__ss.__fs,
-               context->uc_mcontext->__ss.__gs));
-  write(STDERR_FILENO, buf, std::min(len, sizeof(buf) - 1));
-#endif  // ARCH_CPU_32_BITS
-#endif  // defined(OS_MACOSX)
-  _exit(1);
-}
-#endif  // !defined(OS_ANDROID)
-
+#if !defined(OS_LINUX) || \
+    (!defined(__i386__) && !defined(__x86_64__) && !defined(__arm__))
 void ResetChildSignalHandlersToDefaults() {
   // The previous signal handlers are likely to be meaningless in the child's
   // context so we reset them to the defaults for now. http://crbug.com/44953
   // These signal handlers are set up at least in browser_main_posix.cc:
-  // BrowserMainPartsPosix::PreEarlyInitialization and process_util_posix.cc:
+  // BrowserMainPartsPosix::PreEarlyInitialization and stack_trace_posix.cc:
   // EnableInProcessStackDumping.
   signal(SIGHUP, SIG_DFL);
   signal(SIGINT, SIG_DFL);
@@ -204,6 +152,117 @@ void ResetChildSignalHandlersToDefaults() {
   signal(SIGSEGV, SIG_DFL);
   signal(SIGSYS, SIG_DFL);
   signal(SIGTERM, SIG_DFL);
+}
+
+#else
+
+// TODO(jln): remove the Linux special case once kernels are fixed.
+
+// Internally the kernel makes sigset_t an array of long large enough to have
+// one bit per signal.
+typedef uint64_t kernel_sigset_t;
+
+// This is what struct sigaction looks like to the kernel at least on X86 and
+// ARM. MIPS, for instance, is very different.
+struct kernel_sigaction {
+  void* k_sa_handler;  // For this usage it only needs to be a generic pointer.
+  unsigned long k_sa_flags;
+  void* k_sa_restorer;  // For this usage it only needs to be a generic pointer.
+  kernel_sigset_t k_sa_mask;
+};
+
+// glibc's sigaction() will prevent access to sa_restorer, so we need to roll
+// our own.
+int sys_rt_sigaction(int sig, const struct kernel_sigaction* act,
+                     struct kernel_sigaction* oact) {
+  return syscall(SYS_rt_sigaction, sig, act, oact, sizeof(kernel_sigset_t));
+}
+
+// This function is intended to be used in between fork() and execve() and will
+// reset all signal handlers to the default.
+// The motivation for going through all of them is that sa_restorer can leak
+// from parents and help defeat ASLR on buggy kernels.  We reset it to NULL.
+// See crbug.com/177956.
+void ResetChildSignalHandlersToDefaults(void) {
+  for (int signum = 1; ; ++signum) {
+    struct kernel_sigaction act = {0};
+    int sigaction_get_ret = sys_rt_sigaction(signum, NULL, &act);
+    if (sigaction_get_ret && errno == EINVAL) {
+#if !defined(NDEBUG)
+      // Linux supports 32 real-time signals from 33 to 64.
+      // If the number of signals in the Linux kernel changes, someone should
+      // look at this code.
+      const int kNumberOfSignals = 64;
+      RAW_CHECK(signum == kNumberOfSignals + 1);
+#endif  // !defined(NDEBUG)
+      break;
+    }
+    // All other failures are fatal.
+    if (sigaction_get_ret) {
+      RAW_LOG(FATAL, "sigaction (get) failed.");
+    }
+
+    // The kernel won't allow to re-set SIGKILL or SIGSTOP.
+    if (signum != SIGSTOP && signum != SIGKILL) {
+      act.k_sa_handler = reinterpret_cast<void*>(SIG_DFL);
+      act.k_sa_restorer = NULL;
+      if (sys_rt_sigaction(signum, &act, NULL)) {
+        RAW_LOG(FATAL, "sigaction (set) failed.");
+      }
+    }
+#if !defined(NDEBUG)
+    // Now ask the kernel again and check that no restorer will leak.
+    if (sys_rt_sigaction(signum, NULL, &act) || act.k_sa_restorer) {
+      RAW_LOG(FATAL, "Cound not fix sa_restorer.");
+    }
+#endif  // !defined(NDEBUG)
+  }
+}
+#endif  // !defined(OS_LINUX) ||
+        // (!defined(__i386__) && !defined(__x86_64__) && !defined(__arm__))
+
+TerminationStatus GetTerminationStatusImpl(ProcessHandle handle,
+                                           bool can_block,
+                                           int* exit_code) {
+  int status = 0;
+  const pid_t result = HANDLE_EINTR(waitpid(handle, &status,
+                                            can_block ? 0 : WNOHANG));
+  if (result == -1) {
+    DPLOG(ERROR) << "waitpid(" << handle << ")";
+    if (exit_code)
+      *exit_code = 0;
+    return TERMINATION_STATUS_NORMAL_TERMINATION;
+  } else if (result == 0) {
+    // the child hasn't exited yet.
+    if (exit_code)
+      *exit_code = 0;
+    return TERMINATION_STATUS_STILL_RUNNING;
+  }
+
+  if (exit_code)
+    *exit_code = status;
+
+  if (WIFSIGNALED(status)) {
+    switch (WTERMSIG(status)) {
+      case SIGABRT:
+      case SIGBUS:
+      case SIGFPE:
+      case SIGILL:
+      case SIGSEGV:
+        return TERMINATION_STATUS_PROCESS_CRASHED;
+      case SIGINT:
+      case SIGKILL:
+      case SIGTERM:
+        return TERMINATION_STATUS_PROCESS_WAS_KILLED;
+      default:
+        break;
+    }
+  }
+
+  if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+    return TERMINATION_STATUS_ABNORMAL_TERMINATION;
+
+  return TERMINATION_STATUS_NORMAL_TERMINATION;
 }
 
 }  // anonymous namespace
@@ -339,13 +398,9 @@ typedef scoped_ptr_malloc<DIR, ScopedDIRClose> ScopedDIR;
   static const char kFDDir[] = "/proc/self/fd";
 #endif
 
-void CloseSuperfluousFds(const base::InjectiveMultimap& saved_mapping) {
-  // DANGER: no calls to malloc are allowed from now on:
-  // http://crbug.com/36678
-
-  // Get the maximum number of FDs possible.
-  struct rlimit nofile;
+size_t GetMaxFds() {
   rlim_t max_fds;
+  struct rlimit nofile;
   if (getrlimit(RLIMIT_NOFILE, &nofile)) {
     // getrlimit failed. Take a best guess.
     max_fds = kSystemDefaultMaxFds;
@@ -357,11 +412,20 @@ void CloseSuperfluousFds(const base::InjectiveMultimap& saved_mapping) {
   if (max_fds > INT_MAX)
     max_fds = INT_MAX;
 
-  DirReaderPosix fd_dir(kFDDir);
+  return static_cast<size_t>(max_fds);
+}
 
+void CloseSuperfluousFds(const base::InjectiveMultimap& saved_mapping) {
+  // DANGER: no calls to malloc are allowed from now on:
+  // http://crbug.com/36678
+
+  // Get the maximum number of FDs possible.
+  size_t max_fds = GetMaxFds();
+
+  DirReaderPosix fd_dir(kFDDir);
   if (!fd_dir.IsValid()) {
     // Fallback case: Try every possible fd.
-    for (rlim_t i = 0; i < max_fds; ++i) {
+    for (size_t i = 0; i < max_fds; ++i) {
       const int fd = static_cast<int>(i);
       if (fd == STDIN_FILENO || fd == STDOUT_FILENO || fd == STDERR_FILENO)
         continue;
@@ -545,52 +609,15 @@ bool LaunchProcess(const std::vector<std::string>& argv,
     fd_shuffle_size = options.fds_to_remap->size();
   }
 
-#if defined(OS_MACOSX)
-  if (options.synchronize) {
-    // When synchronizing, the "read" end of the synchronization pipe needs
-    // to make it to the child process. This is handled by mapping it back to
-    // itself.
-    ++fd_shuffle_size;
-  }
-#endif  // defined(OS_MACOSX)
-
   InjectiveMultimap fd_shuffle1;
   InjectiveMultimap fd_shuffle2;
   fd_shuffle1.reserve(fd_shuffle_size);
   fd_shuffle2.reserve(fd_shuffle_size);
 
-  scoped_array<char*> argv_cstr(new char*[argv.size() + 1]);
-  scoped_array<char*> new_environ;
+  scoped_ptr<char*[]> argv_cstr(new char*[argv.size() + 1]);
+  scoped_ptr<char*[]> new_environ;
   if (options.environ)
     new_environ.reset(AlterEnvironment(*options.environ, GetEnvironment()));
-
-#if defined(OS_MACOSX)
-  int synchronization_pipe_fds[2];
-  file_util::ScopedFD synchronization_read_fd;
-  file_util::ScopedFD synchronization_write_fd;
-
-  if (options.synchronize) {
-    // wait means "don't return from LaunchProcess until the child exits", and
-    // synchronize means "return from LaunchProcess but don't let the child
-    // run until LaunchSynchronize is called". These two options are highly
-    // incompatible.
-    DCHECK(!options.wait);
-
-    // Create the pipe used for synchronization.
-    if (HANDLE_EINTR(pipe(synchronization_pipe_fds)) != 0) {
-      DPLOG(ERROR) << "pipe";
-      return false;
-    }
-
-    // The parent process will only use synchronization_write_fd as the write
-    // side of the pipe. It can close the read side as soon as the child
-    // process has forked off. The child process will only use
-    // synchronization_read_fd as the read side of the pipe. In that process,
-    // the write side can be closed as soon as it has forked.
-    synchronization_read_fd.reset(&synchronization_pipe_fds[0]);
-    synchronization_write_fd.reset(&synchronization_pipe_fds[1]);
-  }
-#endif  // OS_MACOSX
 
   pid_t pid;
 #if defined(OS_LINUX)
@@ -639,6 +666,11 @@ bool LaunchProcess(const std::vector<std::string>& argv,
       }
     }
 
+    // Stop type-profiler.
+    // The profiler should be stopped between fork and exec since it inserts
+    // locks at new/delete expressions.  See http://crbug.com/36678.
+    base::type_profiler::Controller::Stop();
+
     if (options.maximize_rlimits) {
       // Some resource limits need to be maximal in this child.
       std::set<int>::const_iterator resource;
@@ -662,13 +694,6 @@ bool LaunchProcess(const std::vector<std::string>& argv,
 #endif  // defined(OS_MACOSX)
 
     ResetChildSignalHandlersToDefaults();
-
-#if defined(OS_MACOSX)
-    if (options.synchronize) {
-      // The "write" side of the synchronization pipe belongs to the parent.
-      synchronization_write_fd.reset();  // closes synchronization_pipe_fds[1]
-    }
-#endif  // defined(OS_MACOSX)
 
 #if 0
     // When debugging it can be helpful to check that we really aren't making
@@ -705,16 +730,6 @@ bool LaunchProcess(const std::vector<std::string>& argv,
       }
     }
 
-#if defined(OS_MACOSX)
-    if (options.synchronize) {
-      // Remap the read side of the synchronization pipe back onto itself,
-      // ensuring that it won't be closed by CloseSuperfluousFds.
-      int keep_fd = *synchronization_read_fd.get();
-      fd_shuffle1.push_back(InjectionArc(keep_fd, keep_fd, false));
-      fd_shuffle2.push_back(InjectionArc(keep_fd, keep_fd, false));
-    }
-#endif  // defined(OS_MACOSX)
-
     if (options.environ)
       SetEnvironment(new_environ.get());
 
@@ -723,24 +738,6 @@ bool LaunchProcess(const std::vector<std::string>& argv,
       _exit(127);
 
     CloseSuperfluousFds(fd_shuffle2);
-
-#if defined(OS_MACOSX)
-    if (options.synchronize) {
-      // Do a blocking read to wait until the parent says it's OK to proceed.
-      // The byte that's read here is written by LaunchSynchronize.
-      char read_char;
-      int read_result =
-          HANDLE_EINTR(read(*synchronization_read_fd.get(), &read_char, 1));
-      if (read_result != 1) {
-        RAW_LOG(ERROR, "LaunchProcess: synchronization read: error");
-        _exit(127);
-      }
-
-      // The pipe is no longer useful. Don't let it live on in the new process
-      // after exec.
-      synchronization_read_fd.reset();  // closes synchronization_pipe_fds[0]
-    }
-#endif  // defined(OS_MACOSX)
 
     for (size_t i = 0; i < argv.size(); i++)
       argv_cstr[i] = const_cast<char*>(argv[i].c_str());
@@ -762,14 +759,6 @@ bool LaunchProcess(const std::vector<std::string>& argv,
 
     if (process_handle)
       *process_handle = pid;
-
-#if defined(OS_MACOSX)
-    if (options.synchronize) {
-      // The "read" side of the synchronization pipe belongs to the child.
-      synchronization_read_fd.reset();  // closes synchronization_pipe_fds[0]
-      *options.synchronize = new int(*synchronization_write_fd.release());
-    }
-#endif  // defined(OS_MACOSX)
   }
 
   return true;
@@ -782,89 +771,18 @@ bool LaunchProcess(const CommandLine& cmdline,
   return LaunchProcess(cmdline.argv(), options, process_handle);
 }
 
-#if defined(OS_MACOSX)
-void LaunchSynchronize(LaunchSynchronizationHandle handle) {
-  int synchronization_fd = *handle;
-  file_util::ScopedFD synchronization_fd_closer(&synchronization_fd);
-  delete handle;
-
-  // Write a '\0' character to the pipe.
-  if (HANDLE_EINTR(write(synchronization_fd, "", 1)) != 1) {
-    DPLOG(ERROR) << "write";
-  }
-}
-#endif  // defined(OS_MACOSX)
-
-ProcessMetrics::~ProcessMetrics() { }
-
-bool EnableInProcessStackDumping() {
-  // When running in an application, our code typically expects SIGPIPE
-  // to be ignored.  Therefore, when testing that same code, it should run
-  // with SIGPIPE ignored as well.
-  struct sigaction action;
-  memset(&action, 0, sizeof(action));
-  action.sa_handler = SIG_IGN;
-  sigemptyset(&action.sa_mask);
-  bool success = (sigaction(SIGPIPE, &action, NULL) == 0);
-
-  // Android has built-in crash handling, so no need to hook the signals.
-#if !defined(OS_ANDROID)
-  sig_t handler = reinterpret_cast<sig_t>(&StackDumpSignalHandler);
-  success &= (signal(SIGILL, handler) != SIG_ERR);
-  success &= (signal(SIGABRT, handler) != SIG_ERR);
-  success &= (signal(SIGFPE, handler) != SIG_ERR);
-  success &= (signal(SIGBUS, handler) != SIG_ERR);
-  success &= (signal(SIGSEGV, handler) != SIG_ERR);
-  success &= (signal(SIGSYS, handler) != SIG_ERR);
-#endif
-
-  return success;
-}
-
 void RaiseProcessToHighPriority() {
   // On POSIX, we don't actually do anything here.  We could try to nice() or
   // setpriority() or sched_getscheduler, but these all require extra rights.
 }
 
 TerminationStatus GetTerminationStatus(ProcessHandle handle, int* exit_code) {
-  int status = 0;
-  const pid_t result = HANDLE_EINTR(waitpid(handle, &status, WNOHANG));
-  if (result == -1) {
-    DPLOG(ERROR) << "waitpid(" << handle << ")";
-    if (exit_code)
-      *exit_code = 0;
-    return TERMINATION_STATUS_NORMAL_TERMINATION;
-  } else if (result == 0) {
-    // the child hasn't exited yet.
-    if (exit_code)
-      *exit_code = 0;
-    return TERMINATION_STATUS_STILL_RUNNING;
-  }
+  return GetTerminationStatusImpl(handle, false /* can_block */, exit_code);
+}
 
-  if (exit_code)
-    *exit_code = status;
-
-  if (WIFSIGNALED(status)) {
-    switch (WTERMSIG(status)) {
-      case SIGABRT:
-      case SIGBUS:
-      case SIGFPE:
-      case SIGILL:
-      case SIGSEGV:
-        return TERMINATION_STATUS_PROCESS_CRASHED;
-      case SIGINT:
-      case SIGKILL:
-      case SIGTERM:
-        return TERMINATION_STATUS_PROCESS_WAS_KILLED;
-      default:
-        break;
-    }
-  }
-
-  if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
-    return TERMINATION_STATUS_ABNORMAL_TERMINATION;
-
-  return TERMINATION_STATUS_NORMAL_TERMINATION;
+TerminationStatus WaitForTerminationStatus(ProcessHandle handle,
+                                           int* exit_code) {
+  return GetTerminationStatusImpl(handle, true /* can_block */, exit_code);
 }
 
 bool WaitForExitCode(ProcessHandle handle, int* exit_code) {
@@ -937,10 +855,10 @@ static bool WaitForSingleNonChildProcess(ProcessHandle handle,
   // interrupted.
   bool wait_forever = wait.InMilliseconds() == base::kNoTimeout;
   base::TimeDelta remaining_delta;
-  base::Time deadline;
+  base::TimeTicks deadline;
   if (!wait_forever) {
     remaining_delta = wait;
-    deadline = base::Time::Now() + remaining_delta;
+    deadline = base::TimeTicks::Now() + remaining_delta;
   }
 
   result = -1;
@@ -960,7 +878,7 @@ static bool WaitForSingleNonChildProcess(ProcessHandle handle,
 
     if (result == -1 && errno == EINTR) {
       if (!wait_forever) {
-        remaining_delta = deadline - base::Time::Now();
+        remaining_delta = deadline - base::TimeTicks::Now();
       }
       result = 0;
     } else {
@@ -1026,14 +944,6 @@ bool WaitForSingleProcess(ProcessHandle handle, base::TimeDelta wait) {
   }
 }
 
-int64 TimeValToMicroseconds(const struct timeval& tv) {
-  static const int kMicrosecondsPerSecond = 1000000;
-  int64 ret = tv.tv_sec;  // Avoid (int * int) integer overflow.
-  ret *= kMicrosecondsPerSecond;
-  ret += tv.tv_usec;
-  return ret;
-}
-
 // Return value used by GetAppOutputInternal to encapsulate the various exit
 // scenarios from the function.
 enum GetAppOutputInternalResult {
@@ -1073,7 +983,7 @@ static GetAppOutputInternalResult GetAppOutputInternal(
   int pipe_fd[2];
   pid_t pid;
   InjectiveMultimap fd_shuffle1, fd_shuffle2;
-  scoped_array<char*> argv_cstr(new char*[argv.size() + 1]);
+  scoped_ptr<char*[]> argv_cstr(new char*[argv.size() + 1]);
 
   fd_shuffle1.reserve(3);
   fd_shuffle2.reserve(3);
@@ -1106,6 +1016,11 @@ static GetAppOutputInternalResult GetAppOutputInternal(
         int dev_null = open("/dev/null", O_WRONLY);
         if (dev_null < 0)
           _exit(127);
+
+        // Stop type-profiler.
+        // The profiler should be stopped between fork and exec since it inserts
+        // locks at new/delete expressions.  See http://crbug.com/36678.
+        base::type_profiler::Controller::Stop();
 
         fd_shuffle1.push_back(InjectionArc(pipe_fd[1], STDOUT_FILENO, true));
         fd_shuffle1.push_back(InjectionArc(dev_null, STDERR_FILENO, true));
@@ -1212,7 +1127,7 @@ bool WaitForProcessesToExit(const FilePath::StringType& executable_name,
   // TODO(port): This is inefficient, but works if there are multiple procs.
   // TODO(port): use waitpid to avoid leaving zombies around
 
-  base::Time end_time = base::Time::Now() + wait;
+  base::TimeTicks end_time = base::TimeTicks::Now() + wait;
   do {
     NamedProcessIterator iter(executable_name, filter);
     if (!iter.NextProcessEntry()) {
@@ -1220,7 +1135,7 @@ bool WaitForProcessesToExit(const FilePath::StringType& executable_name,
       break;
     }
     base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(100));
-  } while ((end_time - base::Time::Now()) > base::TimeDelta());
+  } while ((end_time - base::TimeTicks::Now()) > base::TimeDelta());
 
   return result;
 }

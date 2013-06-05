@@ -11,12 +11,14 @@
 
 #include <fstream>
 
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/stringprintf.h"
-#include "base/string_piece.h"
 #include "base/string_util.h"
+#include "base/stringprintf.h"
+#include "base/strings/string_piece.h"
 #include "base/utf_string_conversions.h"
+
+using base::FilePath;
 
 namespace {
 
@@ -34,28 +36,6 @@ static const int kMaxUniqueFiles = 100;
 namespace file_util {
 
 bool g_bug108724_debug = false;
-
-bool EndsWithSeparator(const FilePath& path) {
-  FilePath::StringType value = path.value();
-  if (value.empty())
-    return false;
-
-  return FilePath::IsSeparator(value[value.size() - 1]);
-}
-
-bool EnsureEndsWithSeparator(FilePath* path) {
-  if (!DirectoryExists(*path))
-    return false;
-
-  if (EndsWithSeparator(*path))
-    return true;
-
-  FilePath::StringType& path_str =
-      const_cast<FilePath::StringType&>(path->value());
-  path_str.append(&FilePath::kSeparators[0], 1);
-
-  return true;
-}
 
 void InsertBeforeExtension(FilePath* path, const FilePath::StringType& suffix) {
   FilePath::StringType& value =
@@ -75,6 +55,23 @@ void InsertBeforeExtension(FilePath* path, const FilePath::StringType& suffix) {
   }
 
   value.insert(last_dot, suffix);
+}
+
+bool Move(const FilePath& from_path, const FilePath& to_path) {
+  if (from_path.ReferencesParent() || to_path.ReferencesParent())
+    return false;
+  return MoveUnsafe(from_path, to_path);
+}
+
+bool ReplaceFile(const base::FilePath& from_path,
+                 const base::FilePath& to_path) {
+  return ReplaceFileAndGetError(from_path, to_path, NULL);
+}
+
+bool CopyFile(const FilePath& from_path, const FilePath& to_path) {
+  if (from_path.ReferencesParent() || to_path.ReferencesParent())
+    return false;
+  return CopyFileUnsafe(from_path, to_path);
 }
 
 bool ContentsEqual(const FilePath& filename1, const FilePath& filename2) {
@@ -152,6 +149,8 @@ bool TextContentsEqual(const FilePath& filename1, const FilePath& filename2) {
 }
 
 bool ReadFileToString(const FilePath& path, std::string* contents) {
+  if (path.ReferencesParent())
+    return false;
   FILE* file = OpenFile(path, "rb");
   if (!file) {
     return false;
@@ -192,22 +191,19 @@ bool GetFileSize(const FilePath& file_path, int64* file_size) {
   return true;
 }
 
-bool IsDot(const FilePath& path) {
-  return FILE_PATH_LITERAL(".") == path.BaseName().value();
-}
-
-bool IsDotDot(const FilePath& path) {
-  return FILE_PATH_LITERAL("..") == path.BaseName().value();
-}
-
 bool TouchFile(const FilePath& path,
                const base::Time& last_accessed,
                const base::Time& last_modified) {
-  base::PlatformFile file =
-      base::CreatePlatformFile(path,
-                               base::PLATFORM_FILE_OPEN |
-                               base::PLATFORM_FILE_WRITE_ATTRIBUTES,
-                               NULL, NULL);
+  int flags = base::PLATFORM_FILE_OPEN | base::PLATFORM_FILE_WRITE_ATTRIBUTES;
+
+#if defined(OS_WIN)
+  // On Windows, FILE_FLAG_BACKUP_SEMANTICS is needed to open a directory.
+  if (DirectoryExists(path))
+    flags |= base::PLATFORM_FILE_BACKUP_SEMANTICS;
+#endif  // OS_WIN
+
+  const base::PlatformFile file =
+      base::CreatePlatformFile(path, flags, NULL, NULL);
   if (file != base::kInvalidPlatformFileValue) {
     bool result = base::TouchPlatformFile(file, last_accessed, last_modified);
     base::ClosePlatformFile(file);
@@ -257,7 +253,8 @@ int GetUniquePathNumber(
 
   FilePath new_path;
   for (int count = 1; count <= kMaxUniqueFiles; ++count) {
-    new_path = path.InsertBeforeExtensionASCII(StringPrintf(" (%d)", count));
+    new_path =
+        path.InsertBeforeExtensionASCII(base::StringPrintf(" (%d)", count));
     if (!PathExists(new_path) &&
         (!have_suffix || !PathExists(FilePath(new_path.value() + suffix)))) {
       return count;
@@ -265,33 +262,6 @@ int GetUniquePathNumber(
   }
 
   return -1;
-}
-
-bool ContainsPath(const FilePath &parent, const FilePath& child) {
-  FilePath abs_parent = FilePath(parent);
-  FilePath abs_child = FilePath(child);
-
-  if (!file_util::AbsolutePath(&abs_parent) ||
-      !file_util::AbsolutePath(&abs_child))
-    return false;
-
-#if defined(OS_WIN)
-  // file_util::AbsolutePath() does not flatten case on Windows, so we must do
-  // a case-insensitive compare.
-  if (!StartsWith(abs_child.value(), abs_parent.value(), false))
-#else
-  if (!StartsWithASCII(abs_child.value(), abs_parent.value(), true))
-#endif
-    return false;
-
-  // file_util::AbsolutePath() normalizes '/' to '\' on Windows, so we only need
-  // to check kSeparators[0].
-  if (abs_child.value().length() <= abs_parent.value().length() ||
-      abs_child.value()[abs_parent.value().length()] !=
-          FilePath::kSeparators[0])
-    return false;
-
-  return true;
 }
 
 int64 ComputeDirectorySize(const FilePath& root_path) {
@@ -311,74 +281,6 @@ int64 ComputeDirectorySize(const FilePath& root_path) {
   return running_size;
 }
 
-int64 ComputeFilesSize(const FilePath& directory,
-                       const FilePath::StringType& pattern) {
-  int64 running_size = 0;
-  FileEnumerator file_iter(directory, false, FileEnumerator::FILES, pattern);
-  for (FilePath current = file_iter.Next(); !current.empty();
-       current = file_iter.Next()) {
-    FileEnumerator::FindInfo info;
-    file_iter.GetFindInfo(&info);
-#if defined(OS_WIN)
-    LARGE_INTEGER li = { info.nFileSizeLow, info.nFileSizeHigh };
-    running_size += li.QuadPart;
-#else
-    running_size += info.stat.st_size;
-#endif
-  }
-  return running_size;
-}
-
-///////////////////////////////////////////////
-// MemoryMappedFile
-
-MemoryMappedFile::~MemoryMappedFile() {
-  CloseHandles();
-}
-
-bool MemoryMappedFile::Initialize(const FilePath& file_name) {
-  if (IsValid())
-    return false;
-
-  if (!MapFileToMemory(file_name)) {
-    CloseHandles();
-    return false;
-  }
-
-  return true;
-}
-
-bool MemoryMappedFile::Initialize(base::PlatformFile file) {
-  if (IsValid())
-    return false;
-
-  file_ = file;
-
-  if (!MapFileToMemoryInternal()) {
-    CloseHandles();
-    return false;
-  }
-
-  return true;
-}
-
-bool MemoryMappedFile::IsValid() const {
-  return data_ != NULL;
-}
-
-bool MemoryMappedFile::MapFileToMemory(const FilePath& file_name) {
-  file_ = base::CreatePlatformFile(
-      file_name, base::PLATFORM_FILE_OPEN | base::PLATFORM_FILE_READ,
-      NULL, NULL);
-
-  if (file_ == base::kInvalidPlatformFileValue) {
-    DLOG(ERROR) << "Couldn't open " << file_name.value();
-    return false;
-  }
-
-  return MapFileToMemoryInternal();
-}
-
 ///////////////////////////////////////////////
 // FileEnumerator
 //
@@ -386,7 +288,9 @@ bool MemoryMappedFile::MapFileToMemory(const FilePath& file_name) {
 
 bool FileEnumerator::ShouldSkip(const FilePath& path) {
   FilePath::StringType basename = path.BaseName().value();
-  return IsDot(path) || (IsDotDot(path) && !(INCLUDE_DOT_DOT & file_type_));
+  return basename == FILE_PATH_LITERAL(".") ||
+         (basename == FILE_PATH_LITERAL("..") &&
+          !(INCLUDE_DOT_DOT & file_type_));
 }
 
 }  // namespace

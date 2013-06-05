@@ -1,1 +1,3 @@
-default version chromium/src.git@006ed6c71628b4c024c557803d8b32eeabf6e50b
+default version chromium/src.git@496502dbfbcb93be55155753b15c533b17f93c05
+origin/lkgr branch
+svn revision 202468

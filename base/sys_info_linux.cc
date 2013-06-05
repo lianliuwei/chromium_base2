@@ -8,19 +8,32 @@
 
 #include "base/file_util.h"
 #include "base/logging.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 
-namespace base {
+namespace {
 
-int64 SysInfo::AmountOfPhysicalMemory() {
-  long pages = sysconf(_SC_PHYS_PAGES);
-  long page_size = sysconf(_SC_PAGE_SIZE);
+int64 AmountOfMemory(int pages_name) {
+  long pages = sysconf(pages_name);
+  long page_size = sysconf(_SC_PAGESIZE);
   if (pages == -1 || page_size == -1) {
     NOTREACHED();
     return 0;
   }
-
   return static_cast<int64>(pages) * page_size;
+}
+
+}  // namespace
+
+namespace base {
+
+// static
+int64 SysInfo::AmountOfPhysicalMemory() {
+  return AmountOfMemory(_SC_PHYS_PAGES);
+}
+
+// static
+int64 SysInfo::AmountOfAvailablePhysicalMemory() {
+  return AmountOfMemory(_SC_AVPHYS_PAGES);
 }
 
 // static
@@ -44,6 +57,29 @@ size_t SysInfo::MaxSharedMemorySize() {
     }
   }
   return static_cast<size_t>(limit);
+}
+
+// static
+std::string SysInfo::CPUModelName() {
+#if defined(OS_CHROMEOS) && defined(ARCH_CPU_ARMEL)
+  const char kCpuModelPrefix[] = "Hardware";
+#else
+  const char kCpuModelPrefix[] = "model name";
+#endif
+  std::string contents;
+  file_util::ReadFileToString(FilePath("/proc/cpuinfo"), &contents);
+  DCHECK(!contents.empty());
+  if (!contents.empty()) {
+    std::istringstream iss(contents);
+    std::string line;
+    while (std::getline(iss, line)) {
+      if (line.compare(0, strlen(kCpuModelPrefix), kCpuModelPrefix) == 0) {
+        size_t pos = line.find(": ");
+        return line.substr(pos + 2);
+      }
+    }
+  }
+  return std::string();
 }
 
 }  // namespace base

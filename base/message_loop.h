@@ -26,12 +26,16 @@
 // We need this to declare base::MessagePumpWin::Dispatcher, which we should
 // really just eliminate.
 #include "base/message_pump_win.h"
+#elif defined(OS_IOS)
+#include "base/message_pump_io_ios.h"
 #elif defined(OS_POSIX)
 #include "base/message_pump_libevent.h"
 #if !defined(OS_MACOSX) && !defined(OS_ANDROID)
 
-#if defined(USE_AURA)
+#if defined(USE_AURA) && defined(USE_X11) && !defined(OS_NACL)
 #include "base/message_pump_aurax11.h"
+#elif defined(USE_OZONE) && !defined(OS_NACL)
+#include "base/message_pump_ozone.h"
 #else
 #include "base/message_pump_gtk.h"
 #endif
@@ -40,22 +44,22 @@
 #endif
 
 namespace base {
-class Histogram;
+class HistogramBase;
+class MessageLoopLockTest;
 class RunLoop;
 class ThreadTaskRunnerHandle;
 #if defined(OS_ANDROID)
 class MessagePumpForUI;
 #endif
-}  // namespace base
 
 // A MessageLoop is used to process events for a particular thread.  There is
 // at most one MessageLoop instance per thread.
 //
-// Events include at a minimum Task instances submitted to PostTask or those
-// managed by TimerManager.  Depending on the type of message pump used by the
-// MessageLoop other events such as UI messages may be processed.  On Windows
-// APC calls (as time permits) and signals sent to a registered set of HANDLEs
-// may also be processed.
+// Events include at a minimum Task instances submitted to PostTask and its
+// variants.  Depending on the type of message pump used by the MessageLoop
+// other events such as UI messages may be processed.  On Windows APC calls (as
+// time permits) and signals sent to a registered set of HANDLEs may also be
+// processed.
 //
 // NOTE: Unless otherwise specified, a MessageLoop's methods may only be called
 // on the thread where the MessageLoop's Run method executes.
@@ -118,9 +122,10 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
   static void EnableHistogrammer(bool enable_histogrammer);
 
   typedef base::MessagePump* (MessagePumpFactory)();
-  // Using the given base::MessagePumpForUIFactory to override the default
-  // MessagePump implementation for 'TYPE_UI'.
-  static void InitMessagePumpForUIFactory(MessagePumpFactory* factory);
+  // Uses the given base::MessagePumpForUIFactory to override the default
+  // MessagePump implementation for 'TYPE_UI'. Returns true if the factory
+  // was successfully registered.
+  static bool InitMessagePumpForUIFactory(MessagePumpFactory* factory);
 
   // A DestructionObserver is notified when the current MessageLoop is being
   // destroyed.  These observers are notified prior to MessageLoop::current()
@@ -160,9 +165,20 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
   // The MessageLoop takes ownership of the Task, and deletes it after it has
   // been Run().
   //
+  // PostTask(from_here, task) is equivalent to
+  // PostDelayedTask(from_here, task, 0).
+  //
+  // The TryPostTask is meant for the cases where the calling thread cannot
+  // block. If posting the task will block, the call returns false, the task
+  // is not posted but the task is consumed anyways.
+  //
   // NOTE: These methods may be called on any thread.  The Task will be invoked
   // on the thread that executes MessageLoop::Run().
   void PostTask(
+      const tracked_objects::Location& from_here,
+      const base::Closure& task);
+
+  bool TryPostTask(
       const tracked_objects::Location& from_here,
       const base::Closure& task);
 
@@ -220,9 +236,6 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
   // Process all pending tasks, windows messages, etc., but don't wait/sleep.
   // Return as soon as all items that can be run are taken care of.
   void RunUntilIdle();
-
-  // TODO(jbates) remove this. crbug.com/131220. See RunUntilIdle().
-  void RunAllPending() { RunUntilIdle(); }
 
   // TODO(jbates) remove this. crbug.com/131220. See QuitWhenIdle().
   void Quit() { QuitWhenIdle(); }
@@ -336,10 +349,10 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
     TaskObserver();
 
     // This method is called before processing a task.
-    virtual void WillProcessTask(base::TimeTicks time_posted) = 0;
+    virtual void WillProcessTask(const base::PendingTask& pending_task) = 0;
 
     // This method is called after processing a task.
-    virtual void DidProcessTask(base::TimeTicks time_posted) = 0;
+    virtual void DidProcessTask(const base::PendingTask& pending_task) = 0;
 
    protected:
     virtual ~TaskObserver();
@@ -382,17 +395,22 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
 
   //----------------------------------------------------------------------------
  protected:
-  friend class base::RunLoop;
 
 #if defined(OS_WIN)
   base::MessagePumpWin* pump_win() {
     return static_cast<base::MessagePumpWin*>(pump_.get());
   }
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) && !defined(OS_IOS)
   base::MessagePumpLibevent* pump_libevent() {
     return static_cast<base::MessagePumpLibevent*>(pump_.get());
   }
 #endif
+
+  scoped_refptr<base::MessagePump> pump_;
+
+ private:
+  friend class base::RunLoop;
+  friend class base::MessageLoopLockTest;
 
   // A function to encapsulate all the exception handling capability in the
   // stacks around the running of a main message loop.  It will run the message
@@ -422,13 +440,21 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
   // Adds the pending task to delayed_work_queue_.
   void AddToDelayedWorkQueue(const base::PendingTask& pending_task);
 
-  // Adds the pending task to our incoming_queue_.
+  // This function attempts to add pending task to our incoming_queue_.
+  // The append can only possibly fail when |use_try_lock| is true.
   //
-  // Caller retains ownership of |pending_task|, but this function will
-  // reset the value of pending_task->task.  This is needed to ensure
-  // that the posting call stack does not retain pending_task->task
+  // When |use_try_lock| is true, then this call will avoid blocking if
+  // the related lock is already held, and will in that case (when the
+  // lock is contended) fail to perform the append, and will return false.
+  //
+  // If the call succeeds to append to the queue, then this call
+  // will return true.
+  //
+  // In all cases, the caller retains ownership of |pending_task|, but this
+  // function will reset the value of pending_task->task.  This is needed to
+  // ensure that the posting call stack does not retain pending_task->task
   // beyond this function call.
-  void AddToIncomingQueue(base::PendingTask* pending_task);
+  bool AddToIncomingQueue(base::PendingTask* pending_task, bool use_try_lock);
 
   // Load tasks from the incoming_queue_ into work_queue_ if the latter is
   // empty.  The former requires a lock to access, while the latter is directly
@@ -474,8 +500,6 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
   // once we're out of nested message loops.
   base::TaskQueue deferred_non_nestable_work_queue_;
 
-  scoped_refptr<base::MessagePump> pump_;
-
   ObserverList<DestructionObserver> destruction_observers_;
 
   // A recursion block that prevents accidentally running additional tasks when
@@ -486,12 +510,11 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
 
   std::string thread_name_;
   // A profiling histogram showing the counts of various messages and events.
-  base::Histogram* message_histogram_;
+  base::HistogramBase* message_histogram_;
 
-  // A null terminated list which creates an incoming_queue of tasks that are
-  // acquired under a mutex for processing on this instance's thread. These
-  // tasks have not yet been sorted out into items for our work_queue_ vs items
-  // that will be handled by the TimerManager.
+  // An incoming queue of tasks that are acquired under a mutex for processing
+  // on this instance's thread. These tasks have not yet been sorted out into
+  // items for our work_queue_ vs delayed_work_queue_.
   base::TaskQueue incoming_queue_;
   // Protect access to incoming_queue_.
   mutable base::Lock incoming_queue_lock_;
@@ -505,7 +528,8 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
   bool os_modal_loop_;
 #endif
 
-  // The next sequence number to use for delayed tasks.
+  // The next sequence number to use for delayed tasks. Updating this counter is
+  // protected by incoming_queue_lock_.
   int next_sequence_num_;
 
   ObserverList<TaskObserver> task_observers_;
@@ -514,7 +538,6 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
   scoped_refptr<base::MessageLoopProxy> message_loop_proxy_;
   scoped_ptr<base::ThreadTaskRunnerHandle> thread_task_runner_handle_;
 
- private:
   template <class T, class R> friend class base::subtle::DeleteHelperInternal;
   template <class T, class R> friend class base::subtle::ReleaseHelperInternal;
 
@@ -537,6 +560,10 @@ class BASE_EXPORT MessageLoop : public base::MessagePump::Delegate {
 //
 class BASE_EXPORT MessageLoopForUI : public MessageLoop {
  public:
+#if defined(OS_WIN)
+  typedef base::MessagePumpForUI::MessageFilter MessageFilter;
+#endif
+
   MessageLoopForUI() : MessageLoop(TYPE_UI) {
   }
 
@@ -565,12 +592,27 @@ class BASE_EXPORT MessageLoopForUI : public MessageLoop {
   // events to the Java message loop.
   void Start();
 #elif !defined(OS_MACOSX)
+
   // Please see message_pump_win/message_pump_glib for definitions of these
   // methods.
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
+#if defined(OS_WIN)
+  // Plese see MessagePumpForUI for definitions of this method.
+  void SetMessageFilter(scoped_ptr<MessageFilter> message_filter) {
+    pump_ui()->SetMessageFilter(message_filter.Pass());
+  }
+#endif
+
  protected:
+#if defined(USE_AURA) && defined(USE_X11) && !defined(OS_NACL)
+  friend class base::MessagePumpAuraX11;
+#endif
+#if defined(USE_OZONE) && !defined(OS_NACL)
+  friend class base::MessagePumpOzone;
+#endif
+
   // TODO(rvargas): Make this platform independent.
   base::MessagePumpForUI* pump_ui() {
     return static_cast<base::MessagePumpForUI*>(pump_.get());
@@ -597,6 +639,17 @@ class BASE_EXPORT MessageLoopForIO : public MessageLoop {
   typedef base::MessagePumpForIO::IOHandler IOHandler;
   typedef base::MessagePumpForIO::IOContext IOContext;
   typedef base::MessagePumpForIO::IOObserver IOObserver;
+#elif defined(OS_IOS)
+  typedef base::MessagePumpIOSForIO::Watcher Watcher;
+  typedef base::MessagePumpIOSForIO::FileDescriptorWatcher
+      FileDescriptorWatcher;
+  typedef base::MessagePumpIOSForIO::IOObserver IOObserver;
+
+  enum Mode {
+    WATCH_READ = base::MessagePumpIOSForIO::WATCH_READ,
+    WATCH_WRITE = base::MessagePumpIOSForIO::WATCH_WRITE,
+    WATCH_READ_WRITE = base::MessagePumpIOSForIO::WATCH_READ_WRITE
+  };
 #elif defined(OS_POSIX)
   typedef base::MessagePumpLibevent::Watcher Watcher;
   typedef base::MessagePumpLibevent::FileDescriptorWatcher
@@ -631,13 +684,27 @@ class BASE_EXPORT MessageLoopForIO : public MessageLoop {
 
 #if defined(OS_WIN)
   // Please see MessagePumpWin for definitions of these methods.
-  void RegisterIOHandler(HANDLE file_handle, IOHandler* handler);
+  void RegisterIOHandler(HANDLE file, IOHandler* handler);
+  bool RegisterJobObject(HANDLE job, IOHandler* handler);
   bool WaitForIOCompletion(DWORD timeout, IOHandler* filter);
 
  protected:
   // TODO(rvargas): Make this platform independent.
   base::MessagePumpForIO* pump_io() {
     return static_cast<base::MessagePumpForIO*>(pump_.get());
+  }
+
+#elif defined(OS_IOS)
+  // Please see MessagePumpIOSForIO for definition.
+  bool WatchFileDescriptor(int fd,
+                           bool persistent,
+                           Mode mode,
+                           FileDescriptorWatcher *controller,
+                           Watcher *delegate);
+
+ private:
+  base::MessagePumpIOSForIO* pump_io() {
+    return static_cast<base::MessagePumpIOSForIO*>(pump_.get());
   }
 
 #elif defined(OS_POSIX)
@@ -660,5 +727,13 @@ class BASE_EXPORT MessageLoopForIO : public MessageLoop {
 // data that you need should be stored on the MessageLoop's pump_ instance.
 COMPILE_ASSERT(sizeof(MessageLoop) == sizeof(MessageLoopForIO),
                MessageLoopForIO_should_not_have_extra_member_variables);
+
+}  // namespace base
+
+// TODO(brettw) remove this when all users are updated to explicitly use the
+// namespace
+using base::MessageLoop;
+using base::MessageLoopForIO;
+using base::MessageLoopForUI;
 
 #endif  // BASE_MESSAGE_LOOP_H_

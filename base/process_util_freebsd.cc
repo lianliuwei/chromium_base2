@@ -9,20 +9,19 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/sysctl.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include <sys/wait.h>
-#include <sys/sysctl.h>
 #include <sys/user.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
-#include "base/file_util.h"
 #include "base/logging.h"
-#include "base/string_number_conversions.h"
-#include "base/string_split.h"
 #include "base/string_tokenizer.h"
 #include "base/string_util.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_split.h"
 #include "base/sys_info.h"
 
 namespace base {
@@ -65,7 +64,7 @@ ProcessIterator::ProcessIterator(const ProcessFilter* filter)
 
   do {
     size_t len = 0;
-    if (sysctl(mib, arraysize(mib), NULL, &len, NULL, 0) <0 ){
+    if (sysctl(mib, arraysize(mib), NULL, &len, NULL, 0) < 0) {
       LOG(ERROR) << "failed to get the size needed for the process list";
       kinfo_procs_.resize(0);
       done = true;
@@ -105,7 +104,7 @@ ProcessIterator::~ProcessIterator() {
 bool ProcessIterator::CheckForNextProcess() {
   std::string data;
 
-  for (; index_of_kinfo_proc_ < kinfo_procs_.size(); ++ index_of_kinfo_proc_) {
+  for (; index_of_kinfo_proc_ < kinfo_procs_.size(); ++index_of_kinfo_proc_) {
     size_t length;
     struct kinfo_proc kinfo = kinfo_procs_[index_of_kinfo_proc_];
     int mib[] = { CTL_KERN, KERN_PROC_ARGS, kinfo.ki_pid };
@@ -157,124 +156,10 @@ bool ProcessIterator::CheckForNextProcess() {
 }
 
 bool NamedProcessIterator::IncludeEntry() {
-  if(executable_name_ != entry().exe_file())
+  if (executable_name_ != entry().exe_file())
     return false;
 
   return ProcessIterator::IncludeEntry();
-}
-
-
-ProcessMetrics::ProcessMetrics(ProcessHandle process)
-    : process_(process),
-      last_time_(0),
-      last_system_time_(0),
-      last_cpu_(0) {
-  processor_count_ = base::SysInfo::NumberOfProcessors();
-}
-
-// static
-ProcessMetrics* ProcessMetrics::CreateProcessMetrics(ProcessHandle process) {
-  return new ProcessMetrics(process);
-}
-
-size_t ProcessMetrics::GetPagefileUsage() const {
-  struct kinfo_proc info;
-  int mib[] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, process_ };
-  size_t length = sizeof(info);
-
-  if (sysctl(mib, arraysize(mib), &info, &length, NULL, 0) < 0)
-    return 0;
-
-  return info.ki_size;
-}
-
-size_t ProcessMetrics::GetPeakPagefileUsage() const {
-  return 0;
-}
-
-size_t ProcessMetrics::GetWorkingSetSize() const {
-  struct kinfo_proc info;
-  int mib[] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, process_ };
-  size_t length = sizeof(info);
-
-  if (sysctl(mib, arraysize(mib), &info, &length, NULL, 0) < 0)
-    return 0;
-
-  return info.ki_rssize * getpagesize();
-}
-
-size_t ProcessMetrics::GetPeakWorkingSetSize() const {
-  return 0;
-}
-
-bool ProcessMetrics::GetMemoryBytes(size_t* private_bytes,
-                                    size_t* shared_bytes) {
-  WorkingSetKBytes ws_usage;
-  if (!GetWorkingSetKBytes(&ws_usage))
-    return false;
-
-  if (private_bytes)
-    *private_bytes = ws_usage.priv << 10;
-
-  if (shared_bytes)
-    *shared_bytes = ws_usage.shared * 1024;
-
-  return true;
-}
-
-bool ProcessMetrics::GetWorkingSetKBytes(WorkingSetKBytes* ws_usage) const {
-// TODO(bapt) be sure we can't be precise
-  size_t priv = GetWorkingSetSize();
-  if (!priv)
-    return false;
-  ws_usage->priv = priv / 1024;
-  ws_usage->shareable = 0;
-  ws_usage->shared = 0;
-
-  return true;
-}
-
-bool ProcessMetrics::GetIOCounters(IoCounters* io_counters) const {
-  return false;
-}
-
-double ProcessMetrics::GetCPUUsage() {
-  struct kinfo_proc info;
-  int mib[] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, process_ };
-  size_t length = sizeof(info);
-
-  struct timeval now;
-  int retval = gettimeofday(&now, NULL);
-  if (retval)
-    return 0;
-
-  if (sysctl(mib, arraysize(mib), &info, &length, NULL, 0) < 0)
-    return 0;
-
-  return (info.ki_pctcpu / FSCALE) * 100.0;
-}
-
-size_t GetSystemCommitCharge() {
-  int mib[2], pagesize;
-  unsigned long mem_total, mem_free, mem_inactive;
-  size_t length = sizeof(mem_total);
-
-  if (sysctl(mib, arraysize(mib), &mem_total, &length, NULL, 0) < 0)
-    return 0;
-
-  length = sizeof(mem_free);
-  if (sysctlbyname("vm.stats.vm.v_free_count", &mem_free, &length, NULL, 0) < 0)
-    return 0;
-
-  length = sizeof(mem_inactive);
-  if (sysctlbyname("vm.stats.vm.v_inactive_count", &mem_inactive, &length,
-      NULL, 0) < 0) {
-    return 0;
-  }
-
-  pagesize = getpagesize();
-
-  return mem_total - (mem_free*pagesize) - (mem_inactive*pagesize);
 }
 
 void EnableTerminationOnOutOfMemory() {

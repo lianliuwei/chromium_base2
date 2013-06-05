@@ -5,10 +5,10 @@
 # found in the LICENSE file.
 
 if [ $# -gt 0 ] ; then
-   INTENT_ARGS='-d "$1"'  # e.g. a URL
+   INTENT_ARGS="-d \"$1\""  # e.g. a URL
 fi
 
 adb shell am start \
   -a android.intent.action.VIEW \
-  -n org.chromium.content_shell/.ContentShellActivity \
+  -n org.chromium.content_shell_apk/.ContentShellActivity \
   $INTENT_ARGS

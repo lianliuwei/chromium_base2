@@ -9,7 +9,7 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -62,6 +62,19 @@ TEST(JSONReaderTest, Reading) {
   ASSERT_TRUE(root.get());
   list = static_cast<ListValue*>(root.get());
   EXPECT_EQ(3u, list->GetSize());
+  root.reset(JSONReader().ReadToValue("/* comment **/42"));
+  ASSERT_TRUE(root.get());
+  EXPECT_TRUE(root->IsType(Value::TYPE_INTEGER));
+  EXPECT_TRUE(root->GetAsInteger(&int_val));
+  EXPECT_EQ(42, int_val);
+  root.reset(JSONReader().ReadToValue(
+      "/* comment **/\n"
+      "// */ 43\n"
+      "44"));
+  ASSERT_TRUE(root.get());
+  EXPECT_TRUE(root->IsType(Value::TYPE_INTEGER));
+  EXPECT_TRUE(root->GetAsInteger(&int_val));
+  EXPECT_EQ(44, int_val);
 
   // Test number formats
   root.reset(JSONReader().ReadToValue("43"));
@@ -529,10 +542,9 @@ TEST(JSONReaderTest, Reading) {
 
 TEST(JSONReaderTest, ReadFromFile) {
   FilePath path;
-  ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &path));
-  path = path.Append(FILE_PATH_LITERAL("base"))
-             .Append(FILE_PATH_LITERAL("data"))
-             .Append(FILE_PATH_LITERAL("json"));
+  ASSERT_TRUE(PathService::Get(base::DIR_TEST_DATA, &path));
+  path = path.AppendASCII("json");
+  ASSERT_TRUE(file_util::PathExists(path));
 
   std::string input;
   ASSERT_TRUE(file_util::ReadFileToString(

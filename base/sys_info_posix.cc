@@ -13,6 +13,7 @@
 #include "base/basictypes.h"
 #include "base/file_util.h"
 #include "base/logging.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/utf_string_conversions.h"
 
 #if defined(OS_ANDROID)
@@ -40,43 +41,52 @@ int SysInfo::NumberOfProcessors() {
 
 // static
 int64 SysInfo::AmountOfFreeDiskSpace(const FilePath& path) {
+  base::ThreadRestrictions::AssertIOAllowed();
+
   struct statvfs stats;
-  if (statvfs(path.value().c_str(), &stats) != 0) {
+  if (HANDLE_EINTR(statvfs(path.value().c_str(), &stats)) != 0)
     return -1;
-  }
   return static_cast<int64>(stats.f_bavail) * stats.f_frsize;
 }
 
-#if !defined(OS_MACOSX)
+#if !defined(OS_MACOSX) && !defined(OS_ANDROID)
 // static
 std::string SysInfo::OperatingSystemName() {
   struct utsname info;
   if (uname(&info) < 0) {
     NOTREACHED();
-    return "";
+    return std::string();
   }
   return std::string(info.sysname);
 }
+#endif
 
+#if !defined(OS_MACOSX) && !defined(OS_ANDROID)
 // static
 std::string SysInfo::OperatingSystemVersion() {
   struct utsname info;
   if (uname(&info) < 0) {
     NOTREACHED();
-    return "";
+    return std::string();
   }
   return std::string(info.release);
 }
 #endif
 
 // static
-std::string SysInfo::CPUArchitecture() {
+std::string SysInfo::OperatingSystemArchitecture() {
   struct utsname info;
   if (uname(&info) < 0) {
     NOTREACHED();
-    return "";
+    return std::string();
   }
-  return std::string(info.machine);
+  std::string arch(info.machine);
+  if (arch == "i386" || arch == "i486" || arch == "i586" || arch == "i686") {
+    arch = "x86";
+  } else if (arch == "amd64") {
+    arch = "x86_64";
+  }
+  return arch;
 }
 
 // static

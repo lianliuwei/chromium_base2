@@ -7,9 +7,14 @@
 #include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/third_party/dynamic_annotations/dynamic_annotations.h"
+#include "base/threading/thread_id_name_manager.h"
 #include "base/threading/thread_local.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/synchronization/waitable_event.h"
+
+#if defined(OS_WIN)
+#include "base/win/scoped_com_initializer.h"
+#endif
 
 namespace base {
 
@@ -17,8 +22,8 @@ namespace {
 
 // We use this thread-local variable to record whether or not a thread exited
 // because its Stop method was called.  This allows us to catch cases where
-// MessageLoop::Quit() is called directly, which is unexpected when using a
-// Thread to setup and run a MessageLoop.
+// MessageLoop::QuitWhenIdle() is called directly, which is unexpected when
+// using a Thread to setup and run a MessageLoop.
 base::LazyInstance<base::ThreadLocalBoolean> lazy_tls_bool =
     LAZY_INSTANCE_INITIALIZER;
 
@@ -26,7 +31,7 @@ base::LazyInstance<base::ThreadLocalBoolean> lazy_tls_bool =
 
 // This is used to trigger the message loop to exit.
 void ThreadQuitHelper() {
-  MessageLoop::current()->Quit();
+  MessageLoop::current()->QuitWhenIdle();
   Thread::SetThreadWasQuitProperly(true);
 }
 
@@ -45,7 +50,11 @@ struct Thread::StartupData {
 };
 
 Thread::Thread(const char* name)
-    : started_(false),
+    :
+#if defined(OS_WIN)
+      com_status_(NONE),
+#endif
+      started_(false),
       stopping_(false),
       running_(false),
       startup_data_(NULL),
@@ -60,11 +69,20 @@ Thread::~Thread() {
 }
 
 bool Thread::Start() {
-  return StartWithOptions(Options());
+  Options options;
+#if defined(OS_WIN)
+  if (com_status_ == STA)
+    options.message_loop_type = MessageLoop::TYPE_UI;
+#endif
+  return StartWithOptions(options);
 }
 
 bool Thread::StartWithOptions(const Options& options) {
   DCHECK(!message_loop_);
+#if defined(OS_WIN)
+  DCHECK((com_status_ != STA) ||
+      (options.message_loop_type == MessageLoop::TYPE_UI));
+#endif
 
   SetThreadWasQuitProperly(false);
 
@@ -90,7 +108,7 @@ bool Thread::StartWithOptions(const Options& options) {
 }
 
 void Thread::Stop() {
-  if (!thread_was_started())
+  if (!started_)
     return;
 
   StopSoon();
@@ -129,6 +147,13 @@ bool Thread::IsRunning() const {
   return running_;
 }
 
+void Thread::SetPriority(ThreadPriority priority) {
+  // The thread must be started (and id known) for this to be
+  // compatible with all platforms.
+  DCHECK_NE(thread_id_, kInvalidThreadId);
+  PlatformThread::SetThreadPriority(thread_, priority);
+}
+
 void Thread::Run(MessageLoop* message_loop) {
   message_loop->Run();
 }
@@ -157,6 +182,15 @@ void Thread::ThreadMain() {
     message_loop.set_thread_name(name_);
     message_loop_ = &message_loop;
 
+#if defined(OS_WIN)
+    scoped_ptr<win::ScopedCOMInitializer> com_initializer;
+    if (com_status_ != NONE) {
+      com_initializer.reset((com_status_ == STA) ?
+          new win::ScopedCOMInitializer() :
+          new win::ScopedCOMInitializer(win::ScopedCOMInitializer::kMTA));
+    }
+#endif
+
     // Let the thread do extra initialization.
     // Let's do this before signaling we are started.
     Init();
@@ -171,6 +205,10 @@ void Thread::ThreadMain() {
 
     // Let the thread do extra cleanup.
     CleanUp();
+
+#if defined(OS_WIN)
+    com_initializer.reset();
+#endif
 
     // Assert that MessageLoop::Quit was called by ThreadQuitHelper.
     DCHECK(GetThreadWasQuitProperly());

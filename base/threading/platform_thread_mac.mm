@@ -5,24 +5,19 @@
 #include "base/threading/platform_thread.h"
 
 #import <Foundation/Foundation.h>
+#include <algorithm>
 #include <dlfcn.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <mach/thread_policy.h>
+#include <sys/resource.h>
 
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/threading/thread_local.h"
+#include "base/threading/thread_id_name_manager.h"
 #include "base/tracked_objects.h"
 
 namespace base {
-
-namespace {
-
-LazyInstance<ThreadLocalPointer<char> >::Leaky
-    current_thread_name = LAZY_INSTANCE_INITIALIZER;
-
-}  // namespace
 
 // If Cocoa is to be used on more than one thread, it must know that the
 // application is multithreaded.  Since it's possible to enter Cocoa code
@@ -47,7 +42,7 @@ void InitThreading() {
 
 // static
 void PlatformThread::SetName(const char* name) {
-  current_thread_name.Pointer()->Set(const_cast<char*>(name));
+  ThreadIdNameManager::GetInstance()->SetName(CurrentId(), name);
   tracked_objects::ThreadData::InitializeThreadContext(name);
 
   // pthread_setname_np is only available in 10.6 or later, so test
@@ -65,11 +60,6 @@ void PlatformThread::SetName(const char* name) {
   // pthread_setname() fails (harmlessly) in the sandbox, ignore when it does.
   // See http://crbug.com/47058
   dynamic_pthread_setname_np(shortened_name.c_str());
-}
-
-// static
-const char* PlatformThread::GetName() {
-  return current_thread_name.Pointer()->Get();
 }
 
 namespace {
@@ -175,7 +165,7 @@ void SetPriorityRealtimeAudio(mach_port_t mach_thread_id) {
 void PlatformThread::SetThreadPriority(PlatformThreadHandle handle,
                                        ThreadPriority priority) {
   // Convert from pthread_t to mach thread identifier.
-  mach_port_t mach_thread_id = pthread_mach_thread_np(handle);
+  mach_port_t mach_thread_id = pthread_mach_thread_np(handle.handle_);
 
   switch (priority) {
     case kThreadPriority_Normal:
@@ -184,7 +174,51 @@ void PlatformThread::SetThreadPriority(PlatformThreadHandle handle,
     case kThreadPriority_RealtimeAudio:
       SetPriorityRealtimeAudio(mach_thread_id);
       break;
+    default:
+      NOTREACHED() << "Unknown priority.";
+      break;
   }
+}
+
+size_t GetDefaultThreadStackSize(const pthread_attr_t& attributes) {
+#if defined(OS_IOS)
+  return 0;
+#else
+  // The Mac OS X default for a pthread stack size is 512kB.
+  // Libc-594.1.4/pthreads/pthread.c's pthread_attr_init uses
+  // DEFAULT_STACK_SIZE for this purpose.
+  //
+  // 512kB isn't quite generous enough for some deeply recursive threads that
+  // otherwise request the default stack size by specifying 0. Here, adopt
+  // glibc's behavior as on Linux, which is to use the current stack size
+  // limit (ulimit -s) as the default stack size. See
+  // glibc-2.11.1/nptl/nptl-init.c's __pthread_initialize_minimal_internal. To
+  // avoid setting the limit below the Mac OS X default or the minimum usable
+  // stack size, these values are also considered. If any of these values
+  // can't be determined, or if stack size is unlimited (ulimit -s unlimited),
+  // stack_size is left at 0 to get the system default.
+  //
+  // Mac OS X normally only applies ulimit -s to the main thread stack. On
+  // contemporary OS X and Linux systems alike, this value is generally 8MB
+  // or in that neighborhood.
+  size_t default_stack_size = 0;
+  struct rlimit stack_rlimit;
+  if (pthread_attr_getstacksize(&attributes, &default_stack_size) == 0 &&
+      getrlimit(RLIMIT_STACK, &stack_rlimit) == 0 &&
+      stack_rlimit.rlim_cur != RLIM_INFINITY) {
+    default_stack_size =
+        std::max(std::max(default_stack_size,
+                          static_cast<size_t>(PTHREAD_STACK_MIN)),
+                 static_cast<size_t>(stack_rlimit.rlim_cur));
+  }
+  return default_stack_size;
+#endif
+}
+
+void InitOnThread() {
+}
+
+void TerminateOnThread() {
 }
 
 }  // namespace base

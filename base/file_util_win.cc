@@ -5,29 +5,40 @@
 #include "base/file_util.h"
 
 #include <windows.h>
-#include <propvarutil.h>
 #include <psapi.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <time.h>
 
+#include <algorithm>
 #include <limits>
 #include <string>
 
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
 #include "base/process_util.h"
-#include "base/string_number_conversions.h"
 #include "base/string_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
-#include "base/win/pe_image.h"
-#include "base/win/scoped_comptr.h"
 #include "base/win/scoped_handle.h"
-#include "base/win/win_util.h"
 #include "base/win/windows_version.h"
+
+using base::FilePath;
+
+namespace base {
+
+FilePath MakeAbsoluteFilePath(const FilePath& input) {
+  base::ThreadRestrictions::AssertIOAllowed();
+  wchar_t file_path[MAX_PATH];
+  if (!_wfullpath(file_path, input.value().c_str(), MAX_PATH))
+    return FilePath();
+  return FilePath(file_path);
+}
+
+}  // namespace base
 
 namespace file_util {
 
@@ -37,45 +48,6 @@ const DWORD kFileShareAll =
     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
 }  // namespace
-
-bool AbsolutePath(FilePath* path) {
-  base::ThreadRestrictions::AssertIOAllowed();
-  wchar_t file_path_buf[MAX_PATH];
-  if (!_wfullpath(file_path_buf, path->value().c_str(), MAX_PATH))
-    return false;
-  *path = FilePath(file_path_buf);
-  return true;
-}
-
-int CountFilesCreatedAfter(const FilePath& path,
-                           const base::Time& comparison_time) {
-  base::ThreadRestrictions::AssertIOAllowed();
-
-  int file_count = 0;
-  FILETIME comparison_filetime(comparison_time.ToFileTime());
-
-  WIN32_FIND_DATA find_file_data;
-  // All files in given dir
-  std::wstring filename_spec = path.Append(L"*").value();
-  HANDLE find_handle = FindFirstFile(filename_spec.c_str(), &find_file_data);
-  if (find_handle != INVALID_HANDLE_VALUE) {
-    do {
-      // Don't count current or parent directories.
-      if ((wcscmp(find_file_data.cFileName, L"..") == 0) ||
-          (wcscmp(find_file_data.cFileName, L".") == 0))
-        continue;
-
-      long result = CompareFileTime(&find_file_data.ftCreationTime,  // NOLINT
-                                    &comparison_filetime);
-      // File was created after or on comparison time
-      if ((result == 1) || (result == 0))
-        ++file_count;
-    } while (FindNextFile(find_handle,  &find_file_data));
-    FindClose(find_handle);
-  }
-
-  return file_count;
-}
 
 bool Delete(const FilePath& path, bool recursive) {
   base::ThreadRestrictions::AssertIOAllowed();
@@ -142,7 +114,7 @@ bool DeleteAfterReboot(const FilePath& path) {
                         MOVEFILE_REPLACE_EXISTING) != FALSE;
 }
 
-bool Move(const FilePath& from_path, const FilePath& to_path) {
+bool MoveUnsafe(const FilePath& from_path, const FilePath& to_path) {
   base::ThreadRestrictions::AssertIOAllowed();
 
   // NOTE: I suspect we could support longer paths, but that would involve
@@ -176,7 +148,9 @@ bool Move(const FilePath& from_path, const FilePath& to_path) {
   return ret;
 }
 
-bool ReplaceFile(const FilePath& from_path, const FilePath& to_path) {
+bool ReplaceFileAndGetError(const FilePath& from_path,
+                            const FilePath& to_path,
+                            base::PlatformFileError* error) {
   base::ThreadRestrictions::AssertIOAllowed();
   // Try a simple move first.  It will only succeed when |to_path| doesn't
   // already exist.
@@ -190,10 +164,12 @@ bool ReplaceFile(const FilePath& from_path, const FilePath& to_path) {
                     REPLACEFILE_IGNORE_MERGE_ERRORS, NULL, NULL)) {
     return true;
   }
+  if (error)
+    *error = base::LastErrorToPlatformFileError(GetLastError());
   return false;
 }
 
-bool CopyFile(const FilePath& from_path, const FilePath& to_path) {
+bool CopyFileUnsafe(const FilePath& from_path, const FilePath& to_path) {
   base::ThreadRestrictions::AssertIOAllowed();
 
   // NOTE: I suspect we could support longer paths, but that would involve
@@ -208,12 +184,16 @@ bool CopyFile(const FilePath& from_path, const FilePath& to_path) {
 
 bool ShellCopy(const FilePath& from_path, const FilePath& to_path,
                bool recursive) {
+  // WinXP SHFileOperation doesn't like trailing separators.
+  FilePath stripped_from = from_path.StripTrailingSeparators();
+  FilePath stripped_to = to_path.StripTrailingSeparators();
+
   base::ThreadRestrictions::AssertIOAllowed();
 
   // NOTE: I suspect we could support longer paths, but that would involve
   // analyzing all our usage of files.
-  if (from_path.value().length() >= MAX_PATH ||
-      to_path.value().length() >= MAX_PATH) {
+  if (stripped_from.value().length() >= MAX_PATH ||
+      stripped_to.value().length() >= MAX_PATH) {
     return false;
   }
 
@@ -223,9 +203,9 @@ bool ShellCopy(const FilePath& from_path, const FilePath& to_path,
   wchar_t double_terminated_path_from[MAX_PATH + 1] = {0};
   wchar_t double_terminated_path_to[MAX_PATH + 1] = {0};
 #pragma warning(suppress:4996)  // don't complain about wcscpy deprecation
-  wcscpy(double_terminated_path_from, from_path.value().c_str());
+  wcscpy(double_terminated_path_from, stripped_from.value().c_str());
 #pragma warning(suppress:4996)  // don't complain about wcscpy deprecation
-  wcscpy(double_terminated_path_to, to_path.value().c_str());
+  wcscpy(double_terminated_path_to, stripped_to.value().c_str());
 
   SHFILEOPSTRUCT file_operation = {0};
   file_operation.wFunc = FO_COPY;
@@ -306,183 +286,6 @@ bool DirectoryExists(const FilePath& path) {
   return false;
 }
 
-bool GetFileCreationLocalTimeFromHandle(HANDLE file_handle,
-                                        LPSYSTEMTIME creation_time) {
-  base::ThreadRestrictions::AssertIOAllowed();
-  if (!file_handle)
-    return false;
-
-  FILETIME utc_filetime;
-  if (!GetFileTime(file_handle, &utc_filetime, NULL, NULL))
-    return false;
-
-  FILETIME local_filetime;
-  if (!FileTimeToLocalFileTime(&utc_filetime, &local_filetime))
-    return false;
-
-  return !!FileTimeToSystemTime(&local_filetime, creation_time);
-}
-
-bool GetFileCreationLocalTime(const std::wstring& filename,
-                              LPSYSTEMTIME creation_time) {
-  base::ThreadRestrictions::AssertIOAllowed();
-  base::win::ScopedHandle file_handle(
-      CreateFile(filename.c_str(), GENERIC_READ, kFileShareAll, NULL,
-                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL));
-  return GetFileCreationLocalTimeFromHandle(file_handle.Get(), creation_time);
-}
-
-bool ResolveShortcut(const FilePath& shortcut_path,
-                     FilePath* target_path,
-                     string16* args) {
-  base::ThreadRestrictions::AssertIOAllowed();
-
-  HRESULT result;
-  base::win::ScopedComPtr<IShellLink> i_shell_link;
-
-  // Get pointer to the IShellLink interface.
-  result = i_shell_link.CreateInstance(CLSID_ShellLink, NULL,
-                                       CLSCTX_INPROC_SERVER);
-  if (FAILED(result))
-    return false;
-
-  base::win::ScopedComPtr<IPersistFile> persist;
-  // Query IShellLink for the IPersistFile interface.
-  result = persist.QueryFrom(i_shell_link);
-  if (FAILED(result))
-    return false;
-
-  // Load the shell link.
-  result = persist->Load(shortcut_path.value().c_str(), STGM_READ);
-  if (FAILED(result))
-    return false;
-
-  WCHAR temp[MAX_PATH];
-  if (target_path) {
-    // Try to find the target of a shortcut.
-    result = i_shell_link->Resolve(0, SLR_NO_UI);
-    if (FAILED(result))
-      return false;
-
-    result = i_shell_link->GetPath(temp, MAX_PATH, NULL, SLGP_UNCPRIORITY);
-    if (FAILED(result))
-      return false;
-
-    *target_path = FilePath(temp);
-  }
-
-  if (args) {
-    result = i_shell_link->GetArguments(temp, MAX_PATH);
-    if (FAILED(result))
-      return false;
-
-    *args = string16(temp);
-  }
-  return true;
-}
-
-bool CreateOrUpdateShortcutLink(const wchar_t *source,
-                                const wchar_t *destination,
-                                const wchar_t *working_dir,
-                                const wchar_t *arguments,
-                                const wchar_t *description,
-                                const wchar_t *icon,
-                                int icon_index,
-                                const wchar_t* app_id,
-                                uint32 options) {
-  base::ThreadRestrictions::AssertIOAllowed();
-
-  bool create = (options & SHORTCUT_CREATE_ALWAYS) != 0;
-
-  // |source| is required when SHORTCUT_CREATE_ALWAYS is specified.
-  DCHECK(source || !create);
-
-  // Length of arguments and description must be less than MAX_PATH.
-  DCHECK(lstrlen(arguments) < MAX_PATH);
-  DCHECK(lstrlen(description) < MAX_PATH);
-
-  base::win::ScopedComPtr<IShellLink> i_shell_link;
-  base::win::ScopedComPtr<IPersistFile> i_persist_file;
-
-  // Get pointer to the IShellLink interface.
-  if (FAILED(i_shell_link.CreateInstance(CLSID_ShellLink, NULL,
-                                         CLSCTX_INPROC_SERVER)) ||
-      FAILED(i_persist_file.QueryFrom(i_shell_link))) {
-    return false;
-  }
-
-  if (!create && FAILED(i_persist_file->Load(destination, STGM_READWRITE)))
-    return false;
-
-  if ((source || create) && FAILED(i_shell_link->SetPath(source)))
-    return false;
-
-  if (working_dir && FAILED(i_shell_link->SetWorkingDirectory(working_dir)))
-    return false;
-
-  if (arguments && FAILED(i_shell_link->SetArguments(arguments)))
-    return false;
-
-  if (description && FAILED(i_shell_link->SetDescription(description)))
-    return false;
-
-  if (icon && FAILED(i_shell_link->SetIconLocation(icon, icon_index)))
-    return false;
-
-  bool is_dual_mode = (options & SHORTCUT_DUAL_MODE) != 0;
-  if ((app_id || is_dual_mode) &&
-      base::win::GetVersion() >= base::win::VERSION_WIN7) {
-    base::win::ScopedComPtr<IPropertyStore> property_store;
-    if (FAILED(property_store.QueryFrom(i_shell_link)) || !property_store.get())
-      return false;
-
-    if (app_id && !base::win::SetAppIdForPropertyStore(property_store, app_id))
-      return false;
-    if (is_dual_mode &&
-        !base::win::SetDualModeForPropertyStore(property_store)) {
-      return false;
-    }
-  }
-
-  HRESULT result = i_persist_file->Save(destination, TRUE);
-
-  // If we successfully updated the icon, notify the shell that we have done so.
-  if (!create && SUCCEEDED(result)) {
-    // Release the interfaces in case the SHChangeNotify call below depends on
-    // the operations above being fully completed.
-    i_persist_file.Release();
-    i_shell_link.Release();
-
-    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
-  }
-
-  return SUCCEEDED(result);
-}
-
-bool TaskbarPinShortcutLink(const wchar_t* shortcut) {
-  base::ThreadRestrictions::AssertIOAllowed();
-
-  // "Pin to taskbar" is only supported after Win7.
-  if (base::win::GetVersion() < base::win::VERSION_WIN7)
-    return false;
-
-  int result = reinterpret_cast<int>(ShellExecute(NULL, L"taskbarpin", shortcut,
-      NULL, NULL, 0));
-  return result > 32;
-}
-
-bool TaskbarUnpinShortcutLink(const wchar_t* shortcut) {
-  base::ThreadRestrictions::AssertIOAllowed();
-
-  // "Unpin from taskbar" is only supported after Win7.
-  if (base::win::GetVersion() < base::win::VERSION_WIN7)
-    return false;
-
-  int result = reinterpret_cast<int>(ShellExecute(NULL, L"taskbarunpin",
-      shortcut, NULL, NULL, 0));
-  return result > 32;
-}
-
 bool GetTempDir(FilePath* path) {
   base::ThreadRestrictions::AssertIOAllowed();
 
@@ -548,15 +351,17 @@ bool CreateTemporaryFileInDir(const FilePath& dir,
     return false;
   }
 
-  DWORD path_len = GetLongPathName(temp_name, temp_name, MAX_PATH);
-  if (path_len > MAX_PATH + 1 || path_len == 0) {
-    DPLOG(WARNING) << "Failed to get long path name for " << temp_name;
-    return false;
+  wchar_t long_temp_name[MAX_PATH + 1];
+  DWORD long_name_len = GetLongPathName(temp_name, long_temp_name, MAX_PATH);
+  if (long_name_len > MAX_PATH || long_name_len == 0) {
+    // GetLongPathName() failed, but we still have a temporary file.
+    *temp_file = FilePath(temp_name);
+    return true;
   }
 
-  std::wstring temp_file_str;
-  temp_file_str.assign(temp_name, path_len);
-  *temp_file = FilePath(temp_file_str);
+  FilePath::StringType long_temp_name_str;
+  long_temp_name_str.assign(long_temp_name, long_name_len);
+  *temp_file = FilePath(long_temp_name_str);
   return true;
 }
 
@@ -716,8 +521,8 @@ int WriteFile(const FilePath& filename, const char* data, int size) {
                                           0,
                                           NULL));
   if (!file) {
-    DLOG(WARNING) << "CreateFile failed for path " << filename.value()
-                  << " error code=" << GetLastError();
+    DLOG_GETLASTERROR(WARNING) << "CreateFile failed for path "
+                               << filename.value();
     return -1;
   }
 
@@ -728,8 +533,8 @@ int WriteFile(const FilePath& filename, const char* data, int size) {
 
   if (!result) {
     // WriteFile failed.
-    DLOG(WARNING) << "writing file " << filename.value()
-                  << " failed, error code=" << GetLastError();
+    DLOG_GETLASTERROR(WARNING) << "writing file " << filename.value()
+                               << " failed";
   } else {
     // Didn't write all the bytes.
     DLOG(WARNING) << "wrote" << written << " bytes to "
@@ -748,8 +553,8 @@ int AppendToFile(const FilePath& filename, const char* data, int size) {
                                           0,
                                           NULL));
   if (!file) {
-    DLOG(WARNING) << "CreateFile failed for path " << filename.value()
-                  << " error code=" << GetLastError();
+    DLOG_GETLASTERROR(WARNING) << "CreateFile failed for path "
+                               << filename.value();
     return -1;
   }
 
@@ -760,8 +565,8 @@ int AppendToFile(const FilePath& filename, const char* data, int size) {
 
   if (!result) {
     // WriteFile failed.
-    DLOG(WARNING) << "writing file " << filename.value()
-                  << " failed, error code=" << GetLastError();
+    DLOG_GETLASTERROR(WARNING) << "writing file " << filename.value()
+                               << " failed";
   } else {
     // Didn't write all the bytes.
     DLOG(WARNING) << "wrote" << written << " bytes to "
@@ -845,11 +650,6 @@ bool FileEnumerator::IsDirectory(const FindInfo& info) {
 }
 
 // static
-bool FileEnumerator::IsLink(const FindInfo& info) {
-  return false;
-}
-
-// static
 FilePath FileEnumerator::GetFilename(const FindInfo& find_info) {
   return FilePath(find_info.cFileName);
 }
@@ -930,91 +730,6 @@ FilePath FileEnumerator::Next() {
   }
 
   return FilePath();
-}
-
-///////////////////////////////////////////////
-// MemoryMappedFile
-
-MemoryMappedFile::MemoryMappedFile()
-    : file_(INVALID_HANDLE_VALUE),
-      file_mapping_(INVALID_HANDLE_VALUE),
-      data_(NULL),
-      length_(INVALID_FILE_SIZE) {
-}
-
-bool MemoryMappedFile::InitializeAsImageSection(const FilePath& file_name) {
-  if (IsValid())
-    return false;
-  file_ = base::CreatePlatformFile(
-      file_name, base::PLATFORM_FILE_OPEN | base::PLATFORM_FILE_READ,
-      NULL, NULL);
-
-  if (file_ == base::kInvalidPlatformFileValue) {
-    DLOG(ERROR) << "Couldn't open " << file_name.value();
-    return false;
-  }
-
-  if (!MapFileToMemoryInternalEx(SEC_IMAGE)) {
-    CloseHandles();
-    return false;
-  }
-
-  return true;
-}
-
-bool MemoryMappedFile::MapFileToMemoryInternal() {
-  return MapFileToMemoryInternalEx(0);
-}
-
-bool MemoryMappedFile::MapFileToMemoryInternalEx(int flags) {
-  base::ThreadRestrictions::AssertIOAllowed();
-
-  if (file_ == INVALID_HANDLE_VALUE)
-    return false;
-
-  length_ = ::GetFileSize(file_, NULL);
-  if (length_ == INVALID_FILE_SIZE)
-    return false;
-
-  file_mapping_ = ::CreateFileMapping(file_, NULL, PAGE_READONLY | flags,
-                                      0, 0, NULL);
-  if (!file_mapping_) {
-    // According to msdn, system error codes are only reserved up to 15999.
-    // http://msdn.microsoft.com/en-us/library/ms681381(v=VS.85).aspx.
-    UMA_HISTOGRAM_ENUMERATION("MemoryMappedFile.CreateFileMapping",
-                              logging::GetLastSystemErrorCode(), 16000);
-    return false;
-  }
-
-  data_ = static_cast<uint8*>(
-      ::MapViewOfFile(file_mapping_, FILE_MAP_READ, 0, 0, 0));
-  if (!data_) {
-    UMA_HISTOGRAM_ENUMERATION("MemoryMappedFile.MapViewOfFile",
-                              logging::GetLastSystemErrorCode(), 16000);
-  }
-  return data_ != NULL;
-}
-
-void MemoryMappedFile::CloseHandles() {
-  if (data_)
-    ::UnmapViewOfFile(data_);
-  if (file_mapping_ != INVALID_HANDLE_VALUE)
-    ::CloseHandle(file_mapping_);
-  if (file_ != INVALID_HANDLE_VALUE)
-    ::CloseHandle(file_);
-
-  data_ = NULL;
-  file_mapping_ = file_ = INVALID_HANDLE_VALUE;
-  length_ = INVALID_FILE_SIZE;
-}
-
-bool HasFileBeenModifiedSince(const FileEnumerator::FindInfo& find_info,
-                              const base::Time& cutoff_time) {
-  base::ThreadRestrictions::AssertIOAllowed();
-  FILETIME file_time = cutoff_time.ToFileTime();
-  long result = CompareFileTime(&find_info.ftLastWriteTime,  // NOLINT
-                                &file_time);
-  return result == 1 || result == 0;
 }
 
 bool NormalizeFilePath(const FilePath& path, FilePath* real_path) {
@@ -1126,6 +841,30 @@ bool NormalizeToNativeFilePath(const FilePath& path, FilePath* nt_path) {
   }
   ::UnmapViewOfFile(file_view);
   return success;
+}
+
+int GetMaximumPathComponentLength(const FilePath& path) {
+  base::ThreadRestrictions::AssertIOAllowed();
+
+  wchar_t volume_path[MAX_PATH];
+  if (!GetVolumePathNameW(path.NormalizePathSeparators().value().c_str(),
+                          volume_path,
+                          arraysize(volume_path))) {
+    return -1;
+  }
+
+  DWORD max_length = 0;
+  if (!GetVolumeInformationW(volume_path, NULL, 0, NULL, &max_length, NULL,
+                             NULL, 0)) {
+    return -1;
+  }
+
+  // Length of |path| with path separator appended.
+  size_t prefix = path.StripTrailingSeparators().value().size() + 1;
+  // The whole path string must be shorter than MAX_PATH. That is, it must be
+  // prefix + component_length < MAX_PATH (or equivalently, <= MAX_PATH - 1).
+  int whole_path_limit = std::max(0, MAX_PATH - 1 - static_cast<int>(prefix));
+  return std::min(whole_path_limit, static_cast<int>(max_length));
 }
 
 }  // namespace file_util

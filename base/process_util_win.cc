@@ -33,9 +33,6 @@ namespace base {
 
 namespace {
 
-// System pagesize. This value remains constant on x86/64 architectures.
-const int PAGESIZE_KB = 4;
-
 // Exit codes with special meanings on Windows.
 const DWORD kNormalTerminationExitCode = 0;
 const DWORD kDebuggerInactiveExitCode = 0xC0000354;
@@ -55,52 +52,6 @@ const DWORD kProcessKilledExitCode = 1;
 
 // HeapSetInformation function pointer.
 typedef BOOL (WINAPI* HeapSetFn)(HANDLE, HEAP_INFORMATION_CLASS, PVOID, SIZE_T);
-
-// Previous unhandled filter. Will be called if not NULL when we intercept an
-// exception. Only used in unit tests.
-LPTOP_LEVEL_EXCEPTION_FILTER g_previous_filter = NULL;
-
-// Prints the exception call stack.
-// This is the unit tests exception filter.
-long WINAPI StackDumpExceptionFilter(EXCEPTION_POINTERS* info) {
-  debug::StackTrace(info).PrintBacktrace();
-  if (g_previous_filter)
-    return g_previous_filter(info);
-  return EXCEPTION_CONTINUE_SEARCH;
-}
-
-// Connects back to a console if available.
-void AttachToConsole() {
-  if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
-    unsigned int result = GetLastError();
-    // Was probably already attached.
-    if (result == ERROR_ACCESS_DENIED)
-      return;
-
-    if (result == ERROR_INVALID_HANDLE || result == ERROR_INVALID_HANDLE) {
-      // TODO(maruel): Walk up the process chain if deemed necessary.
-    }
-    // Continue even if the function call fails.
-    AllocConsole();
-  }
-  // http://support.microsoft.com/kb/105305
-  int raw_out = _open_osfhandle(
-      reinterpret_cast<intptr_t>(GetStdHandle(STD_OUTPUT_HANDLE)), _O_TEXT);
-  *stdout = *_fdopen(raw_out, "w");
-  setvbuf(stdout, NULL, _IONBF, 0);
-
-  int raw_err = _open_osfhandle(
-      reinterpret_cast<intptr_t>(GetStdHandle(STD_ERROR_HANDLE)), _O_TEXT);
-  *stderr = *_fdopen(raw_err, "w");
-  setvbuf(stderr, NULL, _IONBF, 0);
-
-  int raw_in = _open_osfhandle(
-      reinterpret_cast<intptr_t>(GetStdHandle(STD_INPUT_HANDLE)), _O_TEXT);
-  *stdin = *_fdopen(raw_in, "r");
-  setvbuf(stdin, NULL, _IONBF, 0);
-  // Fix all cout, wcout, cin, wcin, cerr, wcerr, clog and wclog.
-  std::ios::sync_with_stdio();
-}
 
 void OnNoMemory() {
   // Kill the process. This is important for security, since WebKit doesn't
@@ -167,6 +118,63 @@ void TimerExpiredTask::KillProcess() {
 
 }  // namespace
 
+void RouteStdioToConsole() {
+  // Don't change anything if stdout or stderr already point to a
+  // valid stream.
+  //
+  // If we are running under Buildbot or under Cygwin's default
+  // terminal (mintty), stderr and stderr will be pipe handles.  In
+  // that case, we don't want to open CONOUT$, because its output
+  // likely does not go anywhere.
+  //
+  // We don't use GetStdHandle() to check stdout/stderr here because
+  // it can return dangling IDs of handles that were never inherited
+  // by this process.  These IDs could have been reused by the time
+  // this function is called.  The CRT checks the validity of
+  // stdout/stderr on startup (before the handle IDs can be reused).
+  // _fileno(stdout) will return -2 (_NO_CONSOLE_FILENO) if stdout was
+  // invalid.
+  if (_fileno(stdout) >= 0 || _fileno(stderr) >= 0)
+    return;
+
+  if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
+    unsigned int result = GetLastError();
+    // Was probably already attached.
+    if (result == ERROR_ACCESS_DENIED)
+      return;
+    // Don't bother creating a new console for each child process if the
+    // parent process is invalid (eg: crashed).
+    if (result == ERROR_GEN_FAILURE)
+      return;
+    // Make a new console if attaching to parent fails with any other error.
+    // It should be ERROR_INVALID_HANDLE at this point, which means the browser
+    // was likely not started from a console.
+    AllocConsole();
+  }
+
+  // Arbitrary byte count to use when buffering output lines.  More
+  // means potential waste, less means more risk of interleaved
+  // log-lines in output.
+  enum { kOutputBufferSize = 64 * 1024 };
+
+  if (freopen("CONOUT$", "w", stdout)) {
+    setvbuf(stdout, NULL, _IOLBF, kOutputBufferSize);
+    // Overwrite FD 1 for the benefit of any code that uses this FD
+    // directly.  This is safe because the CRT allocates FDs 0, 1 and
+    // 2 at startup even if they don't have valid underlying Windows
+    // handles.  This means we won't be overwriting an FD created by
+    // _open() after startup.
+    _dup2(_fileno(stdout), 1);
+  }
+  if (freopen("CONOUT$", "w", stderr)) {
+    setvbuf(stderr, NULL, _IOLBF, kOutputBufferSize);
+    _dup2(_fileno(stderr), 2);
+  }
+
+  // Fix all cout, wcout, cin, wcin, cerr, wcerr, clog and wclog.
+  std::ios::sync_with_stdio();
+}
+
 ProcessId GetCurrentProcId() {
   return ::GetCurrentProcessId();
 }
@@ -190,7 +198,9 @@ bool OpenProcessHandle(ProcessId pid, ProcessHandle* handle) {
   // We try to limit privileges granted to the handle. If you need this
   // for test code, consider using OpenPrivilegedProcessHandle instead of
   // adding more privileges here.
-  ProcessHandle result = OpenProcess(PROCESS_DUP_HANDLE | PROCESS_TERMINATE,
+  ProcessHandle result = OpenProcess(PROCESS_TERMINATE |
+                                     PROCESS_QUERY_INFORMATION |
+                                     SYNCHRONIZE,
                                      FALSE, pid);
 
   if (result == NULL)
@@ -268,7 +278,7 @@ bool GetProcessIntegrityLevel(ProcessHandle process, IntegrityLevel *level) {
       GetLastError() != ERROR_INSUFFICIENT_BUFFER)
     return false;
 
-  scoped_array<char> token_label_bytes(new char[token_info_length]);
+  scoped_ptr<char[]> token_label_bytes(new char[token_info_length]);
   if (!token_label_bytes.get())
     return false;
 
@@ -309,6 +319,17 @@ bool LaunchProcess(const string16& cmdline,
   startup_info.dwFlags = STARTF_USESHOWWINDOW;
   startup_info.wShowWindow = options.start_hidden ? SW_HIDE : SW_SHOW;
 
+  if (options.stdin_handle || options.stdout_handle || options.stderr_handle) {
+    DCHECK(options.inherit_handles);
+    DCHECK(options.stdin_handle);
+    DCHECK(options.stdout_handle);
+    DCHECK(options.stderr_handle);
+    startup_info.dwFlags |= STARTF_USESTDHANDLES;
+    startup_info.hStdInput = options.stdin_handle;
+    startup_info.hStdOutput = options.stdout_handle;
+    startup_info.hStdError = options.stderr_handle;
+  }
+
   DWORD flags = 0;
 
   if (options.job_handle) {
@@ -320,14 +341,19 @@ bool LaunchProcess(const string16& cmdline,
     flags |= CREATE_BREAKAWAY_FROM_JOB;
   }
 
+  if (options.force_breakaway_from_job_)
+    flags |= CREATE_BREAKAWAY_FROM_JOB;
+
   base::win::ScopedProcessInformation process_info;
 
   if (options.as_user) {
     flags |= CREATE_UNICODE_ENVIRONMENT;
     void* enviroment_block = NULL;
 
-    if (!CreateEnvironmentBlock(&enviroment_block, options.as_user, FALSE))
+    if (!CreateEnvironmentBlock(&enviroment_block, options.as_user, FALSE)) {
+      DPLOG(ERROR);
       return false;
+    }
 
     BOOL launched =
         CreateProcessAsUser(options.as_user, NULL,
@@ -336,13 +362,16 @@ bool LaunchProcess(const string16& cmdline,
                             enviroment_block, NULL, &startup_info,
                             process_info.Receive());
     DestroyEnvironmentBlock(enviroment_block);
-    if (!launched)
+    if (!launched) {
+      DPLOG(ERROR);
       return false;
+    }
   } else {
     if (!CreateProcess(NULL,
                        const_cast<wchar_t*>(cmdline.c_str()), NULL, NULL,
                        options.inherit_handles, flags, NULL, NULL,
                        &startup_info, process_info.Receive())) {
+      DPLOG(ERROR);
       return false;
     }
   }
@@ -393,8 +422,7 @@ bool KillProcessById(ProcessId process_id, int exit_code, bool wait) {
                                FALSE,  // Don't inherit handle
                                process_id);
   if (!process) {
-    DLOG(ERROR) << "Unable to open process " << process_id << " : "
-                << GetLastError();
+    DLOG_GETLASTERROR(ERROR) << "Unable to open process " << process_id;
     return false;
   }
   bool ret = KillProcess(process, exit_code, wait);
@@ -477,9 +505,9 @@ bool KillProcess(ProcessHandle process, int exit_code, bool wait) {
   if (result && wait) {
     // The process may not end immediately due to pending I/O
     if (WAIT_OBJECT_0 != WaitForSingleObject(process, 60 * 1000))
-      DLOG(ERROR) << "Error waiting for process exit: " << GetLastError();
+      DLOG_GETLASTERROR(ERROR) << "Error waiting for process exit";
   } else if (!result) {
-    DLOG(ERROR) << "Unable to terminate process: " << GetLastError();
+    DLOG_GETLASTERROR(ERROR) << "Unable to terminate process";
   }
   return result;
 }
@@ -488,7 +516,7 @@ TerminationStatus GetTerminationStatus(ProcessHandle handle, int* exit_code) {
   DWORD tmp_exit_code = 0;
 
   if (!::GetExitCodeProcess(handle, &tmp_exit_code)) {
-    NOTREACHED();
+    DLOG_GETLASTERROR(FATAL) << "GetExitCodeProcess() failed";
     if (exit_code) {
       // This really is a random number.  We haven't received any
       // information about the exit code, presumably because this
@@ -513,10 +541,14 @@ TerminationStatus GetTerminationStatus(ProcessHandle handle, int* exit_code) {
       return TERMINATION_STATUS_STILL_RUNNING;
     }
 
-    DCHECK_EQ(WAIT_OBJECT_0, wait_result);
+    if (wait_result == WAIT_FAILED) {
+      DLOG_GETLASTERROR(ERROR) << "WaitForSingleObject() failed";
+    } else {
+      DCHECK_EQ(WAIT_OBJECT_0, wait_result);
 
-    // Strange, the process used 0x103 (STILL_ACTIVE) as exit code.
-    NOTREACHED();
+      // Strange, the process used 0x103 (STILL_ACTIVE) as exit code.
+      NOTREACHED();
+    }
 
     return TERMINATION_STATUS_ABNORMAL_TERMINATION;
   }
@@ -644,268 +676,6 @@ void EnsureProcessTerminated(ProcessHandle process) {
       base::TimeDelta::FromMilliseconds(kWaitInterval));
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// ProcesMetrics
-
-ProcessMetrics::ProcessMetrics(ProcessHandle process)
-    : process_(process),
-      processor_count_(base::SysInfo::NumberOfProcessors()),
-      last_time_(0),
-      last_system_time_(0) {
-}
-
-// static
-ProcessMetrics* ProcessMetrics::CreateProcessMetrics(ProcessHandle process) {
-  return new ProcessMetrics(process);
-}
-
-ProcessMetrics::~ProcessMetrics() { }
-
-size_t ProcessMetrics::GetPagefileUsage() const {
-  PROCESS_MEMORY_COUNTERS pmc;
-  if (GetProcessMemoryInfo(process_, &pmc, sizeof(pmc))) {
-    return pmc.PagefileUsage;
-  }
-  return 0;
-}
-
-// Returns the peak space allocated for the pagefile, in bytes.
-size_t ProcessMetrics::GetPeakPagefileUsage() const {
-  PROCESS_MEMORY_COUNTERS pmc;
-  if (GetProcessMemoryInfo(process_, &pmc, sizeof(pmc))) {
-    return pmc.PeakPagefileUsage;
-  }
-  return 0;
-}
-
-// Returns the current working set size, in bytes.
-size_t ProcessMetrics::GetWorkingSetSize() const {
-  PROCESS_MEMORY_COUNTERS pmc;
-  if (GetProcessMemoryInfo(process_, &pmc, sizeof(pmc))) {
-    return pmc.WorkingSetSize;
-  }
-  return 0;
-}
-
-// Returns the peak working set size, in bytes.
-size_t ProcessMetrics::GetPeakWorkingSetSize() const {
-  PROCESS_MEMORY_COUNTERS pmc;
-  if (GetProcessMemoryInfo(process_, &pmc, sizeof(pmc))) {
-    return pmc.PeakWorkingSetSize;
-  }
-  return 0;
-}
-
-bool ProcessMetrics::GetMemoryBytes(size_t* private_bytes,
-                                    size_t* shared_bytes) {
-  // PROCESS_MEMORY_COUNTERS_EX is not supported until XP SP2.
-  // GetProcessMemoryInfo() will simply fail on prior OS. So the requested
-  // information is simply not available. Hence, we will return 0 on unsupported
-  // OSes. Unlike most Win32 API, we don't need to initialize the "cb" member.
-  PROCESS_MEMORY_COUNTERS_EX pmcx;
-  if (private_bytes &&
-      GetProcessMemoryInfo(process_,
-                           reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmcx),
-                           sizeof(pmcx))) {
-    *private_bytes = pmcx.PrivateUsage;
-  }
-
-  if (shared_bytes) {
-    WorkingSetKBytes ws_usage;
-    if (!GetWorkingSetKBytes(&ws_usage))
-      return false;
-
-    *shared_bytes = ws_usage.shared * 1024;
-  }
-
-  return true;
-}
-
-void ProcessMetrics::GetCommittedKBytes(CommittedKBytes* usage) const {
-  MEMORY_BASIC_INFORMATION mbi = {0};
-  size_t committed_private = 0;
-  size_t committed_mapped = 0;
-  size_t committed_image = 0;
-  void* base_address = NULL;
-  while (VirtualQueryEx(process_, base_address, &mbi, sizeof(mbi)) ==
-      sizeof(mbi)) {
-    if (mbi.State == MEM_COMMIT) {
-      if (mbi.Type == MEM_PRIVATE) {
-        committed_private += mbi.RegionSize;
-      } else if (mbi.Type == MEM_MAPPED) {
-        committed_mapped += mbi.RegionSize;
-      } else if (mbi.Type == MEM_IMAGE) {
-        committed_image += mbi.RegionSize;
-      } else {
-        NOTREACHED();
-      }
-    }
-    void* new_base = (static_cast<BYTE*>(mbi.BaseAddress)) + mbi.RegionSize;
-    // Avoid infinite loop by weird MEMORY_BASIC_INFORMATION.
-    // If we query 64bit processes in a 32bit process, VirtualQueryEx()
-    // returns such data.
-    if (new_base <= base_address) {
-      usage->image = 0;
-      usage->mapped = 0;
-      usage->priv = 0;
-      return;
-    }
-    base_address = new_base;
-  }
-  usage->image = committed_image / 1024;
-  usage->mapped = committed_mapped / 1024;
-  usage->priv = committed_private / 1024;
-}
-
-bool ProcessMetrics::GetWorkingSetKBytes(WorkingSetKBytes* ws_usage) const {
-  size_t ws_private = 0;
-  size_t ws_shareable = 0;
-  size_t ws_shared = 0;
-
-  DCHECK(ws_usage);
-  memset(ws_usage, 0, sizeof(*ws_usage));
-
-  DWORD number_of_entries = 4096;  // Just a guess.
-  PSAPI_WORKING_SET_INFORMATION* buffer = NULL;
-  int retries = 5;
-  for (;;) {
-    DWORD buffer_size = sizeof(PSAPI_WORKING_SET_INFORMATION) +
-                        (number_of_entries * sizeof(PSAPI_WORKING_SET_BLOCK));
-
-    // if we can't expand the buffer, don't leak the previous
-    // contents or pass a NULL pointer to QueryWorkingSet
-    PSAPI_WORKING_SET_INFORMATION* new_buffer =
-        reinterpret_cast<PSAPI_WORKING_SET_INFORMATION*>(
-            realloc(buffer, buffer_size));
-    if (!new_buffer) {
-      free(buffer);
-      return false;
-    }
-    buffer = new_buffer;
-
-    // Call the function once to get number of items
-    if (QueryWorkingSet(process_, buffer, buffer_size))
-      break;  // Success
-
-    if (GetLastError() != ERROR_BAD_LENGTH) {
-      free(buffer);
-      return false;
-    }
-
-    number_of_entries = static_cast<DWORD>(buffer->NumberOfEntries);
-
-    // Maybe some entries are being added right now. Increase the buffer to
-    // take that into account.
-    number_of_entries = static_cast<DWORD>(number_of_entries * 1.25);
-
-    if (--retries == 0) {
-      free(buffer);  // If we're looping, eventually fail.
-      return false;
-    }
-  }
-
-  // On windows 2000 the function returns 1 even when the buffer is too small.
-  // The number of entries that we are going to parse is the minimum between the
-  // size we allocated and the real number of entries.
-  number_of_entries =
-      std::min(number_of_entries, static_cast<DWORD>(buffer->NumberOfEntries));
-  for (unsigned int i = 0; i < number_of_entries; i++) {
-    if (buffer->WorkingSetInfo[i].Shared) {
-      ws_shareable++;
-      if (buffer->WorkingSetInfo[i].ShareCount > 1)
-        ws_shared++;
-    } else {
-      ws_private++;
-    }
-  }
-
-  ws_usage->priv = ws_private * PAGESIZE_KB;
-  ws_usage->shareable = ws_shareable * PAGESIZE_KB;
-  ws_usage->shared = ws_shared * PAGESIZE_KB;
-  free(buffer);
-  return true;
-}
-
-static uint64 FileTimeToUTC(const FILETIME& ftime) {
-  LARGE_INTEGER li;
-  li.LowPart = ftime.dwLowDateTime;
-  li.HighPart = ftime.dwHighDateTime;
-  return li.QuadPart;
-}
-
-double ProcessMetrics::GetCPUUsage() {
-  FILETIME now;
-  FILETIME creation_time;
-  FILETIME exit_time;
-  FILETIME kernel_time;
-  FILETIME user_time;
-
-  GetSystemTimeAsFileTime(&now);
-
-  if (!GetProcessTimes(process_, &creation_time, &exit_time,
-                       &kernel_time, &user_time)) {
-    // We don't assert here because in some cases (such as in the Task Manager)
-    // we may call this function on a process that has just exited but we have
-    // not yet received the notification.
-    return 0;
-  }
-  int64 system_time = (FileTimeToUTC(kernel_time) + FileTimeToUTC(user_time)) /
-                        processor_count_;
-  int64 time = FileTimeToUTC(now);
-
-  if ((last_system_time_ == 0) || (last_time_ == 0)) {
-    // First call, just set the last values.
-    last_system_time_ = system_time;
-    last_time_ = time;
-    return 0;
-  }
-
-  int64 system_time_delta = system_time - last_system_time_;
-  int64 time_delta = time - last_time_;
-  DCHECK_NE(0U, time_delta);
-  if (time_delta == 0)
-    return 0;
-
-  // We add time_delta / 2 so the result is rounded.
-  int cpu = static_cast<int>((system_time_delta * 100 + time_delta / 2) /
-                             time_delta);
-
-  last_system_time_ = system_time;
-  last_time_ = time;
-
-  return cpu;
-}
-
-bool ProcessMetrics::GetIOCounters(IoCounters* io_counters) const {
-  return GetProcessIoCounters(process_, io_counters) != FALSE;
-}
-
-bool ProcessMetrics::CalculateFreeMemory(FreeMBytes* free) const {
-  const SIZE_T kTopAddress = 0x7F000000;
-  const SIZE_T kMegabyte = 1024 * 1024;
-  SIZE_T accumulated = 0;
-
-  MEMORY_BASIC_INFORMATION largest = {0};
-  UINT_PTR scan = 0;
-  while (scan < kTopAddress) {
-    MEMORY_BASIC_INFORMATION info;
-    if (!::VirtualQueryEx(process_, reinterpret_cast<void*>(scan),
-                          &info, sizeof(info)))
-      return false;
-    if (info.State == MEM_FREE) {
-      accumulated += info.RegionSize;
-      UINT_PTR end = scan + info.RegionSize;
-      if (info.RegionSize > largest.RegionSize)
-        largest = info;
-    }
-    scan += info.RegionSize;
-  }
-  free->largest = largest.RegionSize / kMegabyte;
-  free->largest_ptr = largest.BaseAddress;
-  free->total = accumulated / kMegabyte;
-  return true;
-}
-
 bool EnableLowFragmentationHeap() {
   HMODULE kernel32 = GetModuleHandle(L"kernel32.dll");
   HeapSetFn heap_set = reinterpret_cast<HeapSetFn>(GetProcAddress(
@@ -924,7 +694,7 @@ bool EnableLowFragmentationHeap() {
   // Gives us some extra space in the array in case a thread is creating heaps
   // at the same time we're querying them.
   static const int MARGIN = 8;
-  scoped_array<HANDLE> heaps(new HANDLE[number_heaps + MARGIN]);
+  scoped_ptr<HANDLE[]> heaps(new HANDLE[number_heaps + MARGIN]);
   number_heaps = GetProcessHeaps(number_heaps + MARGIN, heaps.get());
   if (!number_heaps)
     return false;
@@ -950,55 +720,8 @@ void EnableTerminationOnOutOfMemory() {
   std::set_new_handler(&OnNoMemory);
 }
 
-bool EnableInProcessStackDumping() {
-  // Add stack dumping support on exception on windows. Similar to OS_POSIX
-  // signal() handling in process_util_posix.cc.
-  g_previous_filter = SetUnhandledExceptionFilter(&StackDumpExceptionFilter);
-  AttachToConsole();
-  return true;
-}
-
 void RaiseProcessToHighPriority() {
   SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
-}
-
-// GetPerformanceInfo is not available on WIN2K.  So we'll
-// load it on-the-fly.
-const wchar_t kPsapiDllName[] = L"psapi.dll";
-typedef BOOL (WINAPI *GetPerformanceInfoFunction) (
-    PPERFORMANCE_INFORMATION pPerformanceInformation,
-    DWORD cb);
-
-// Beware of races if called concurrently from multiple threads.
-static BOOL InternalGetPerformanceInfo(
-    PPERFORMANCE_INFORMATION pPerformanceInformation, DWORD cb) {
-  static GetPerformanceInfoFunction GetPerformanceInfo_func = NULL;
-  if (!GetPerformanceInfo_func) {
-    HMODULE psapi_dll = ::GetModuleHandle(kPsapiDllName);
-    if (psapi_dll)
-      GetPerformanceInfo_func = reinterpret_cast<GetPerformanceInfoFunction>(
-          GetProcAddress(psapi_dll, "GetPerformanceInfo"));
-
-    if (!GetPerformanceInfo_func) {
-      // The function could be loaded!
-      memset(pPerformanceInformation, 0, cb);
-      return FALSE;
-    }
-  }
-  return GetPerformanceInfo_func(pPerformanceInformation, cb);
-}
-
-size_t GetSystemCommitCharge() {
-  // Get the System Page Size.
-  SYSTEM_INFO system_info;
-  GetSystemInfo(&system_info);
-
-  PERFORMANCE_INFORMATION info;
-  if (!InternalGetPerformanceInfo(&info, sizeof(info))) {
-    DLOG(ERROR) << "Failed to fetch internal performance info.";
-    return 0;
-  }
-  return (info.CommitTotal * system_info.dwPageSize) / 1024;
 }
 
 }  // namespace base

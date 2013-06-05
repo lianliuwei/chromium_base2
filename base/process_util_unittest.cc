@@ -8,28 +8,30 @@
 
 #include "base/command_line.h"
 #include "base/debug/alias.h"
-#include "base/eintr_wrapper.h"
-#include "base/file_path.h"
+#include "base/debug/stack_trace.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
+#include "base/posix/eintr_wrapper.h"
 #include "base/process_util.h"
 #include "base/test/multiprocess_test.h"
 #include "base/test/test_timeouts.h"
 #include "base/third_party/dynamic_annotations/dynamic_annotations.h"
 #include "base/threading/platform_thread.h"
+#include "base/threading/thread.h"
 #include "base/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
 
 #if defined(OS_LINUX)
-#include <malloc.h>
 #include <glib.h>
+#include <malloc.h>
 #include <sched.h>
 #endif
 #if defined(OS_POSIX)
-#include <errno.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/resource.h>
@@ -44,6 +46,8 @@
 #include <malloc/malloc.h>
 #include "base/process_util_unittest_mac.h"
 #endif
+
+using base::FilePath;
 
 namespace {
 
@@ -70,6 +74,12 @@ const int kExpectedStillRunningExitCode = 0x102;
 const int kExpectedKilledExitCode = 1;
 #else
 const int kExpectedStillRunningExitCode = 0;
+#endif
+
+#if defined(OS_WIN)
+// HeapQueryInformation function pointer.
+typedef BOOL (WINAPI* HeapQueryFn)  \
+    (HANDLE, HEAP_INFORMATION_CLASS, PVOID, SIZE_T, PSIZE_T);
 #endif
 
 // Sleeps until file filename is created.
@@ -104,7 +114,12 @@ base::TerminationStatus WaitForChildTermination(base::ProcessHandle handle,
     base::PlatformThread::Sleep(kInterval);
     waited += kInterval;
   } while (status == base::TERMINATION_STATUS_STILL_RUNNING &&
+// Waiting for more time for process termination on android devices.
+#if defined(OS_ANDROID)
+           waited < TestTimeouts::large_test_timeout());
+#else
            waited < TestTimeouts::action_max_timeout());
+#endif
 
   return status;
 }
@@ -244,7 +259,8 @@ MULTIPROCESS_TEST_MAIN(CrashingChildProcess) {
 
 // This test intentionally crashes, so we don't need to run it under
 // AddressSanitizer.
-#if defined(ADDRESS_SANITIZER)
+// TODO(jschuh): crbug.com/175753 Fix this in Win64 bots.
+#if defined(ADDRESS_SANITIZER) || (defined(OS_WIN) && defined(ARCH_CPU_X86_64))
 #define MAYBE_GetTerminationStatusCrash DISABLED_GetTerminationStatusCrash
 #else
 #define MAYBE_GetTerminationStatusCrash GetTerminationStatusCrash
@@ -279,7 +295,7 @@ TEST_F(ProcessUtilTest, MAYBE_GetTerminationStatusCrash) {
   base::CloseProcessHandle(handle);
 
   // Reset signal handlers back to "normal".
-  base::EnableInProcessStackDumping();
+  base::debug::EnableInProcessStackDumping();
   remove(signal_file.c_str());
 }
 #endif  // !defined(OS_MACOSX)
@@ -366,6 +382,40 @@ TEST_F(ProcessUtilTest, SetProcessBackgroundedSelf) {
   EXPECT_EQ(old_priority, new_priority);
 }
 
+#if defined(OS_LINUX) || defined(OS_ANDROID)
+TEST_F(ProcessUtilTest, GetSystemMemoryInfo) {
+  base::SystemMemoryInfoKB info;
+  EXPECT_TRUE(base::GetSystemMemoryInfo(&info));
+
+  // Ensure each field received a value.
+  EXPECT_GT(info.total, 0);
+  EXPECT_GT(info.free, 0);
+  EXPECT_GT(info.buffers, 0);
+  EXPECT_GT(info.cached, 0);
+  EXPECT_GT(info.active_anon, 0);
+  EXPECT_GT(info.inactive_anon, 0);
+  EXPECT_GT(info.active_file, 0);
+  EXPECT_GT(info.inactive_file, 0);
+
+  // All the values should be less than the total amount of memory.
+  EXPECT_LT(info.free, info.total);
+  EXPECT_LT(info.buffers, info.total);
+  EXPECT_LT(info.cached, info.total);
+  EXPECT_LT(info.active_anon, info.total);
+  EXPECT_LT(info.inactive_anon, info.total);
+  EXPECT_LT(info.active_file, info.total);
+  EXPECT_LT(info.inactive_file, info.total);
+
+#if defined(OS_CHROMEOS)
+  // Chrome OS exposes shmem.
+  EXPECT_GT(info.shmem, 0);
+  EXPECT_LT(info.shmem, info.total);
+  // Chrome unit tests are not run on actual Chrome OS hardware, so gem_objects
+  // and gem_size cannot be tested here.
+#endif
+}
+#endif  // defined(OS_LINUX) || defined(OS_ANDROID)
+
 // TODO(estade): if possible, port these 2 tests.
 #if defined(OS_WIN)
 TEST_F(ProcessUtilTest, EnableLFH) {
@@ -377,17 +427,29 @@ TEST_F(ProcessUtilTest, EnableLFH) {
     if (!no_debug_env || strcmp(no_debug_env, "1"))
       return;
   }
+  HMODULE kernel32 = GetModuleHandle(L"kernel32.dll");
+  ASSERT_TRUE(kernel32 != NULL);
+  HeapQueryFn heap_query = reinterpret_cast<HeapQueryFn>(GetProcAddress(
+      kernel32,
+      "HeapQueryInformation"));
+
+  // On Windows 2000, the function is not exported. This is not a reason to
+  // fail but we won't be able to retrieves information about the heap, so we
+  // should stop here.
+  if (heap_query == NULL)
+    return;
+
   HANDLE heaps[1024] = { 0 };
   unsigned number_heaps = GetProcessHeaps(1024, heaps);
   EXPECT_GT(number_heaps, 0u);
   for (unsigned i = 0; i < number_heaps; ++i) {
     ULONG flag = 0;
     SIZE_T length;
-    ASSERT_NE(0, HeapQueryInformation(heaps[i],
-                                      HeapCompatibilityInformation,
-                                      &flag,
-                                      sizeof(flag),
-                                      &length));
+    ASSERT_NE(0, heap_query(heaps[i],
+                            HeapCompatibilityInformation,
+                            &flag,
+                            sizeof(flag),
+                            &length));
     // If flag is 0, the heap is a standard heap that does not support
     // look-asides. If flag is 1, the heap supports look-asides. If flag is 2,
     // the heap is a low-fragmentation heap (LFH). Note that look-asides are not
@@ -417,7 +479,7 @@ TEST_F(ProcessUtilTest, CalcFreeMemory) {
 
   // Allocate 20M and check again. It should have gone down.
   const int kAllocMB = 20;
-  scoped_array<char> alloc(new char[kAllocMB * 1024 * 1024]);
+  scoped_ptr<char[]> alloc(new char[kAllocMB * 1024 * 1024]);
   size_t expected_total = free_mem1.total - kAllocMB;
   size_t expected_largest = free_mem1.largest;
 
@@ -481,9 +543,6 @@ TEST_F(ProcessUtilTest, LaunchAsUser) {
 // The following code tests the system implementation of malloc() thus no need
 // to test it under AddressSanitizer.
 TEST_F(ProcessUtilTest, MacMallocFailureDoesNotTerminate) {
-  // Install the OOM killer.
-  base::EnableTerminationOnOutOfMemory();
-
   // Test that ENOMEM doesn't crash via CrMallocErrorBreak two ways: the exit
   // code and lack of the error string. The number of bytes is one less than
   // MALLOC_ABSOLUTE_MAX_SIZE, more than which the system early-returns NULL and
@@ -491,7 +550,11 @@ TEST_F(ProcessUtilTest, MacMallocFailureDoesNotTerminate) {
   // EnableTerminationOnOutOfMemory() for more information.
   void* buf = NULL;
   ASSERT_EXIT(
-      buf = malloc(std::numeric_limits<size_t>::max() - (2 * PAGE_SIZE) - 1),
+      {
+        base::EnableTerminationOnOutOfMemory();
+
+        buf = malloc(std::numeric_limits<size_t>::max() - (2 * PAGE_SIZE) - 1);
+      },
       testing::KilledBySignal(SIGTRAP),
       "\\*\\*\\* error: can't allocate region.*"
           "(Terminating process due to a potential for future heap "
@@ -505,16 +568,20 @@ TEST_F(ProcessUtilTest, MacTerminateOnHeapCorruption) {
   // Assert that freeing an unallocated pointer will crash the process.
   char buf[3];
   asm("" : "=r" (buf));  // Prevent clang from being too smart.
-#if !defined(ADDRESS_SANITIZER)
-  ASSERT_DEATH(free(buf), "being freed.*"
-      "\\*\\*\\* set a breakpoint in malloc_error_break to debug.*"
-      "Terminating process due to a potential for future heap corruption");
-#else
+#if ARCH_CPU_64_BITS
+  // On 64 bit Macs, the malloc system automatically abort()s on heap corruption
+  // but does not output anything.
+  ASSERT_DEATH(free(buf), "");
+#elif defined(ADDRESS_SANITIZER)
   // AddressSanitizer replaces malloc() and prints a different error message on
   // heap corruption.
   ASSERT_DEATH(free(buf), "attempting free on address which "
       "was not malloc\\(\\)-ed");
-#endif  // !defined(ADDRESS_SANITIZER)
+#else
+  ASSERT_DEATH(free(buf), "being freed.*"
+      "\\*\\*\\* set a breakpoint in malloc_error_break to debug.*"
+      "Terminating process due to a potential for future heap corruption");
+#endif  // ARCH_CPU_64_BITS || defined(ADDRESS_SANITIZER)
 }
 
 #endif  // defined(OS_MACOSX)
@@ -589,7 +656,12 @@ int ProcessUtilTest::CountOpenFDsInChild() {
       HANDLE_EINTR(read(fds[0], &num_open_files, sizeof(num_open_files)));
   CHECK_EQ(bytes_read, static_cast<ssize_t>(sizeof(num_open_files)));
 
+#if defined(THREAD_SANITIZER) || defined(USE_HEAPCHECKER)
+  // Compiler-based ThreadSanitizer makes this test slow.
+  CHECK(base::WaitForSingleProcess(handle, base::TimeDelta::FromSeconds(3)));
+#else
   CHECK(base::WaitForSingleProcess(handle, base::TimeDelta::FromSeconds(1)));
+#endif
   base::CloseProcessHandle(handle);
   ret = HANDLE_EINTR(close(fds[0]));
   DPCHECK(ret == 0);
@@ -597,7 +669,15 @@ int ProcessUtilTest::CountOpenFDsInChild() {
   return num_open_files;
 }
 
-TEST_F(ProcessUtilTest, FDRemapping) {
+#if defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER)
+// ProcessUtilTest.FDRemapping is flaky when ran under xvfb-run on Precise.
+// The problem is 100% reproducible with both ASan and TSan.
+// See http://crbug.com/136720.
+#define MAYBE_FDRemapping DISABLED_FDRemapping
+#else
+#define MAYBE_FDRemapping FDRemapping
+#endif
+TEST_F(ProcessUtilTest, MAYBE_FDRemapping) {
   int fds_before = CountOpenFDsInChild();
 
   // open some dummy fds to make sure they don't propagate over to the
@@ -678,8 +758,8 @@ TEST_F(ProcessUtilTest, LaunchProcess) {
   EXPECT_EQ(0, setenv("BASE_TEST", "testing", 1 /* override */));
   EXPECT_EQ("testing\n", TestLaunchProcess(env_changes, no_clone_flags));
 
-  env_changes.push_back(std::make_pair(std::string("BASE_TEST"),
-                                       std::string("")));
+  env_changes.push_back(
+      std::make_pair(std::string("BASE_TEST"), std::string()));
   EXPECT_EQ("\n", TestLaunchProcess(env_changes, no_clone_flags));
 
   env_changes[0].second = "foo";
@@ -720,7 +800,7 @@ TEST_F(ProcessUtilTest, AlterEnvironment) {
   delete[] e;
 
   changes.clear();
-  changes.push_back(std::make_pair(std::string("A"), std::string("")));
+  changes.push_back(std::make_pair(std::string("A"), std::string()));
   e = base::AlterEnvironment(changes, empty);
   EXPECT_TRUE(e[0] == NULL);
   delete[] e;
@@ -739,7 +819,7 @@ TEST_F(ProcessUtilTest, AlterEnvironment) {
   delete[] e;
 
   changes.clear();
-  changes.push_back(std::make_pair(std::string("A"), std::string("")));
+  changes.push_back(std::make_pair(std::string("A"), std::string()));
   e = base::AlterEnvironment(changes, a2);
   EXPECT_TRUE(e[0] == NULL);
   delete[] e;
@@ -915,6 +995,28 @@ TEST_F(ProcessUtilTest, ParseProcStatCPU) {
 
   EXPECT_EQ(0, base::ParseProcStatCPU(kSelfStat));
 }
+
+// Disable on Android because base_unittests runs inside a Dalvik VM that
+// starts and stop threads (crbug.com/175563).
+#if !defined(OS_ANDROID)
+TEST_F(ProcessUtilTest, GetNumberOfThreads) {
+  const base::ProcessHandle current = base::GetCurrentProcessHandle();
+  const int initial_threads = base::GetNumberOfThreads(current);
+  ASSERT_GT(initial_threads, 0);
+  const int kNumAdditionalThreads = 10;
+  {
+    scoped_ptr<base::Thread> my_threads[kNumAdditionalThreads];
+    for (int i = 0; i < kNumAdditionalThreads; ++i) {
+      my_threads[i].reset(new base::Thread("GetNumberOfThreadsTest"));
+      my_threads[i]->Start();
+      ASSERT_EQ(base::GetNumberOfThreads(current), initial_threads + 1 + i);
+    }
+  }
+  // The Thread destructor will stop them.
+  ASSERT_EQ(initial_threads, base::GetNumberOfThreads(current));
+}
+#endif  // !defined(OS_ANDROID)
+
 #endif  // defined(OS_LINUX) || defined(OS_ANDROID)
 
 // TODO(port): port those unit tests.
@@ -967,12 +1069,13 @@ MULTIPROCESS_TEST_MAIN(process_util_test_die_immediately) {
 // Android doesn't implement set_new_handler, so we can't use the
 // OutOfMemoryTest cases.
 // OpenBSD does not support these tests either.
-// AddressSanitizer defines the malloc()/free()/etc. functions so that they
-// don't crash if the program is out of memory, so the OOM tests aren't supposed
-// to work.
+// AddressSanitizer and ThreadSanitizer define the malloc()/free()/etc.
+// functions so that they don't crash if the program is out of memory, so the
+// OOM tests aren't supposed to work.
 // TODO(vandebo) make this work on Windows too.
 #if !defined(OS_ANDROID) && !defined(OS_OPENBSD) && \
-    !defined(OS_WIN) && !defined(ADDRESS_SANITIZER)
+    !defined(OS_WIN) && \
+    !defined(ADDRESS_SANITIZER) && !defined(THREAD_SANITIZER)
 
 #if defined(USE_TCMALLOC)
 extern "C" {
@@ -1087,83 +1190,58 @@ TEST_F(OutOfMemoryDeathTest, ViaSharedLibraries) {
 // Android doesn't implement posix_memalign().
 #if defined(OS_POSIX) && !defined(OS_ANDROID)
 TEST_F(OutOfMemoryDeathTest, Posix_memalign) {
-  typedef int (*memalign_t)(void **, size_t, size_t);
-#if defined(OS_MACOSX)
-  // posix_memalign only exists on >= 10.6. Use dlsym to grab it at runtime
-  // because it may not be present in the SDK used for compilation.
-  memalign_t memalign =
-      reinterpret_cast<memalign_t>(dlsym(RTLD_DEFAULT, "posix_memalign"));
-#else
-  memalign_t memalign = posix_memalign;
-#endif  // defined(OS_MACOSX)
-  if (memalign) {
-    // Grab the return value of posix_memalign to silence a compiler warning
-    // about unused return values. We don't actually care about the return
-    // value, since we're asserting death.
-    ASSERT_DEATH({
-        SetUpInDeathAssert();
-        EXPECT_EQ(ENOMEM, memalign(&value_, 8, test_size_));
-      }, "");
-  }
+  // Grab the return value of posix_memalign to silence a compiler warning
+  // about unused return values. We don't actually care about the return
+  // value, since we're asserting death.
+  ASSERT_DEATH({
+      SetUpInDeathAssert();
+      EXPECT_EQ(ENOMEM, posix_memalign(&value_, 8, test_size_));
+    }, "");
 }
 #endif  // defined(OS_POSIX) && !defined(OS_ANDROID)
 
 #if defined(OS_MACOSX)
 
-// Purgeable zone tests (if it exists)
+// Purgeable zone tests
 
 TEST_F(OutOfMemoryDeathTest, MallocPurgeable) {
-  malloc_zone_t* zone = base::GetPurgeableZone();
-  if (zone)
-    ASSERT_DEATH({
-        SetUpInDeathAssert();
-        value_ = malloc_zone_malloc(zone, test_size_);
-      }, "");
+  malloc_zone_t* zone = malloc_default_purgeable_zone();
+  ASSERT_DEATH({
+      SetUpInDeathAssert();
+      value_ = malloc_zone_malloc(zone, test_size_);
+    }, "");
 }
 
 TEST_F(OutOfMemoryDeathTest, ReallocPurgeable) {
-  malloc_zone_t* zone = base::GetPurgeableZone();
-  if (zone)
-    ASSERT_DEATH({
-        SetUpInDeathAssert();
-        value_ = malloc_zone_realloc(zone, NULL, test_size_);
-      }, "");
+  malloc_zone_t* zone = malloc_default_purgeable_zone();
+  ASSERT_DEATH({
+      SetUpInDeathAssert();
+      value_ = malloc_zone_realloc(zone, NULL, test_size_);
+    }, "");
 }
 
 TEST_F(OutOfMemoryDeathTest, CallocPurgeable) {
-  malloc_zone_t* zone = base::GetPurgeableZone();
-  if (zone)
-    ASSERT_DEATH({
-        SetUpInDeathAssert();
-        value_ = malloc_zone_calloc(zone, 1024, test_size_ / 1024L);
-      }, "");
+  malloc_zone_t* zone = malloc_default_purgeable_zone();
+  ASSERT_DEATH({
+      SetUpInDeathAssert();
+      value_ = malloc_zone_calloc(zone, 1024, test_size_ / 1024L);
+    }, "");
 }
 
 TEST_F(OutOfMemoryDeathTest, VallocPurgeable) {
-  malloc_zone_t* zone = base::GetPurgeableZone();
-  if (zone)
-    ASSERT_DEATH({
-        SetUpInDeathAssert();
-        value_ = malloc_zone_valloc(zone, test_size_);
-      }, "");
+  malloc_zone_t* zone = malloc_default_purgeable_zone();
+  ASSERT_DEATH({
+      SetUpInDeathAssert();
+      value_ = malloc_zone_valloc(zone, test_size_);
+    }, "");
 }
 
 TEST_F(OutOfMemoryDeathTest, PosixMemalignPurgeable) {
-  malloc_zone_t* zone = base::GetPurgeableZone();
-
-  typedef void* (*zone_memalign_t)(malloc_zone_t*, size_t, size_t);
-  // malloc_zone_memalign only exists on >= 10.6. Use dlsym to grab it at
-  // runtime because it may not be present in the SDK used for compilation.
-  zone_memalign_t zone_memalign =
-      reinterpret_cast<zone_memalign_t>(
-        dlsym(RTLD_DEFAULT, "malloc_zone_memalign"));
-
-  if (zone && zone_memalign) {
-    ASSERT_DEATH({
-        SetUpInDeathAssert();
-        value_ = zone_memalign(zone, 8, test_size_);
-      }, "");
-  }
+  malloc_zone_t* zone = malloc_default_purgeable_zone();
+  ASSERT_DEATH({
+      SetUpInDeathAssert();
+      value_ = malloc_zone_memalign(zone, 8, test_size_);
+    }, "");
 }
 
 // Since these allocation functions take a signed size, it's possible that
