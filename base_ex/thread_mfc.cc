@@ -51,13 +51,13 @@ void SetMessagePumpFactory() {
 void MessageLoopStart() {
   DCHECK(IsMFCThread());
   DCHECK(MessageLoopMFC::current());
-  MessageLoopMFC::pump_ui()->Start();
+  MessageLoopMFC::current()->Start();
 }
 
 void MessageLoopQuit() {
   DCHECK(IsMFCThread());
   DCHECK(MessageLoopMFC::current());
-  MessageLoopMFC::pump_ui()->Start();
+  MessageLoopMFC::current()->Quit();
 }
 
 } //  base_ex
