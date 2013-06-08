@@ -8,6 +8,8 @@
 #include "base/process_util.h"
 #include "base/win/wrapped_window_proc.h"
 
+#include "base_ex/call_run_loop_hack.h"
+
 using namespace base;
 
 namespace {
@@ -133,7 +135,7 @@ void MessagePumpMFC::Start( Delegate* delegate ) {
   run_loop_ = new RunLoop();
   // Since the RunLoop was just created above, BeforeRun should be guaranteed to
   // return true (it only returns false if the RunLoop has been Quit already).
-  if (!run_loop_->BeforeRun())
+  if (!BeforeRun(run_loop_))
     NOTREACHED();
 
   delegate_ = delegate;
@@ -144,7 +146,7 @@ void MessagePumpMFC::Quit() {
   delegate_ = NULL;
 
   if (run_loop_) {
-    run_loop_->AfterRun();
+    AfterRun(run_loop_);
     delete run_loop_;
     run_loop_ = NULL;
   }
