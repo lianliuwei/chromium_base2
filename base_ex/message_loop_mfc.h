@@ -17,7 +17,7 @@ public:
   static MessageLoopMFC* current();
 
   // the UI message loop is handled by be Embedding side. So Run() should
-  // never be called. Instead use Start(), which will forward all the native 
+  // never be called. Instead use Start(), which will forward all the native
   // UI events to the native message loop.
   void Start();
 
