@@ -5,11 +5,13 @@
 #include "base/time.h"
 #include "base/run_loop.h"
 
+#include "base_ex/base_ex_export.h"
+
 namespace base_ex {
 
 // This class implements a MessagePump needed for TYPE_EMBED MessageLoops on
 // Windows platform.
-class MessagePumpMFC : public base::MessagePump {
+class BASE_EX_EXPORT MessagePumpMFC : public base::MessagePump {
 public:
   MessagePumpMFC();
   virtual ~MessagePumpMFC();

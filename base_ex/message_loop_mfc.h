@@ -2,11 +2,13 @@
 
 #include "base/message_loop.h"
 
+#include "base_ex/base_ex_export.h"
+
 namespace base_ex {
 
 class MessagePumpMFC;
 
-class MessageLoopMFC : public base::MessageLoop {
+class BASE_EX_EXPORT MessageLoopMFC : public base::MessageLoop {
 public:
   friend void MessageLoopStart();
   friend void MessageLoopQuit();
@@ -23,9 +25,8 @@ public:
 
   // match Start();
   void Quit();
-protected:
 
-  // TODO(rvargas): Make this platform independent.
+protected:
   MessagePumpMFC* pump_ui();
 };
 
