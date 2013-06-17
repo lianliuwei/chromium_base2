@@ -1,5 +1,7 @@
 #pragma once
 
+class TestView;
+
 class MainFrame : public CFrameWnd {
 public:
   MainFrame();
@@ -12,6 +14,8 @@ private:
   afx_msg void OnClose();
   DECLARE_MESSAGE_MAP()
 
-private:  
+private:
+  TestView* test_view_;
+
   DECLARE_DYNAMIC(MainFrame)
 };

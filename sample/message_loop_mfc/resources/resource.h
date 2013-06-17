@@ -8,6 +8,12 @@
 #define IDR_RIBBONTYPE                  129
 #define ID_CANCEL_EDIT_CNTR             32768
 #define ID_VIEW_WORKSPACE               59394
+#define ID_VIEW_TEST                    1000
+#define IDD_TESTVIEW                    2000
+#define IDC_LIST_RESULT                 2001
+#define IDC_BUTTON_START                2002
+#define IDC_BUTTON_STOP                 2003
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

@@ -1,0 +1,99 @@
+// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include <Windows.h>
+#include "afxres.h"
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE 
+BEGIN
+    "stress_resource.h\0"
+END
+
+2 TEXTINCLUDE 
+BEGIN
+    "#include <Windows.h>\r\n"
+    "#include ""afxres.h""\r\0"
+END
+
+3 TEXTINCLUDE 
+BEGIN
+    "\r\0"
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_TESTVIEW DIALOGEX 0, 0, 312, 176
+STYLE DS_SETFONT | WS_CHILD
+FONT 8, "Ms Shell Dlg", 0, 0, 0x1
+BEGIN
+    LTEXT           "Listen",IDC_STATIC,48,29,57,8,0,WS_EX_RIGHT
+    LTEXT           "CAN",IDC_STATIC,55,49,50,8,0,WS_EX_RIGHT
+    LTEXT           "stress",IDC_STATIC,14,70,86,8,0,WS_EX_RIGHT
+    LTEXT           "disturb",IDC_STATIC,15,91,90,8,0,WS_EX_RIGHT
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO 
+BEGIN
+    IDD_TESTVIEW, DIALOG
+    BEGIN
+        RIGHTMARGIN, 302
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+
