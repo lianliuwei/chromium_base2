@@ -9,8 +9,9 @@
 #include "base/logging.h"
 #include "base/at_exit.h"
 
-#include "ui/main_frame.h"
+#include "base_ex/thread_mfc.h"
 
+#include "ui/main_frame.h"
 
 BEGIN_MESSAGE_MAP(App, CWinApp)
   ON_COMMAND(ID_HELP, &CWinApp::OnHelp)
@@ -35,6 +36,9 @@ BOOL App::InitInstance() {
   InitCommonControlsEx(&InitCtrls);
 
   CWinApp::InitInstance();
+
+  // Mark this thread as MFC thread.
+  base_ex::InitMFCThread();
 
   // Initialize OLE libraries
   if (!AfxOleInit()) {

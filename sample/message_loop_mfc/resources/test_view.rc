@@ -48,7 +48,6 @@ LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 #pragma code_page(1252)
 #endif //_WIN32
 
-
 /////////////////////////////////////////////////////////////////////////////
 //
 // Dialog
@@ -58,10 +57,9 @@ IDD_TESTVIEW DIALOGEX 0, 0, 312, 176
 STYLE DS_SETFONT | WS_CHILD
 FONT 8, "Ms Shell Dlg", 0, 0, 0x1
 BEGIN
-    LTEXT           "Listen",IDC_STATIC,48,29,57,8,0,WS_EX_RIGHT
-    LTEXT           "CAN",IDC_STATIC,55,49,50,8,0,WS_EX_RIGHT
-    LTEXT           "stress",IDC_STATIC,14,70,86,8,0,WS_EX_RIGHT
-    LTEXT           "disturb",IDC_STATIC,15,91,90,8,0,WS_EX_RIGHT
+    PUSHBUTTON      "start",IDC_BUTTON_START,132,23,50,14
+    PUSHBUTTON      "stop",IDC_BUTTON_STOP,132,51,50,14
+    LISTBOX         IDC_LIST_RESULT,27,18,97,106, LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
 END
 
 
@@ -79,8 +77,6 @@ BEGIN
     END
 END
 #endif    // APSTUDIO_INVOKED
-
-
 
 #endif    // English (U.S.) resources
 /////////////////////////////////////////////////////////////////////////////
