@@ -168,16 +168,16 @@ void MessagePumpMFC::InitMessageWnd() {
 
 // static
 LRESULT CALLBACK MessagePumpMFC::WndProcThunk(
-  HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-    switch (message) {
-  case kMsgHaveWork:
-    reinterpret_cast<MessagePumpMFC*>(wparam)->HandleWorkMessage();
-    break;
-  case WM_TIMER:
-    reinterpret_cast<MessagePumpMFC*>(wparam)->HandleTimerMessage();
-    break;
-    }
-    return DefWindowProc(hwnd, message, wparam, lparam);    
+    HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+  switch (message) {
+    case kMsgHaveWork:
+      reinterpret_cast<MessagePumpMFC*>(wparam)->HandleWorkMessage();
+      break;
+    case WM_TIMER:
+      reinterpret_cast<MessagePumpMFC*>(wparam)->HandleTimerMessage();
+      break;
+  }
+  return DefWindowProc(hwnd, message, wparam, lparam);
 }
 
 void MessagePumpMFC::HandleWorkMessage() {
