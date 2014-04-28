@@ -30,14 +30,13 @@ def _GetDataFilesForTestSuite(test_suite_basename):
   # Ideally, we'd just push all test data. However, it has >100MB, and a lot
   # of the files are not relevant (some are used for browser_tests, others for
   # features not supported, etc..).
-  if test_suite_basename in ['base_unittests', 'sql_unittests', 'unit_tests']:
+  if test_suite_basename == 'base_unittests':
+    return [
+        'base/test/data/',
+    ]
+  elif test_suite_basename == 'unit_tests':
     test_files = [
-        'base/data/file_util_unittest',
-        'base/data/json/bom_feff.json',
-        'base/prefs/test/data/pref_service',
-        'base/test/data/serializer_nested_test.json',
-        'base/test/data/serializer_test.json',
-        'base/test/data/serializer_test_nowhitespace.json',
+        'base/test/data/',
         'chrome/test/data/download-test1.lib',
         'chrome/test/data/extensions/bad_magic.crx',
         'chrome/test/data/extensions/good.crx',
@@ -61,27 +60,22 @@ def _GetDataFilesForTestSuite(test_suite_basename):
         'chrome/test/data/History/',
         'chrome/test/data/json_schema_validator/',
         'chrome/test/data/pref_service/',
+        'chrome/test/data/simple_open_search.xml',
         'chrome/test/data/top_sites/',
         'chrome/test/data/web_app_info/',
         'chrome/test/data/web_database',
         'chrome/test/data/webui/',
-        'chrome/test/data/zip',
         'chrome/third_party/mock4js/',
-        'content/browser/gpu/software_rendering_list.json',
-        'net/data/cache_tests/insert_load1',
-        'net/data/cache_tests/dirty_entry5',
-        'net/data/ssl/certificates/',
+        'net/data/ssl/certificates',
         'third_party/accessibility-developer-tools/gen/axs_testing.js',
-        'ui/base/test/data/data_pack_unittest',
+        'third_party/zlib/google/test/data',
     ]
-    if test_suite_basename == 'unit_tests':
-      test_files += ['chrome/test/data/simple_open_search.xml']
-      # The following are spell check data. Now only list the data under
-      # third_party/hunspell_dictionaries which are used by unit tests.
-      old_cwd = os.getcwd()
-      os.chdir(constants.CHROME_DIR)
-      test_files += glob.glob('third_party/hunspell_dictionaries/*.bdic')
-      os.chdir(old_cwd)
+    # The following are spell check data. Now only list the data under
+    # third_party/hunspell_dictionaries which are used by unit tests.
+    old_cwd = os.getcwd()
+    os.chdir(constants.CHROME_DIR)
+    test_files += glob.glob('third_party/hunspell_dictionaries/*.bdic')
+    os.chdir(old_cwd)
     return test_files
   elif test_suite_basename == 'media_unittests':
     return [
@@ -96,9 +90,10 @@ def _GetDataFilesForTestSuite(test_suite_basename):
         'net/data/ftp',
         'net/data/proxy_resolver_v8_tracing_unittest',
         'net/data/proxy_resolver_v8_unittest',
+        'net/data/proxy_script_fetcher_unittest',
         'net/data/ssl/certificates',
+        'net/data/test.html',
         'net/data/url_request_unittest/',
-        'net/data/proxy_script_fetcher_unittest'
         ]
   elif test_suite_basename == 'ui_tests':
     return [
@@ -106,16 +101,16 @@ def _GetDataFilesForTestSuite(test_suite_basename):
         'chrome/test/data/json2.js',
         'chrome/test/data/sunspider',
         ]
+  elif test_suite_basename == 'ui_unittests':
+    return [
+        'ui/base/test/data/data_pack_unittest/truncated-header.pak',
+    ]
   elif test_suite_basename == 'content_unittests':
     return [
         'content/test/data/gpu/webgl_conformance_test_expectations.txt',
         'net/data/ssl/certificates/',
-        'webkit/data/dom_storage/webcore_test_database.localstorage',
         'third_party/hyphen/hyph_en_US.dic',
-        ]
-  elif test_suite_basename == 'media_unittests':
-    return [
-        'media/test/data',
+        'webkit/data/dom_storage/webcore_test_database.localstorage',
         ]
   elif test_suite_basename == 'cc_perftests':
     return [
@@ -127,7 +122,105 @@ def _GetDataFilesForTestSuite(test_suite_basename):
     ]
   elif test_suite_basename == 'content_browsertests':
     return [
-      'content/test/data',
+        'content/test/data/content-disposition-inline.html',
+        'content/test/data/title1.html',
+        'content/test/data/post_message2.html',
+        'content/test/data/content-sniffer-test0.html.mock-http-headers',
+        'content/test/data/content-sniffer-test1.html.mock-http-headers',
+        'content/test/data/speech',
+        'content/test/data/page404.html.mock-http-headers',
+        'content/test/data/content-sniffer-test3.html',
+        'content/test/data/post_message.html',
+        'content/test/data/remove_frame_on_unload.html',
+        'content/test/data/cross-origin-redirect-blocked.html',
+        'content/test/data/prerender',
+        'content/test/data/device_orientation',
+        'content/test/data/content-disposition-empty.html',
+        'content/test/data/workers',
+        'content/test/data/content-sniffer-test3.html.mock-http-headers',
+        'content/test/data/content-sniffer-test0.html',
+        'content/test/data/browser_plugin_title_change.html',
+        'content/test/data/android',
+        'content/test/data/page404.html',
+        'content/test/data/dynamic2.html',
+        'content/test/data/browser_plugin_embedder.html',
+        'content/test/data/indexeddb',
+        'content/test/data/content-disposition-inline.html.mock-http-headers',
+        'content/test/data/nosniff-test.html',
+        'content/test/data/title3.html',
+        'content/test/data/browser_plugin_post_message_guest.html',
+        'content/test/data/content-disposition-empty.html.mock-http-headers',
+        'content/test/data/session_history',
+        'content/test/data/browser_plugin_naming_guest.html',
+        'content/test/data/overscroll_navigation.html',
+        'content/test/data/simple_database.html',
+        'content/test/data/gtk_key_bindings_test_gtkrc',
+        'content/test/data/browser_plugin_embedder_guest_unresponsive.html',
+        'content/test/data/sync_xmlhttprequest.html',
+        'content/test/data/content-sniffer-test3-frame.txt.mock-http-headers',
+        'content/test/data/frame_tree',
+        'content/test/data/browser_plugin_naming_embedder.html',
+        'content/test/data/content-sniffer-test2.html.mock-http-headers',
+        'content/test/data/sync_xmlhttprequest_disallowed.html',
+        'content/test/data/rwh_simple.html',
+        'content/test/data/title2.html',
+        'content/test/data/webkit',
+        'content/test/data/content-sniffer-test1.html',
+        'content/test/data/download',
+        'content/test/data/content-sniffer-test2.html',
+        'content/test/data/simple_page.html',
+        'content/test/data/google.mht',
+        'content/test/data/site_per_process_main.html',
+        'content/test/data/gpu',
+        'content/test/data/onunload_cookie.html',
+        'content/test/data/textinput',
+        'content/test/data/navigate_opener.html',
+        'content/test/data/dom_storage',
+        'content/test/data/sync_xmlhttprequest_during_unload.html',
+        'content/test/data/browser_plugin_dragging.html',
+        'content/test/data/fileapi',
+        'content/test/data/npapi',
+        'content/test/data/nosniff-test.html.mock-http-headers',
+        'content/test/data/accessibility',
+        'content/test/data/dynamic1.html',
+        'content/test/data/browser_plugin_focus_child.html',
+        'content/test/data/rwhv_compositing_animation.html',
+        'content/test/data/click-noreferrer-links.html',
+        'content/test/data/browser_plugin_focus.html',
+        'content/test/data/media',
+        'third_party/webgl_conformance',
+    ]
+  return []
+
+
+def _GetOptionalDataFilesForTestSuite(test_suite_basename):
+  """Returns a list of data files/dirs that are pushed if present.
+
+  Args:
+    test_suite_basename: The test suite basename for which to return file paths.
+
+  Returns:
+    A list of test file and directory paths.
+  """
+  if test_suite_basename == 'content_browsertests':
+    # See http://crbug.com/105104 for why these are needed.
+    return [
+        'third_party/WebKit/LayoutTests/fast/events',
+        'third_party/WebKit/LayoutTests/fast/files',
+        'third_party/WebKit/LayoutTests/fast/filesystem',
+        'third_party/WebKit/LayoutTests/fast/js/resources',
+        'third_party/WebKit/LayoutTests/fast/workers',
+        'third_party/WebKit/LayoutTests/http/tests',
+        'third_party/WebKit/LayoutTests/storage/indexeddb',
+        'third_party/WebKit/LayoutTests/media',
+        'content/test/data/layout_tests/LayoutTests/fast/events',
+        'content/test/data/layout_tests/LayoutTests/fast/files',
+        'content/test/data/layout_tests/LayoutTests/fast/filesystem',
+        'content/test/data/layout_tests/LayoutTests/fast/js/resources',
+        'content/test/data/layout_tests/LayoutTests/fast/workers',
+        'content/test/data/layout_tests/LayoutTests/http/tests',
+        'content/test/data/layout_tests/LayoutTests/storage/indexeddb',
+        'content/test/data/layout_tests/LayoutTests/media',
     ]
   return []
 
@@ -194,9 +287,8 @@ class TestRunner(base_test_runner.BaseTestRunner):
           self.tool,
           symbols_dir)
 
-
-  def StripAndCopyFiles(self):
-    """Strips and copies the required data files for the test suite."""
+  #override
+  def PushDependencies(self):
     self.test_package.StripAndCopyExecutable()
     self.test_package.PushDataAndPakFiles()
     self.tool.CopyFiles()
@@ -206,6 +298,13 @@ class TestRunner(base_test_runner.BaseTestRunner):
       self.adb.WaitForSdCardReady(20)
       for data in test_data:
         self.CopyTestData([data], self.adb.GetExternalStorage())
+    optional_test_data = _GetOptionalDataFilesForTestSuite(
+        self.test_package.test_suite_basename)
+    if optional_test_data:
+      self.adb.WaitForSdCardReady(20)
+      for data in optional_test_data:
+        if os.path.exists(data):
+          self.CopyTestData([data], self.adb.GetExternalStorage())
     if self.test_package.test_suite_basename == 'webkit_unit_tests':
       self.PushWebKitUnitTestsData()
 
@@ -275,7 +374,6 @@ class TestRunner(base_test_runner.BaseTestRunner):
   def SetUp(self):
     """Sets up necessary test enviroment for the test suite."""
     super(TestRunner, self).SetUp()
-    self.StripAndCopyFiles()
     if _TestSuiteRequiresMockTestServer(self.test_package.test_suite_basename):
       self.LaunchChromeTestServerSpawner()
     self.tool.SetupEnvironment()

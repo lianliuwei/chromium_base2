@@ -447,11 +447,7 @@ const LogSeverity LOG_0 = LOG_ERROR;
 #define PLOG_IF(severity, condition) \
   LAZY_STREAM(PLOG_STREAM(severity), LOG_IS_ON(severity) && (condition))
 
-// http://crbug.com/16512 is open for a real fix for this.  For now, Windows
-// uses OFFICIAL_BUILD and other platforms use the branding flag when NDEBUG is
-// defined.
-#if ( defined(OS_WIN) && defined(OFFICIAL_BUILD)) || \
-    (!defined(OS_WIN) && defined(NDEBUG) && defined(GOOGLE_CHROME_BUILD))
+#if defined(OFFICIAL_BUILD) && defined(NDEBUG)
 #define LOGGING_IS_OFFICIAL_BUILD 1
 #else
 #define LOGGING_IS_OFFICIAL_BUILD 0
@@ -652,7 +648,8 @@ enum { DEBUG_MODE = ENABLE_DLOG };
 
 #if defined(NDEBUG)
 
-BASE_EXPORT extern DcheckState g_dcheck_state;
+BASE_EXPORT DcheckState get_dcheck_state();
+BASE_EXPORT void set_dcheck_state(DcheckState state);
 
 #if defined(DCHECK_ALWAYS_ON)
 
@@ -669,7 +666,7 @@ const LogSeverity LOG_DCHECK = LOG_FATAL;
 #define COMPACT_GOOGLE_LOG_DCHECK COMPACT_GOOGLE_LOG_ERROR_REPORT
 const LogSeverity LOG_DCHECK = LOG_ERROR_REPORT;
 #define DCHECK_IS_ON()                                                  \
-  ((::logging::g_dcheck_state ==                                        \
+  ((::logging::get_dcheck_state() ==                                        \
     ::logging::ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS) &&        \
    LOG_IS_ON(DCHECK))
 

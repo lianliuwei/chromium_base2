@@ -47,7 +47,7 @@ def memoize(default=None):
 
 @memoize()
 def IsWindows():
-  return sys.platform.startswith('win') or sys.platform == 'cygwin'
+  return sys.platform in ['win32', 'cygwin']
 
 
 @memoize()
@@ -57,7 +57,7 @@ def IsLinux():
 
 @memoize()
 def IsMac():
-  return sys.platform.startswith('darwin')
+  return sys.platform == 'darwin'
 
 
 @memoize()
@@ -110,6 +110,8 @@ def builder():
     generator = os.environ['GYP_GENERATORS'].split(',')[0]
     if generator.endswith('-android'):
       return generator.split('-')[0]
+    elif generator.endswith('-ninja'):
+      return 'ninja'
     else:
       return generator
   else:
@@ -121,7 +123,7 @@ def builder():
     elif IsWindows():
       return 'msvs'
     elif IsLinux():
-      return 'make'
+      return 'ninja'
     elif IsMac():
       return 'xcode'
     else:
@@ -140,11 +142,13 @@ def get_landmines(target):
       builder() == 'ninja'):
     add('Need to clobber winja goma due to backend cwd cache fix.')
   if platform() == 'android':
-    add('Clobber: java files renamed in crrev.com/12880022')
+    add('Clobber: Resources removed in r195014 require clobber.')
   if platform() == 'win' and builder() == 'ninja':
     add('Compile on cc_unittests fails due to symbols removed in r185063.')
   if platform() == 'linux' and builder() == 'ninja':
     add('Builders switching from make to ninja will clobber on this.')
+  if platform() == 'mac':
+    add('Switching from bundle to unbundled dylib (issue 14743002).')
 
   return landmines
 
@@ -163,9 +167,7 @@ def get_target_build_dir(build_tool, target, is_iphone=False):
   if build_tool == 'xcode':
     ret = os.path.join(SRC_DIR, 'xcodebuild',
         target + ('-iphoneos' if is_iphone else ''))
-  elif build_tool == 'make':
-    ret = os.path.join(SRC_DIR, 'out', target)
-  elif build_tool == 'ninja':
+  elif build_tool in ['make', 'ninja', 'ninja-ios']:  # TODO: Remove ninja-ios.
     ret = os.path.join(SRC_DIR, 'out', target)
   elif build_tool in ['msvs', 'vs', 'ib']:
     ret = os.path.join(SRC_DIR, 'build', target)

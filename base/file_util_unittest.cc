@@ -310,28 +310,6 @@ static const struct dir_case {
 #endif
 };
 
-TEST_F(FileUtilTest, CountFilesCreatedAfter) {
-  FilePath file_name =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("f.txt"));
-  CreateTextFile(file_name, L"test");
-
-  base::PlatformFileInfo info;
-  file_util::GetFileInfo(file_name, &info);
-  base::Time file_time = info.creation_time;
-
-  base::TimeDelta two_secs = base::TimeDelta::FromSeconds(2);
-  base::Time after = file_time + two_secs;
-  EXPECT_EQ(0, file_util::CountFilesCreatedAfter(temp_dir_.path(), after));
-
-  base::Time before = file_time - two_secs;
-  EXPECT_EQ(1, file_util::CountFilesCreatedAfter(temp_dir_.path(), before));
-
-  // After deleting the file, shouldn't find it any more.
-  EXPECT_TRUE(file_util::Delete(file_name, false));
-  EXPECT_EQ(0, file_util::CountFilesCreatedAfter(temp_dir_.path(), before));
-  EXPECT_EQ(0, file_util::CountFilesCreatedAfter(temp_dir_.path(), after));
-}
-
 TEST_F(FileUtilTest, FileAndDirectorySize) {
   // Create three files of 20, 30 and 3 chars (utf8). ComputeDirectorySize
   // should return 53 bytes.
@@ -358,13 +336,6 @@ TEST_F(FileUtilTest, FileAndDirectorySize) {
 
   int64 computed_size = file_util::ComputeDirectorySize(temp_dir_.path());
   EXPECT_EQ(size_f1 + size_f2 + 3, computed_size);
-
-  computed_size =
-      file_util::ComputeFilesSize(temp_dir_.path(), FPL("The file*"));
-  EXPECT_EQ(size_f1, computed_size);
-
-  computed_size = file_util::ComputeFilesSize(temp_dir_.path(), FPL("bla*"));
-  EXPECT_EQ(0, computed_size);
 }
 
 TEST_F(FileUtilTest, NormalizeFilePathBasic) {
@@ -1560,10 +1531,8 @@ typedef PlatformTest ReadOnlyFileUtilTest;
 
 TEST_F(ReadOnlyFileUtilTest, ContentsEqual) {
   FilePath data_dir;
-  ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &data_dir));
-  data_dir = data_dir.Append(FILE_PATH_LITERAL("base"))
-                     .Append(FILE_PATH_LITERAL("data"))
-                     .Append(FILE_PATH_LITERAL("file_util_unittest"));
+  ASSERT_TRUE(PathService::Get(base::DIR_TEST_DATA, &data_dir));
+  data_dir = data_dir.AppendASCII("file_util");
   ASSERT_TRUE(file_util::PathExists(data_dir));
 
   FilePath original_file =
@@ -1609,10 +1578,8 @@ TEST_F(ReadOnlyFileUtilTest, ContentsEqual) {
 
 TEST_F(ReadOnlyFileUtilTest, TextContentsEqual) {
   FilePath data_dir;
-  ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &data_dir));
-  data_dir = data_dir.Append(FILE_PATH_LITERAL("base"))
-                     .Append(FILE_PATH_LITERAL("data"))
-                     .Append(FILE_PATH_LITERAL("file_util_unittest"));
+  ASSERT_TRUE(PathService::Get(base::DIR_TEST_DATA, &data_dir));
+  data_dir = data_dir.AppendASCII("file_util");
   ASSERT_TRUE(file_util::PathExists(data_dir));
 
   FilePath original_file =
@@ -1879,15 +1846,14 @@ TEST_F(FileUtilTest, FileEnumeratorTest) {
 
   // create the files
   FilePath dir2file = dir2.Append(FILE_PATH_LITERAL("dir2file.txt"));
-  CreateTextFile(dir2file, L"");
+  CreateTextFile(dir2file, std::wstring());
   FilePath dir2innerfile = dir2inner.Append(FILE_PATH_LITERAL("innerfile.txt"));
-  CreateTextFile(dir2innerfile, L"");
+  CreateTextFile(dir2innerfile, std::wstring());
   FilePath file1 = temp_dir_.path().Append(FILE_PATH_LITERAL("file1.txt"));
-  CreateTextFile(file1, L"");
-  FilePath file2_rel =
-      dir2.Append(FilePath::kParentDirectory)
-          .Append(FILE_PATH_LITERAL("file2.txt"));
-  CreateTextFile(file2_rel, L"");
+  CreateTextFile(file1, std::wstring());
+  FilePath file2_rel = dir2.Append(FilePath::kParentDirectory)
+      .Append(FILE_PATH_LITERAL("file2.txt"));
+  CreateTextFile(file2_rel, std::wstring());
   FilePath file2_abs = temp_dir_.path().Append(FILE_PATH_LITERAL("file2.txt"));
 
   // Only enumerate files.
@@ -1993,50 +1959,6 @@ TEST_F(FileUtilTest, AppendToFile) {
 
   const std::wstring read_content = ReadTextFile(foobar);
   EXPECT_EQ(L"hellohello", read_content);
-}
-
-TEST_F(FileUtilTest, Contains) {
-  FilePath data_dir =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("FilePathTest"));
-
-  // Create a fresh, empty copy of this directory.
-  if (file_util::PathExists(data_dir)) {
-    ASSERT_TRUE(file_util::Delete(data_dir, true));
-  }
-  ASSERT_TRUE(file_util::CreateDirectory(data_dir));
-
-  FilePath foo(data_dir.Append(FILE_PATH_LITERAL("foo")));
-  FilePath bar(foo.Append(FILE_PATH_LITERAL("bar.txt")));
-  FilePath baz(data_dir.Append(FILE_PATH_LITERAL("baz.txt")));
-  FilePath foobar(data_dir.Append(FILE_PATH_LITERAL("foobar.txt")));
-
-  // Annoyingly, the directories must actually exist in order for realpath(),
-  // which Contains() relies on in posix, to work.
-  ASSERT_TRUE(file_util::CreateDirectory(foo));
-  std::string data("hello");
-  ASSERT_TRUE(file_util::WriteFile(bar, data.c_str(), data.length()));
-  ASSERT_TRUE(file_util::WriteFile(baz, data.c_str(), data.length()));
-  ASSERT_TRUE(file_util::WriteFile(foobar, data.c_str(), data.length()));
-
-  EXPECT_TRUE(file_util::ContainsPath(foo, bar));
-  EXPECT_FALSE(file_util::ContainsPath(foo, baz));
-  EXPECT_FALSE(file_util::ContainsPath(foo, foobar));
-  EXPECT_FALSE(file_util::ContainsPath(foo, foo));
-
-  // Platform-specific concerns.
-  FilePath foo_caps(data_dir.Append(FILE_PATH_LITERAL("FOO")));
-#if defined(OS_WIN)
-  EXPECT_TRUE(file_util::ContainsPath(foo,
-      foo_caps.Append(FILE_PATH_LITERAL("bar.txt"))));
-  EXPECT_TRUE(file_util::ContainsPath(foo,
-      FilePath(foo.value() + FILE_PATH_LITERAL("/bar.txt"))));
-#elif defined(OS_MACOSX)
-  // We can't really do this test on OS X since the case-sensitivity of the
-  // filesystem is configurable.
-#elif defined(OS_POSIX)
-  EXPECT_FALSE(file_util::ContainsPath(foo,
-      foo_caps.Append(FILE_PATH_LITERAL("bar.txt"))));
-#endif
 }
 
 TEST_F(FileUtilTest, TouchFile) {

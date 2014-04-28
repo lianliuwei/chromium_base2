@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "base/basictypes.h"
-#include "base/file_util.h"
 #include "base/files/file_path.h"
 #include "base/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -1069,6 +1068,9 @@ TEST_F(FilePathTest, ReferencesParent) {
   const struct UnaryBooleanTestData cases[] = {
     { FPL("."),        false },
     { FPL(".."),       true },
+    { FPL(".. "),      true },
+    { FPL(" .."),      true },
+    { FPL("..."),      true },
     { FPL("a.."),      false },
     { FPL("..a"),      false },
     { FPL("../"),      true },
@@ -1122,32 +1124,32 @@ TEST_F(FilePathTest, FromUTF8Unsafe_And_AsUTF8Unsafe) {
 
 TEST_F(FilePathTest, ConstructWithNUL) {
   // Assert FPS() works.
-  ASSERT_TRUE(FPS("a\0b").length() == 3);
+  ASSERT_EQ(3U, FPS("a\0b").length());
 
   // Test constructor strips '\0'
   FilePath path(FPS("a\0b"));
-  EXPECT_TRUE(path.value().length() == 1);
-  EXPECT_EQ(path.value(), FPL("a"));
+  EXPECT_EQ(1U, path.value().length());
+  EXPECT_EQ(FPL("a"), path.value());
 }
 
 TEST_F(FilePathTest, AppendWithNUL) {
   // Assert FPS() works.
-  ASSERT_TRUE(FPS("b\0b").length() == 3);
+  ASSERT_EQ(3U, FPS("b\0b").length());
 
   // Test Append() strips '\0'
   FilePath path(FPL("a"));
   path = path.Append(FPS("b\0b"));
-  EXPECT_TRUE(path.value().length() == 3);
+  EXPECT_EQ(3U, path.value().length());
 #if defined(FILE_PATH_USES_WIN_SEPARATORS)
-  EXPECT_EQ(path.value(), FPL("a\\b"));
+  EXPECT_EQ(FPL("a\\b"), path.value());
 #else
-  EXPECT_EQ(path.value(), FPL("a/b"));
+  EXPECT_EQ(FPL("a/b"), path.value());
 #endif
 }
 
 TEST_F(FilePathTest, ReferencesParentWithNUL) {
   // Assert FPS() works.
-  ASSERT_TRUE(FPS("..\0").length() == 3);
+  ASSERT_EQ(3U, FPS("..\0").length());
 
   // Test ReferencesParent() doesn't break with "..\0"
   FilePath path(FPS("..\0"));
@@ -1196,7 +1198,34 @@ TEST_F(FilePathTest, NormalizePathSeparators) {
               "i: " << i << ", input: " << input.value();
   }
 }
-
 #endif
+
+TEST_F(FilePathTest, EndsWithSeparator) {
+  const UnaryBooleanTestData cases[] = {
+    { FPL(""), false },
+    { FPL("/"), true },
+    { FPL("foo/"), true },
+    { FPL("bar"), false },
+    { FPL("/foo/bar"), false },
+  };
+  for (size_t i = 0; i < arraysize(cases); ++i) {
+    FilePath input = FilePath(cases[i].input).NormalizePathSeparators();
+    EXPECT_EQ(cases[i].expected, input.EndsWithSeparator());
+  }
+}
+
+TEST_F(FilePathTest, AsEndingWithSeparator) {
+  const UnaryTestData cases[] = {
+    { FPL(""), FPL("") },
+    { FPL("/"), FPL("/") },
+    { FPL("foo"), FPL("foo/") },
+    { FPL("foo/"), FPL("foo/") }
+  };
+  for (size_t i = 0; i < arraysize(cases); ++i) {
+    FilePath input = FilePath(cases[i].input).NormalizePathSeparators();
+    FilePath expected = FilePath(cases[i].expected).NormalizePathSeparators();
+    EXPECT_EQ(expected.value(), input.AsEndingWithSeparator().value());
+  }
+}
 
 }  // namespace base
