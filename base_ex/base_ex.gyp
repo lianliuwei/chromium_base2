@@ -7,7 +7,7 @@
       'target_name': 'base_ex',
       'type': '<(component)',
       'dependencies': [
-        '../base/base.gyp:base', 
+        '../base/base_bin.gyp:base_bin', 
 	'../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
       ],      
       'direct_dependent_settings': {
