@@ -13,7 +13,7 @@
 
 namespace views {
 
-const char* const ScrollView::kViewClassName = "views/ScrollView";
+const char ScrollView::kViewClassName[] = "ScrollView";
 
 namespace {
 
@@ -84,8 +84,8 @@ class ScrollView::Viewport : public View {
   Viewport() {}
   virtual ~Viewport() {}
 
-  virtual std::string GetClassName() const OVERRIDE {
-    return "views/Viewport";
+  virtual const char* GetClassName() const OVERRIDE {
+    return "ScrollView::Viewport";
   }
 
   virtual void ScrollRectToVisible(const gfx::Rect& rect) OVERRIDE {
@@ -115,7 +115,8 @@ ScrollView::ScrollView()
       header_viewport_(new Viewport()),
       horiz_sb_(new NativeScrollBar(true)),
       vert_sb_(new NativeScrollBar(false)),
-      resize_corner_(NULL) {
+      resize_corner_(NULL),
+      hide_horizontal_scrollbar_(false) {
   AddChildView(contents_viewport_);
   AddChildView(header_viewport_);
 
@@ -330,7 +331,7 @@ void ScrollView::OnGestureEvent(ui::GestureEvent* event) {
   }
 }
 
-std::string ScrollView::GetClassName() const {
+const char* ScrollView::GetClassName() const {
   return kViewClassName;
 }
 
@@ -463,6 +464,9 @@ void ScrollView::ComputeScrollBarsVisibility(const gfx::Size& vp_size,
     *horiz_is_shown = true;
     *vert_is_shown = true;
   }
+
+  if (hide_horizontal_scrollbar_)
+    *horiz_is_shown = false;
 }
 
 // Make sure that a single scrollbar is created and visible as needed

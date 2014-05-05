@@ -17,7 +17,6 @@
         '../../build/temp_gyp/googleurl.gyp:googleurl',
         '../../skia/skia.gyp:skia',
         '../base/strings/ui_strings.gyp:ui_strings',
-        '../compositor/compositor.gyp:compositor',
         '../ui.gyp:ui',
         '../ui.gyp:ui_resources',
       ],
@@ -27,13 +26,25 @@
       'sources': [
         'cocoa/notification_controller.h',
         'cocoa/notification_controller.mm',
+        'cocoa/popup_collection.h',
+        'cocoa/popup_collection.mm',
         'cocoa/popup_controller.h',
         'cocoa/popup_controller.mm',
+        'cocoa/status_item_view.h',
+        'cocoa/status_item_view.mm',
+        'cocoa/tray_controller.h',
+        'cocoa/tray_controller.mm',
+        'cocoa/tray_view_controller.h',
+        'cocoa/tray_view_controller.mm',
+        'dummy_message_center.cc',
         'message_center.cc',
         'message_center.h',
-        'message_center_constants.cc',
-        'message_center_constants.h',
         'message_center_export.h',
+        'message_center_impl.cc',
+        'message_center_impl.h',
+        'message_center_observer.h',
+        'message_center_style.cc',
+        'message_center_style.h',
         'message_center_switches.cc',
         'message_center_switches.h',
         'message_center_tray.cc',
@@ -43,17 +54,20 @@
         'message_center_util.h',
         'notification.cc',
         'notification.h',
-        'notification_change_observer.h',
         'notification_list.cc',
         'notification_list.h',
         'notification_types.cc',
         'notification_types.h',
         'notifier_settings.cc',
         'notifier_settings.h',
+        'views/bounded_label.cc',
+        'views/bounded_label.h',
         'views/message_bubble_base.cc',
         'views/message_bubble_base.h',
         'views/message_center_bubble.cc',
         'views/message_center_bubble.h',
+        'views/message_center_view.cc',
+        'views/message_center_view.h',
         'views/message_popup_bubble.cc',
         'views/message_popup_bubble.h',
         'views/message_popup_collection.cc',
@@ -66,6 +80,8 @@
         'views/notifier_settings_view.h',
         'views/notification_view.cc',
         'views/notification_view.h',
+        'views/toast_contents_view.cc',
+        'views/toast_contents_view.h',
       ],
       # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
       'msvs_disabled_warnings': [ 4267, ],
@@ -87,8 +103,23 @@
             '../../third_party/GTM',
           ],
         }],
+        ['OS!="ios"', {
+          'dependencies': [
+            '../compositor/compositor.gyp:compositor',
+          ],
+        }],
+        ['notifications==0', {  # Android and iOS.
+          'sources/': [
+            # Exclude everything except dummy impl.
+            ['exclude', '\\.(cc|mm)$'],
+            ['include', '^dummy_message_center\\.cc$'],
+            ['include', '^message_center_switches\\.cc$'],
+          ],
+        }, {  # notifications==1
+          'sources!': [ 'dummy_message_center.cc' ],
+        }],
       ],
-    },
+    },  # target_name: message_center
     {
       'target_name': 'message_center_unittests',
       'type': 'executable',
@@ -96,7 +127,6 @@
         '../../base/base.gyp:base',
         '../../base/base.gyp:test_support_base',
         '../../skia/skia.gyp:skia',
-        '../../testing/gmock.gyp:gmock',
         '../../testing/gtest.gyp:gtest',
         '../ui.gyp:run_ui_unittests',
         '../ui.gyp:ui',
@@ -104,9 +134,15 @@
       ],
       'sources': [
         'cocoa/notification_controller_unittest.mm',
+        'cocoa/popup_collection_unittest.mm',
         'cocoa/popup_controller_unittest.mm',
+        'cocoa/status_item_view_unittest.mm',
+        'cocoa/tray_view_controller_unittest.mm',
         'message_center_tray_unittest.cc',
+        'fake_message_center.h',
+        'fake_message_center.cc',
         'notification_list_unittest.cc',
+        'test/run_all_unittests.cc',
       ],
       'conditions': [
         ['OS=="mac"', {
@@ -114,7 +150,29 @@
             '../ui.gyp:ui_test_support',
           ],
         }],
+        ['toolkit_views==1', {
+          'dependencies': [
+            # Compositor is needed by message_center_view_unittest.cc
+            # and for the fonts used by bounded_label_unittest.cc.
+            '../compositor/compositor.gyp:compositor',
+            '../compositor/compositor.gyp:compositor_test_support',
+            '../views/views.gyp:views',
+            '../views/views.gyp:views_test_support',
+          ],
+          'sources': [
+            'views/bounded_label_unittest.cc',
+            'views/message_center_view_unittest.cc',
+            'views/message_popup_collection_unittest.cc',
+          ],
+        }],
+        ['notifications==0', {  # Android and iOS.
+          'sources/': [
+            # Exclude everything except main().
+            ['exclude', '\\.(cc|mm)$'],
+            ['include', '^test/run_all_unittests\\.cc$'],
+          ],
+        }],
       ],
-    },
+    },  # target_name: message_center_unittests
   ],
 }

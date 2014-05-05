@@ -9,14 +9,12 @@
 
 #import "base/memory/scoped_nsobject.h"
 #import "ui/base/cocoa/hover_button.h"
+#include "ui/base/ui_export.h"
 
 // A button that changes images when you hover over it and click it.
+UI_EXPORT
 @interface HoverImageButton : HoverButton {
  @private
-  float defaultOpacity_;
-  float hoverOpacity_;
-  float pressedOpacity_;
-
   scoped_nsobject<NSImage> defaultImage_;
   scoped_nsobject<NSImage> hoverImage_;
   scoped_nsobject<NSImage> pressedImage_;
@@ -30,15 +28,6 @@
 
 // Sets the pressed image.
 - (void)setPressedImage:(NSImage*)image;
-
-// Sets the default opacity.
-- (void)setDefaultOpacity:(float)opacity;
-
-// Sets the opacity on hover.
-- (void)setHoverOpacity:(float)opacity;
-
-// Sets the opacity when pressed.
-- (void)setPressedOpacity:(float)opacity;
 
 @end
 

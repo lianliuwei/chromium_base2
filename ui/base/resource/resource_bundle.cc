@@ -13,7 +13,7 @@
 #include "base/metrics/histogram.h"
 #include "base/path_service.h"
 #include "base/stl_util.h"
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "base/synchronization/lock.h"
 #include "base/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -86,8 +86,8 @@ class ResourceBundle::ResourceBundleImageSource : public gfx::ImageSkiaSource {
       image = skia::ImageOperations::Resize(
           image,
           skia::ImageOperations::RESIZE_LANCZOS3,
-          gfx::ToFlooredInt(image.width() * scale),
-          gfx::ToFlooredInt(image.height() * scale));
+          gfx::ToCeiledInt(image.width() * scale),
+          gfx::ToCeiledInt(image.height() * scale));
       // If --highlight-missing-scaled-resources is specified, log the resource
       // id and blend the created resource with red.
       if (ShouldHighlightMissingScaledResources()) {

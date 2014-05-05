@@ -106,7 +106,7 @@ BubbleDelegateView::BubbleDelegateView()
       anchor_view_(NULL),
       anchor_widget_(NULL),
       move_with_anchor_(false),
-      arrow_location_(BubbleBorder::TOP_LEFT),
+      arrow_(BubbleBorder::TOP_LEFT),
       shadow_(BubbleBorder::SMALL_SHADOW),
       color_explicitly_set_(false),
       margins_(kDefaultMargin, kDefaultMargin, kDefaultMargin, kDefaultMargin),
@@ -123,13 +123,13 @@ BubbleDelegateView::BubbleDelegateView()
 
 BubbleDelegateView::BubbleDelegateView(
     View* anchor_view,
-    BubbleBorder::ArrowLocation arrow_location)
+    BubbleBorder::Arrow arrow)
     : close_on_esc_(true),
       close_on_deactivate_(true),
       anchor_view_(anchor_view),
       anchor_widget_(NULL),
       move_with_anchor_(false),
-      arrow_location_(arrow_location),
+      arrow_(arrow),
       shadow_(BubbleBorder::SMALL_SHADOW),
       color_explicitly_set_(false),
       margins_(kDefaultMargin, kDefaultMargin, kDefaultMargin, kDefaultMargin),
@@ -188,9 +188,9 @@ View* BubbleDelegateView::GetContentsView() {
 NonClientFrameView* BubbleDelegateView::CreateNonClientFrameView(
     Widget* widget) {
   BubbleFrameView* frame = new BubbleFrameView(margins());
-  BubbleBorder::ArrowLocation arrow = base::i18n::IsRTL() ?
-      BubbleBorder::horizontal_mirror(arrow_location()) : arrow_location();
-  frame->SetBubbleBorder(new BubbleBorder(arrow, shadow(), color()));
+  const BubbleBorder::Arrow adjusted_arrow = base::i18n::IsRTL() ?
+      BubbleBorder::horizontal_mirror(arrow()) : arrow();
+  frame->SetBubbleBorder(new BubbleBorder(adjusted_arrow, shadow(), color()));
   return frame;
 }
 
@@ -231,9 +231,10 @@ void BubbleDelegateView::OnWidgetBoundsChanged(Widget* widget,
 }
 
 gfx::Rect BubbleDelegateView::GetAnchorRect() {
-  gfx::Rect anchor_bounds = anchor_view() ? anchor_view()->GetBoundsInScreen() :
-      gfx::Rect(anchor_point_, gfx::Size());
-  anchor_bounds.Inset(anchor_insets_);
+  if (!anchor_view())
+    return anchor_rect_;
+  gfx::Rect anchor_bounds = anchor_view()->GetBoundsInScreen();
+  anchor_bounds.Inset(anchor_view_insets_);
   return anchor_bounds;
 }
 

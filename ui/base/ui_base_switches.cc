@@ -6,11 +6,20 @@
 
 namespace switches {
 
-// Disables new menu UI.
-const char kDisableNewMenuStyle[] = "disable-new-menu-style";
+// Disables use of DWM composition for top level windows.
+const char kDisableDwmComposition[] = "disable-dwm-composition";
+
+// Disables the new visual style for application dialogs and controls.
+const char kDisableNewDialogStyle[] = "disable-new-dialog-style";
 
 // Disables touch adjustment.
 const char kDisableTouchAdjustment[] = "disable-touch-adjustment";
+
+// Disables touch event based drag and drop.
+const char kDisableTouchDragDrop[] = "disable-touch-drag-drop";
+
+// Disables controls that support touch base text editing.
+const char kDisableTouchEditing[] = "disable-touch-editing";
 
 // Disables the Views textfield on Windows.
 const char kDisableViewsTextfield[] = "disable-views-textfield";
@@ -18,9 +27,10 @@ const char kDisableViewsTextfield[] = "disable-views-textfield";
 // Enables support for bezel touch.
 const char kEnableBezelTouch[] = "enable-bezel-touch";
 
-// Enables the new dialog style wherever it is available.
+// Enables the new visual style for application dialogs and controls.
 const char kEnableNewDialogStyle[] = "enable-new-dialog-style";
 
+// Enables touch event based drag and drop.
 const char kEnableTouchDragDrop[] = "enable-touch-drag-drop";
 
 // Enables controls that support touch base text editing.

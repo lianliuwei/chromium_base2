@@ -8,6 +8,7 @@
 #include "skia/ext/skia_utils_mac.h"
 #include "ui/app_list/app_list_constants.h"
 #include "ui/app_list/app_list_view_delegate.h"
+#import "ui/app_list/cocoa/app_list_pager_view.h"
 #import "ui/app_list/cocoa/apps_grid_controller.h"
 
 namespace {
@@ -15,10 +16,16 @@ namespace {
 // The roundedness of the corners of the bubble.
 const CGFloat kBubbleCornerRadius = 3;
 
-// Padding between the bottom of the pager and the bottom of the view.
-const CGFloat kViewPagerOffsetY = 12;
-// Padding between the bottom of the grid and the bottom of the view.
-const CGFloat kViewGridOffsetY = 38;
+// Height of the pager.
+const CGFloat kPagerPreferredHeight = 57;
+
+// Padding between the top of the grid and the top of the view.
+// TODO(tapted): Update padding when the search entry control is added.
+const CGFloat kTopPadding = 16;
+
+// Height of the search input. TODO(tapted): Make this visible when the search
+// input UI is written.
+const CGFloat kSearchInputHeight = 0;
 
 // Minimum margin on either side of the pager. If the pager grows beyond this,
 // the segment size is reduced.
@@ -43,13 +50,15 @@ const CGFloat kMaxSegmentWidth = 80;
   [NSGraphicsContext restoreGraphicsState];
 }
 
+- (BOOL)isFlipped {
+  return YES;
+}
+
 @end
 
 @interface AppListViewController ()
 
 - (void)loadAndSetView;
-
-- (void)onPagerClicked:(id)sender;
 
 @end
 
@@ -68,8 +77,11 @@ const CGFloat kMaxSegmentWidth = 80;
 }
 
 - (void)dealloc {
+  // Ensure that setDelegate(NULL) has been called before destruction, because
+  // dealloc can be called at odd times, and Objective C destruction order does
+  // not properly tear down these dependencies.
+  DCHECK(delegate_ == NULL);
   [appsGridController_ setPaginationObserver:nil];
-  [appsGridController_ setDelegate:NULL];
   [super dealloc];
 }
 
@@ -91,31 +103,27 @@ const CGFloat kMaxSegmentWidth = 80;
 }
 
 -(void)loadAndSetView {
-  pagerControl_.reset([[NSSegmentedControl alloc] initWithFrame:NSZeroRect]);
-  [pagerControl_ setSegmentStyle:NSSegmentStyleRounded];
-  [pagerControl_ setTarget:self];
+  pagerControl_.reset([[AppListPagerView alloc] init]);
+  [pagerControl_ setTarget:appsGridController_];
   [pagerControl_ setAction:@selector(onPagerClicked:)];
 
-  [[appsGridController_ view] setFrameOrigin:NSMakePoint(0, kViewGridOffsetY)];
+  [[appsGridController_ view] setFrameOrigin:NSMakePoint(0, kTopPadding)];
 
   NSRect backgroundRect = [[appsGridController_ view] bounds];
-  backgroundRect.size.height += kViewGridOffsetY;
+  backgroundRect.size.height += kPagerPreferredHeight;
   scoped_nsobject<BackgroundView> backgroundView(
       [[BackgroundView alloc] initWithFrame:backgroundRect]);
 
-  [backgroundView addSubview:pagerControl_];
+  NSRect searchInputRect =
+      NSMakeRect(0, 0, backgroundRect.size.width, kSearchInputHeight);
+  scoped_nsobject<NSTextField> searchInput(
+      [[NSTextField alloc] initWithFrame:searchInputRect]);
+  [searchInput setDelegate:self];
+
   [backgroundView addSubview:[appsGridController_ view]];
+  [backgroundView addSubview:pagerControl_];
+  [backgroundView addSubview:searchInput];
   [self setView:backgroundView];
-}
-
-- (void)onPagerClicked:(id)sender {
-  int selectedSegment = [sender selectedSegment];
-  if (selectedSegment < 0)
-    return;  // No selection.
-
-  int pageIndex = [[sender cell] tagForSegment:selectedSegment];
-  if (pageIndex >= 0)
-    [appsGridController_ scrollToPage:pageIndex];
 }
 
 - (void)totalPagesChanged {
@@ -136,13 +144,43 @@ const CGFloat kMaxSegmentWidth = 80;
 
   // Center in view.
   [pagerControl_ sizeToFit];
-  [pagerControl_ setFrameOrigin:
-      NSMakePoint(NSMidX(viewFrame) - NSMidX([pagerControl_ bounds]),
-                  kViewPagerOffsetY)];
+  [pagerControl_ setFrame:
+      NSMakeRect(NSMidX(viewFrame) - NSMidX([pagerControl_ bounds]),
+                 viewFrame.size.height - kPagerPreferredHeight,
+                 [pagerControl_ bounds].size.width,
+                 kPagerPreferredHeight)];
 }
 
 - (void)selectedPageChanged:(int)newSelected {
   [pagerControl_ selectSegmentWithTag:newSelected];
+}
+
+- (void)pageVisibilityChanged {
+  [pagerControl_ setNeedsDisplay:YES];
+}
+
+- (NSInteger)pagerSegmentAtLocation:(NSPoint)locationInWindow {
+  return [pagerControl_ findAndHighlightSegmentAtLocation:locationInWindow];
+}
+
+- (BOOL)control:(NSControl*)control
+               textView:(NSTextView*)textView
+    doCommandBySelector:(SEL)command {
+  // If anything has been written, let the search view handle it.
+  if ([[control stringValue] length] > 0)
+    return NO;
+
+  // Handle escape.
+  if (command == @selector(complete:) ||
+      command == @selector(cancel:) ||
+      command == @selector(cancelOperation:)) {
+    if (delegate_)
+      delegate_->Dismiss();
+    return YES;
+  }
+
+  // Possibly handle grid navigation.
+  return [appsGridController_ handleCommandBySelector:command];
 }
 
 @end

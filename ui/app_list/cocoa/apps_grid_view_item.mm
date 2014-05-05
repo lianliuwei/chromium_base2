@@ -14,6 +14,7 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
 #include "ui/gfx/font.h"
+#include "ui/gfx/scoped_ns_graphics_context_save_gstate_mac.h"
 
 namespace {
 
@@ -90,6 +91,18 @@ void ItemModelObserverBridge::ItemPercentDownloadedChanged() {
 
 @end
 
+@interface AppsGridItemButtonCell : NSButtonCell {
+ @private
+  BOOL hasShadow_;
+}
+
+@property(assign, nonatomic) BOOL hasShadow;
+
+@end
+
+@interface AppsGridItemButton : NSButton;
+@end
+
 @implementation AppsGridItemBackgroundView
 
 - (NSButton*)button {
@@ -104,11 +117,16 @@ void ItemModelObserverBridge::ItemPercentDownloadedChanged() {
   [self setNeedsDisplay:YES];
 }
 
+// Ignore all hit tests. The grid controller needs to be the owner of any drags.
+- (NSView*)hitTest:(NSPoint)aPoint {
+  return nil;
+}
+
 - (void)drawRect:(NSRect)dirtyRect {
   if (!selected_)
     return;
 
-  [gfx::SkColorToCalibratedNSColor(app_list::kHoverAndPushedColor) set];
+  [gfx::SkColorToCalibratedNSColor(app_list::kSelectedColor) set];
   NSRectFillUsingOperation(dirtyRect, NSCompositeSourceOver);
 }
 
@@ -144,8 +162,8 @@ void ItemModelObserverBridge::ItemPercentDownloadedChanged() {
 
 - (id)initWithSize:(NSSize)tileSize {
   if ((self = [super init])) {
-    scoped_nsobject<NSButton> prototypeButton(
-        [[NSButton alloc] initWithFrame:NSMakeRect(
+    scoped_nsobject<AppsGridItemButton> prototypeButton(
+        [[AppsGridItemButton alloc] initWithFrame:NSMakeRect(
             0, 0, tileSize.width, tileSize.height - kTileTopPadding)]);
 
     // This NSButton style always positions the icon at the very top of the
@@ -158,6 +176,7 @@ void ItemModelObserverBridge::ItemPercentDownloadedChanged() {
     [[prototypeButton cell]
         setFont:ui::ResourceBundle::GetSharedInstance().GetFont(
             app_list::kItemTextFontStyle).GetNativeFont()];
+    [[prototypeButton cell] setLineBreakMode:NSLineBreakByTruncatingTail];
 
     scoped_nsobject<AppsGridItemBackgroundView> prototypeButtonBackground(
         [[AppsGridItemBackgroundView alloc] initWithFrame:NSMakeRect(
@@ -177,6 +196,7 @@ void ItemModelObserverBridge::ItemPercentDownloadedChanged() {
   NSButton* button = [self button];
   [button setTitle:base::SysUTF8ToNSString(itemModel->title())];
   [button setImage:gfx::NSImageFromImageSkia(itemModel->icon())];
+  [[button cell] setHasShadow:itemModel->has_shadow()];
   observerBridge_.reset(new app_list::ItemModelObserverBridge(self, itemModel));
 
   if (trackingArea_.get())
@@ -217,6 +237,43 @@ void ItemModelObserverBridge::ItemPercentDownloadedChanged() {
 - (void)setSelected:(BOOL)flag {
   [[self itemBackgroundView] setSelected:flag];
   [super setSelected:flag];
+}
+
+@end
+
+@implementation AppsGridItemButton
+
++ (Class)cellClass {
+  return [AppsGridItemButtonCell class];
+}
+
+@end
+
+@implementation AppsGridItemButtonCell
+
+@synthesize hasShadow = hasShadow_;
+
+- (void)drawImage:(NSImage*)image
+        withFrame:(NSRect)frame
+           inView:(NSView*)controlView {
+  if (!hasShadow_) {
+    [super drawImage:image
+           withFrame:frame
+              inView:controlView];
+    return;
+  }
+
+  scoped_nsobject<NSShadow> shadow([[NSShadow alloc] init]);
+  gfx::ScopedNSGraphicsContextSaveGState context;
+  [shadow setShadowOffset:NSMakeSize(0, -2)];
+  [shadow setShadowBlurRadius:2.0];
+  [shadow setShadowColor:[NSColor colorWithCalibratedWhite:0
+                                                     alpha:0.14]];
+  [shadow set];
+
+  [super drawImage:image
+         withFrame:frame
+            inView:controlView];
 }
 
 @end

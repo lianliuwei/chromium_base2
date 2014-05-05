@@ -9,12 +9,13 @@
 #include <X11/extensions/XInput2.h>
 #include <X11/Xlib.h>
 
+#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "base/message_pump_aurax11.h"
 #include "ui/base/events/event_utils.h"
 #include "ui/base/keycodes/keyboard_code_conversion_x.h"
-#include "ui/base/touch/touch_factory.h"
+#include "ui/base/touch/touch_factory_x11.h"
 #include "ui/base/x/device_list_cache_x.h"
 #include "ui/base/x/valuators.h"
 #include "ui/base/x/x11_atom_cache.h"
@@ -74,6 +75,19 @@ const char* kCMTCachedAtoms[] = {
   AXIS_LABEL_PROP_ABS_FINGER_COUNT,
   NULL
 };
+
+// A workaround for some incorrect implemented input drivers:
+// Ignore their mouse input valuators.
+bool IgnoreMouseValuators() {
+  static bool initialized = false;
+  static bool ignore_valuators = true;
+  if (initialized)
+    return ignore_valuators;
+  ignore_valuators =
+      CommandLine::ForCurrentProcess()->HasSwitch("disable-mouse-valuators");
+  initialized = true;
+  return ignore_valuators;
+}
 
 // A class to support the detection of scroll events, using X11 valuators.
 class CMTEventData {
@@ -523,7 +537,7 @@ bool TouchEventIsGeneratedHack(const base::NativeEvent& native_event) {
     return false;
 
   // Radius is in pixels, and the valuator is the diameter in pixels.
-  float radius = ui::GetTouchRadiusX(native_event), min, max;
+  double radius = ui::GetTouchRadiusX(native_event), min, max;
   unsigned int deviceid =
       static_cast<XIDeviceEvent*>(native_event->xcookie.data)->sourceid;
   if (!ui::ValuatorTracker::GetInstance()->GetValuatorRange(
@@ -633,7 +647,7 @@ ui::EventType GetTouchEventType(const base::NativeEvent& native_event) {
 
   ui::ValuatorTracker* valuators = ui::ValuatorTracker::GetInstance();
 
-  float slot;
+  double slot;
   if (!valuators->ExtractValuator(
       *native_event, ui::ValuatorTracker::VAL_SLOT_ID, &slot))
     return ui::ET_UNKNOWN;
@@ -643,7 +657,7 @@ ui::EventType GetTouchEventType(const base::NativeEvent& native_event) {
     return ui::ET_TOUCH_PRESSED;
   }
 
-  float tracking;
+  double tracking;
   if (!valuators->ExtractValuator(
       *native_event, ui::ValuatorTracker::VAL_TRACKING_ID, &tracking))
     return ui::ET_UNKNOWN;
@@ -657,9 +671,9 @@ ui::EventType GetTouchEventType(const base::NativeEvent& native_event) {
 #endif  // defined(USE_XI2_MT)
 }
 
-float GetTouchParamFromXEvent(XEvent* xev,
+double GetTouchParamFromXEvent(XEvent* xev,
                               ui::ValuatorTracker::Valuator val,
-                              float default_value) {
+                              double default_value) {
   ui::ValuatorTracker::GetInstance()->ExtractValuator(
       *xev, val, &default_value);
   return default_value;
@@ -831,7 +845,7 @@ base::TimeDelta EventTimeFromNative(const base::NativeEvent& native_event) {
       break;
     case GenericEvent: {
       double start, end;
-      float touch_timestamp;
+      double touch_timestamp;
       if (GetGestureTimes(native_event, &start, &end)) {
         // If the driver supports gesture times, use them.
         return base::TimeDelta::FromMicroseconds(end * 1000000);
@@ -874,6 +888,10 @@ gfx::Point EventLocationFromNative(const base::NativeEvent& native_event) {
         return gfx::Point(static_cast<int>(xievent->event_x),
                           static_cast<int>(xievent->event_y));
 #endif
+      if (IgnoreMouseValuators()) {
+        return gfx::Point(static_cast<int>(xievent->event_x),
+                          static_cast<int>(xievent->event_y));
+      }
       // Read the position from the valuators, because the location reported in
       // event_x/event_y seems to be different (and doesn't match for events
       // coming from slave device and master device) from the values in the
@@ -979,28 +997,31 @@ int GetChangedMouseButtonFlagsFromNative(
   return 0;
 }
 
-int GetMouseWheelOffset(const base::NativeEvent& native_event) {
-  float offset = 0;
+gfx::Vector2d GetMouseWheelOffset(const base::NativeEvent& native_event) {
+  float x_offset = 0;
+  float y_offset = 0;
   if (native_event->type == GenericEvent &&
-      GetScrollOffsets(native_event, NULL, &offset, NULL, NULL, NULL))
-    return static_cast<int>(offset);
+      GetScrollOffsets(native_event, &x_offset, &y_offset, NULL, NULL, NULL)) {
+    return gfx::Vector2d(static_cast<int>(x_offset),
+                         static_cast<int>(y_offset));
+  }
 
   int button = native_event->type == GenericEvent ?
       EventButtonFromNative(native_event) : native_event->xbutton.button;
 
   switch (button) {
     case 4:
-      return kWheelScrollAmount;
+      return gfx::Vector2d(0, kWheelScrollAmount);
     case 5:
-      return -kWheelScrollAmount;
+      return gfx::Vector2d(0, -kWheelScrollAmount);
     default:
       // TODO(derat): Do something for horizontal scrolls (buttons 6 and 7)?
-      return 0;
+      return gfx::Vector2d();
   }
 }
 
 int GetTouchId(const base::NativeEvent& xev) {
-  float slot = 0;
+  double slot = 0;
   ui::TouchFactory* factory = ui::TouchFactory::GetInstance();
   XIDeviceEvent* xievent = static_cast<XIDeviceEvent*>(xev->xcookie.data);
   if (!factory->IsMultiTouchDevice(xievent->sourceid)) {
@@ -1012,7 +1033,7 @@ int GetTouchId(const base::NativeEvent& xev) {
   ui::ValuatorTracker* valuators = ui::ValuatorTracker::GetInstance();
 
 #if defined(USE_XI2_MT)
-  float tracking_id;
+  double tracking_id;
   if (!valuators->ExtractValuator(
       *xev, ui::ValuatorTracker::VAL_TRACKING_ID, &tracking_id)) {
     LOG(ERROR) << "Could not get the slot ID for the event. Using 0.";
@@ -1048,7 +1069,7 @@ float GetTouchAngle(const base::NativeEvent& native_event) {
 }
 
 float GetTouchForce(const base::NativeEvent& native_event) {
-  float force = 0.0;
+  double force = 0.0;
   force = GetTouchParamFromXEvent(native_event,
       ui::ValuatorTracker::VAL_PRESSURE, 0.0);
   unsigned int deviceid =

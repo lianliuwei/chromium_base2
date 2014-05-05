@@ -30,7 +30,7 @@ const SkColor kDropIndicatorColor = SK_ColorBLACK;
 namespace views {
 
 // static
-const char SubmenuView::kViewClassName[] = "views/SubmenuView";
+const char SubmenuView::kViewClassName[] = "SubmenuView";
 
 SubmenuView::SubmenuView(MenuItemView* parent)
     : parent_menu_item_(parent),
@@ -41,8 +41,7 @@ SubmenuView::SubmenuView(MenuItemView* parent)
       max_accelerator_width_(0),
       minimum_preferred_width_(0),
       resize_open_menu_(false),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          scroll_animator_(new ScrollAnimator(this))) {
+      scroll_animator_(new ScrollAnimator(this)) {
   DCHECK(parent);
   // We'll delete ourselves, otherwise the ScrollView would delete us on close.
   set_owned_by_client();
@@ -237,10 +236,10 @@ bool SubmenuView::OnMouseWheel(const ui::MouseWheelEvent& e) {
   // the next/previous one entirely visible. If enough wasn't scrolled to show
   // any new rows, then just scroll the amount so that smooth scrolling using
   // the trackpad is possible.
-  int delta = abs(e.offset() / ui::MouseWheelEvent::kWheelDelta);
+  int delta = abs(e.y_offset() / ui::MouseWheelEvent::kWheelDelta);
   if (delta == 0)
-    return OnScroll(0, e.offset());
-  for (bool scroll_up = (e.offset() > 0); delta != 0; --delta) {
+    return OnScroll(0, e.y_offset());
+  for (bool scroll_up = (e.y_offset() > 0); delta != 0; --delta) {
     int scroll_target;
     if (scroll_up) {
       if (GetMenuItemAt(first_vis_index)->y() == vis_bounds.y()) {
@@ -313,12 +312,10 @@ void SubmenuView::ShowAt(Widget* parent,
     host_->InitMenuHost(parent, bounds, scroll_view_container_, do_capture);
   }
 
-  GetScrollViewContainer()->GetWidget()->NotifyAccessibilityEvent(
-      GetScrollViewContainer(),
+  GetScrollViewContainer()->NotifyAccessibilityEvent(
       ui::AccessibilityTypes::EVENT_MENUSTART,
       true);
-  GetWidget()->NotifyAccessibilityEvent(
-      this,
+  NotifyAccessibilityEvent(
       ui::AccessibilityTypes::EVENT_MENUPOPUPSTART,
       true);
 }
@@ -330,14 +327,9 @@ void SubmenuView::Reposition(const gfx::Rect& bounds) {
 
 void SubmenuView::Close() {
   if (host_) {
-    GetWidget()->NotifyAccessibilityEvent(
-        this,
-        ui::AccessibilityTypes::EVENT_MENUPOPUPEND,
-        true);
-    GetScrollViewContainer()->GetWidget()->NotifyAccessibilityEvent(
-        GetScrollViewContainer(),
-        ui::AccessibilityTypes::EVENT_MENUEND,
-        true);
+    NotifyAccessibilityEvent(ui::AccessibilityTypes::EVENT_MENUPOPUPEND, true);
+    GetScrollViewContainer()->NotifyAccessibilityEvent(
+        ui::AccessibilityTypes::EVENT_MENUEND, true);
 
     host_->DestroyMenuHost();
     host_ = NULL;
@@ -397,7 +389,7 @@ void SubmenuView::MenuHostDestroyed() {
   GetMenuItem()->GetMenuController()->Cancel(MenuController::EXIT_DESTROYED);
 }
 
-std::string SubmenuView::GetClassName() const {
+const char* SubmenuView::GetClassName() const {
   return kViewClassName;
 }
 

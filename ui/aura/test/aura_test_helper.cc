@@ -21,13 +21,14 @@
 #include "ui/gfx/screen.h"
 
 #if defined(USE_X11)
+#include "ui/aura/root_window_host_x11.h"
 #include "ui/base/x/x11_util.h"
 #endif
 
 namespace aura {
 namespace test {
 
-AuraTestHelper::AuraTestHelper(MessageLoopForUI* message_loop)
+AuraTestHelper::AuraTestHelper(base::MessageLoopForUI* message_loop)
     : setup_called_(false),
       teardown_called_(false),
       owns_root_window_(false) {
@@ -36,13 +37,16 @@ AuraTestHelper::AuraTestHelper(MessageLoopForUI* message_loop)
   // Disable animations during tests.
   zero_duration_mode_.reset(new ui::ScopedAnimationDurationScaleMode(
       ui::ScopedAnimationDurationScaleMode::ZERO_DURATION));
+#if defined(USE_X11)
+  test::SetUseOverrideRedirectWindowByDefault(true);
+#endif
 }
 
 AuraTestHelper::~AuraTestHelper() {
   CHECK(setup_called_)
-      << "You have overridden SetUp but never called super class's SetUp";
+      << "AuraTestHelper::SetUp() never called.";
   CHECK(teardown_called_)
-      << "You have overridden TearDown but never called super class's TearDown";
+      << "AuraTestHelper::TearDown() never called.";
 }
 
 void AuraTestHelper::SetUp() {

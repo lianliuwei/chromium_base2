@@ -12,7 +12,9 @@
 
 namespace ui {
 
-OSExchangeDataProviderAura::OSExchangeDataProviderAura() : formats_(0) {}
+OSExchangeDataProviderAura::OSExchangeDataProviderAura()
+    : formats_(0) {
+}
 
 OSExchangeDataProviderAura::~OSExchangeDataProviderAura() {}
 
@@ -41,7 +43,7 @@ void OSExchangeDataProviderAura::SetFilenames(
 }
 
 void OSExchangeDataProviderAura::SetPickledData(
-    OSExchangeData::CustomFormat format,
+    const OSExchangeData::CustomFormat& format,
     const Pickle& data) {
   pickle_data_[format] = data;
   formats_ |= OSExchangeData::PICKLED_DATA;
@@ -86,7 +88,7 @@ bool OSExchangeDataProviderAura::GetFilenames(
 }
 
 bool OSExchangeDataProviderAura::GetPickledData(
-    OSExchangeData::CustomFormat format,
+    const OSExchangeData::CustomFormat& format,
     Pickle* data) const {
   PickleData::const_iterator i = pickle_data_.find(format);
   if (i == pickle_data_.end())
@@ -113,34 +115,9 @@ bool OSExchangeDataProviderAura::HasFile() const {
 }
 
 bool OSExchangeDataProviderAura::HasCustomFormat(
-    OSExchangeData::CustomFormat format) const {
+    const OSExchangeData::CustomFormat& format) const {
   return pickle_data_.find(format) != pickle_data_.end();
 }
-
-#if defined(OS_WIN)
-  void OSExchangeDataProviderAura::SetFileContents(
-      const base::FilePath& filename,
-      const std::string& file_contents) {
-    NOTIMPLEMENTED();
-  }
-
-  bool OSExchangeDataProviderAura::GetFileContents(
-      base::FilePath* filename,
-      std::string* file_contents) const {
-    NOTIMPLEMENTED();
-    return false;
-  }
-
-  bool OSExchangeDataProviderAura::HasFileContents() const {
-    NOTIMPLEMENTED();
-    return false;
-  }
-
-  void OSExchangeDataProviderAura::SetDownloadFileInfo(
-      const OSExchangeData::DownloadFileInfo& download) {
-    NOTIMPLEMENTED();
-  }
-#endif
 
 void OSExchangeDataProviderAura::SetHtml(const string16& html,
                                          const GURL& base_url) {
@@ -173,7 +150,8 @@ const gfx::ImageSkia& OSExchangeDataProviderAura::GetDragImage() const {
   return drag_image_;
 }
 
-const gfx::Vector2d& OSExchangeDataProviderAura::GetDragImageOffset() const {
+const gfx::Vector2d&
+OSExchangeDataProviderAura::GetDragImageOffset() const {
   return drag_image_offset_;
 }
 
@@ -197,15 +175,5 @@ bool OSExchangeDataProviderAura::GetPlainTextURL(GURL* url) const {
 OSExchangeData::Provider* OSExchangeData::CreateProvider() {
   return new OSExchangeDataProviderAura();
 }
-
-// static
-OSExchangeData::CustomFormat
-OSExchangeData::RegisterCustomFormat(const std::string& type) {
-  // On Aura you probably want to just use the Clipboard::Get*FormatType APIs
-  // instead.  But we can also dynamically generate new CustomFormat objects
-  // here too if really necessary.
-  return Clipboard::FormatType::Deserialize(type);
-}
-
 
 }  // namespace ui

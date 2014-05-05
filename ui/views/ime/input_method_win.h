@@ -73,6 +73,7 @@ class InputMethodWin : public InputMethodBase {
 
   LRESULT OnDocumentFeed(RECONVERTSTRING *reconv);
   LRESULT OnReconvertString(RECONVERTSTRING *reconv);
+  LRESULT OnQueryCharPosition(IMECHARPOSITION *char_positon);
 
   // Overridden from InputMethodBase.
   virtual void OnWillChangeFocus(View* focused_before, View* focused) OVERRIDE;
@@ -80,9 +81,6 @@ class InputMethodWin : public InputMethodBase {
 
   // Asks the client to confirm current composition text.
   void ConfirmCompositionText();
-
-  // Enables or disables the IME according to the current text input type.
-  void UpdateIMEState();
 
   // The HWND this InputMethod is bound to.
   HWND hwnd_;

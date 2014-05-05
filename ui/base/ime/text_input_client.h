@@ -65,12 +65,6 @@ class UI_EXPORT TextInputClient {
   // Returns current caret (insertion point) bounds relative to the screen
   // coordinates. If there is selection, then the selection bounds will be
   // returned.
-  // TODO(yusukes): Currently views::NativeTextfieldViews which implements this
-  // interface returns its view's coordinates. We should to do the following:
-  // 1) Modify NativeTextfieldViews so it returns screen coordinates.
-  // 2) Remove view-to-screen coordinates conversion code in InputMethodBridge.
-  // 3) Modify InputMethodWin. It requires a rect in toplevel window's
-  //    coordinates instead of screen.
   virtual gfx::Rect GetCaretBounds() = 0;
 
   // Retrieves the composition character boundary rectangle relative to the
@@ -106,7 +100,11 @@ class UI_EXPORT TextInputClient {
   // Deletes contents in the given UTF-16 based character range. Current
   // composition text will be confirmed before deleting the range.
   // The input caret will be moved to the place where the range gets deleted.
-  // Returns false if the oepration is not supported.
+  // ExtendSelectionAndDelete should be used instead as far as you are deleting
+  // characters around current caret. This function with the range based on
+  // GetSelectionRange has a race condition due to asynchronous IPCs between
+  // browser and renderer.
+  // Returns false if the operation is not supported.
   virtual bool DeleteRange(const ui::Range& range) = 0;
 
   // Retrieves the text content in a given UTF-16 based character range.
@@ -129,8 +127,15 @@ class UI_EXPORT TextInputClient {
       base::i18n::TextDirection direction) = 0;
 
   // Deletes the current selection plus the specified number of characters
-  // before and after the selection or caret.
+  // before and after the selection or caret. This function should be used
+  // instead of calling DeleteRange with GetSelectionRange, because
+  // GetSelectionRange may not be the latest value due to asynchronous of IPC
+  // between browser and renderer.
   virtual void ExtendSelectionAndDelete(size_t before, size_t after) = 0;
+
+  // Ensure the caret is within |rect|.  |rect| is in screen coordinates and
+  // may extend beyond the bounds of this TextInputClient.
+  virtual void EnsureCaretInRect(const gfx::Rect& rect) = 0;
 };
 
 }  // namespace ui

@@ -67,6 +67,14 @@ namespace logging {
 
 DcheckState g_dcheck_state = DISABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS;
 
+DcheckState get_dcheck_state() {
+  return g_dcheck_state;
+}
+
+void set_dcheck_state(DcheckState state) {
+  g_dcheck_state = state;
+}
+
 namespace {
 
 VlogInfo* g_vlog_info = NULL;
@@ -163,6 +171,8 @@ void CloseFile(FileHandle log) {
 void DeleteFilePath(const PathString& log_name) {
 #if defined(OS_WIN)
   DeleteFile(log_name.c_str());
+#elif defined (OS_NACL)
+  // Do nothing; unlink() isn't supported on NaCl.
 #else
   unlink(log_name.c_str());
 #endif
@@ -348,9 +358,11 @@ bool BaseInitLoggingImpl(const PathChar* new_log_file,
                          LogLockingState lock_log,
                          OldFileDeletionState delete_old,
                          DcheckState dcheck_state) {
+#if defined(OS_NACL)
+  CHECK(logging_dest == LOG_NONE ||
+        logging_dest == LOG_ONLY_TO_SYSTEM_DEBUG_LOG);
+#endif
   g_dcheck_state = dcheck_state;
-// TODO(bbudge) Hook this up to NaCl logging.
-#if !defined(OS_NACL)
   CommandLine* command_line = CommandLine::ForCurrentProcess();
   // Don't bother initializing g_vlog_info unless we use one of the
   // vlog switches.
@@ -393,10 +405,6 @@ bool BaseInitLoggingImpl(const PathChar* new_log_file,
     DeleteFilePath(*log_file_name);
 
   return InitializeLogFileHandle();
-#else
-  (void) g_vlog_info_prev;
-  return true;
-#endif  // !defined(OS_NACL)
 }
 
 void SetMinLogLevel(int level) {
@@ -581,7 +589,8 @@ LogMessage::~LogMessage() {
 #if defined(OS_WIN)
     OutputDebugStringA(str_newline.c_str());
 #elif defined(OS_ANDROID)
-    android_LogPriority priority = ANDROID_LOG_UNKNOWN;
+    android_LogPriority priority =
+        (severity_ < 0) ? ANDROID_LOG_VERBOSE : ANDROID_LOG_UNKNOWN;
     switch (severity_) {
       case LOG_INFO:
         priority = ANDROID_LOG_INFO;

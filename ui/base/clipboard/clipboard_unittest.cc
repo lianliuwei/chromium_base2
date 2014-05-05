@@ -38,7 +38,7 @@ class ClipboardTest : public PlatformTest {
   Clipboard& clipboard() { return clipboard_; }
 
  private:
-  MessageLoopForUI message_loop_;
+  base::MessageLoopForUI message_loop_;
   Clipboard clipboard_;
 };
 
@@ -362,7 +362,7 @@ TEST_F(ClipboardTest, SharedBitmapTest) {
 
   clipboard().WriteObjects(Clipboard::BUFFER_STANDARD,
                            objects,
-                           Clipboard::SourceTag());
+                           SourceTag());
 
   EXPECT_TRUE(clipboard().IsFormatAvailable(Clipboard::GetBitmapFormatType(),
                                             Clipboard::BUFFER_STANDARD));

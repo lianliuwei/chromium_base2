@@ -41,12 +41,20 @@ Notification::Notification(NotificationType type,
    serial_number_(g_next_serial_number_++),
    shown_as_popup_(false),
    is_read_(false),
-   is_expanded_(false) {
+   is_expanded_(false),
+   never_timeout_(false) {
   // This can override some data members initialized to deafule values above.
   ApplyOptionalFields(optional_fields);
 }
 
 Notification::~Notification() {
+}
+
+void Notification::CopyState(Notification* base) {
+  shown_as_popup_ = base->shown_as_popup();
+  is_read_ = base->is_read();
+  is_expanded_ = base->is_expanded();
+  never_timeout_ = base->never_timeout();
 }
 
 bool Notification::SetButtonIcon(size_t index, const gfx::Image& icon) {
@@ -93,6 +101,8 @@ void Notification::ApplyOptionalFields(const DictionaryValue* fields) {
       items_.push_back(NotificationItem(title, message));
     }
   }
+
+  fields->GetBoolean(kPrivateNeverTimeoutKey, &never_timeout_);
 }
 
 }  // namespace message_center

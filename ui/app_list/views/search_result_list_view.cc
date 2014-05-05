@@ -27,7 +27,7 @@ SearchResultListView::SearchResultListView(
       results_(NULL),
       last_visible_index_(0),
       selected_index_(-1),
-      ALLOW_THIS_IN_INITIALIZER_LIST(update_factory_(this)) {
+      update_factory_(this) {
   SetLayoutManager(
       new views::BoxLayout(views::BoxLayout::kVertical, 0, 0, 0));
 
@@ -75,6 +75,12 @@ bool SearchResultListView::IsResultViewSelected(
 
 bool SearchResultListView::OnKeyPressed(const ui::KeyEvent& event) {
   switch (event.key_code()) {
+    case ui::VKEY_TAB:
+      if (event.IsShiftDown())
+        SetSelectedIndex(std::max(selected_index_ - 1, 0));
+      else
+        SetSelectedIndex(std::min(selected_index_ + 1, last_visible_index_));
+      return true;
     case ui::VKEY_UP:
       SetSelectedIndex(std::max(selected_index_ - 1, 0));
       return true;
@@ -120,7 +126,7 @@ void SearchResultListView::ScheduleUpdate() {
   // When search results are added one by one, each addition generates an update
   // request. Consolidates those update requests into one Update call.
   if (!update_factory_.HasWeakPtrs()) {
-    MessageLoop::current()->PostTask(
+    base::MessageLoop::current()->PostTask(
         FROM_HERE,
         base::Bind(&SearchResultListView::Update,
                    update_factory_.GetWeakPtr()));
@@ -150,7 +156,7 @@ void SearchResultListView::ListItemsChanged(size_t start, size_t count) {
 void SearchResultListView::SearchResultActivated(SearchResultView* view,
                                                  const ui::Event& event) {
   if (delegate_ && view->result())
-    delegate_->OpenResult(*(view->result()), event.flags());
+    delegate_->OpenResult(view->result(), event.flags());
 }
 
 void SearchResultListView::SearchResultActionActivated(SearchResultView* view,
@@ -158,7 +164,7 @@ void SearchResultListView::SearchResultActionActivated(SearchResultView* view,
                                                        const ui::Event& event) {
   if (delegate_ && view->result()) {
     delegate_->InvokeResultAction(
-        *(view->result()), action_index, event.flags());
+        view->result(), action_index, event.flags());
   }
 }
 

@@ -20,6 +20,10 @@
   return YES;
 }
 
+- (BOOL)canBecomeMainWindow {
+  return YES;
+}
+
 @end
 
 @implementation AppListWindowController;
@@ -33,7 +37,7 @@
   [controlledWindow setReleasedWhenClosed:NO];
   [controlledWindow setBackgroundColor:[NSColor clearColor]];
   [controlledWindow setOpaque:NO];
-  [controlledWindow setHasShadow:NO];
+  [controlledWindow setHasShadow:YES];
 
   if ((self = [super initWithWindow:controlledWindow])) {
     appListViewController_.reset([[AppListViewController alloc] init]);
@@ -41,9 +45,6 @@
                     display:NO];
     [[self window] setContentView:[appListViewController_ view]];
     [[self window] setDelegate:self];
-    [[self window] makeFirstResponder:
-        [[appListViewController_ appsGridController]
-            collectionViewAtPageIndex:0]];
   }
   return self;
 }
@@ -52,14 +53,9 @@
   return appListViewController_;
 }
 
-- (void)doCommandBySelector:(SEL)command {
-  if (command == @selector(cancel:)) {
-    if ([appListViewController_ delegate])
-      [appListViewController_ delegate]->Dismiss();
-  } else if (command == @selector(insertNewline:) ||
-             command == @selector(insertLineBreak:)) {
-    [[appListViewController_ appsGridController] activateSelection];
-  }
+- (void)windowDidResignMain:(NSNotification*)notification {
+  if ([appListViewController_ delegate])
+    [appListViewController_ delegate]->Dismiss();
 }
 
 @end

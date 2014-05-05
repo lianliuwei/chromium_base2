@@ -40,7 +40,8 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView,
   virtual gfx::Insets GetInsets() const OVERRIDE;
   virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual void Layout() OVERRIDE;
-  virtual std::string GetClassName() const OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
+  virtual void ChildPreferredSizeChanged(View* child) OVERRIDE;
 
   // Overridden from ButtonListener:
   virtual void ButtonPressed(Button* sender, const ui::Event& event) OVERRIDE;
@@ -54,8 +55,6 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView,
   void SetTitle(const string16& title);
   void SetShowCloseButton(bool show);
   void SetTitlebarExtraView(View* view);
-
-  void set_can_drag(bool can_drag) { can_drag_ = can_drag; }
 
   // Given the size of the contents and the rect to point at, returns the bounds
   // of the bubble window. The bubble's arrow location may change if the bubble
@@ -96,9 +95,6 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView,
   // When supplied, this view is placed in the titlebar between the title and
   // (x) close button.
   View* titlebar_extra_view_;
-
-  // A flag controlling the ability to drag this frame.
-  bool can_drag_;
 
   DISALLOW_COPY_AND_ASSIGN(BubbleFrameView);
 };

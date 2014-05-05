@@ -59,6 +59,19 @@
 #endif
 
 using base::FilePath;
+using base::MakeAbsoluteFilePath;
+
+namespace base {
+
+FilePath MakeAbsoluteFilePath(const FilePath& input) {
+  base::ThreadRestrictions::AssertIOAllowed();
+  char full_path[PATH_MAX];
+  if (realpath(input.value().c_str(), full_path) == NULL)
+    return FilePath();
+  return FilePath(full_path);
+}
+
+}  // namespace base
 
 namespace file_util {
 
@@ -150,63 +163,6 @@ static std::string TempFileName() {
 #endif
 }
 
-bool AbsolutePath(FilePath* path) {
-  base::ThreadRestrictions::AssertIOAllowed();  // For realpath().
-  char full_path[PATH_MAX];
-  if (realpath(path->value().c_str(), full_path) == NULL)
-    return false;
-  *path = FilePath(full_path);
-  return true;
-}
-
-int CountFilesCreatedAfter(const FilePath& path,
-                           const base::Time& comparison_time) {
-  base::ThreadRestrictions::AssertIOAllowed();
-  int file_count = 0;
-
-  DIR* dir = opendir(path.value().c_str());
-  if (dir) {
-#if !defined(OS_LINUX) && !defined(OS_MACOSX) && !defined(OS_BSD) && \
-    !defined(OS_SOLARIS) && !defined(OS_ANDROID)
-  #error Port warning: depending on the definition of struct dirent, \
-         additional space for pathname may be needed
-#endif
-    struct dirent ent_buf;
-    struct dirent* ent;
-    while (readdir_r(dir, &ent_buf, &ent) == 0 && ent) {
-      if ((strcmp(ent->d_name, ".") == 0) ||
-          (strcmp(ent->d_name, "..") == 0))
-        continue;
-
-      stat_wrapper_t st;
-      int test = CallStat(path.Append(ent->d_name).value().c_str(), &st);
-      if (test != 0) {
-        DPLOG(ERROR) << "stat64 failed";
-        continue;
-      }
-      // Here, we use Time::TimeT(), which discards microseconds. This
-      // means that files which are newer than |comparison_time| may
-      // be considered older. If we don't discard microseconds, it
-      // introduces another issue. Suppose the following case:
-      //
-      // 1. Get |comparison_time| by Time::Now() and the value is 10.1 (secs).
-      // 2. Create a file and the current time is 10.3 (secs).
-      //
-      // As POSIX doesn't have microsecond precision for |st_ctime|,
-      // the creation time of the file created in the step 2 is 10 and
-      // the file is considered older than |comparison_time|. After
-      // all, we may have to accept either of the two issues: 1. files
-      // which are older than |comparison_time| are considered newer
-      // (current implementation) 2. files newer than
-      // |comparison_time| are considered older.
-      if (static_cast<time_t>(st.st_ctime) >= comparison_time.ToTimeT())
-        ++file_count;
-    }
-    closedir(dir);
-  }
-  return file_count;
-}
-
 // TODO(erikkay): The Windows version of this accepts paths like "foo/bar/*"
 // which works both with and without the recursive flag.  I'm not sure we need
 // that functionality. If not, remove from file_util_win.cc, otherwise add it
@@ -276,9 +232,15 @@ bool MoveUnsafe(const FilePath& from_path, const FilePath& to_path) {
   return true;
 }
 
-bool ReplaceFile(const FilePath& from_path, const FilePath& to_path) {
+bool ReplaceFileAndGetError(const FilePath& from_path,
+                            const FilePath& to_path,
+                            base::PlatformFileError* error) {
   base::ThreadRestrictions::AssertIOAllowed();
-  return (rename(from_path.value().c_str(), to_path.value().c_str()) == 0);
+  if (rename(from_path.value().c_str(), to_path.value().c_str()) == 0)
+    return true;
+  if (error)
+    *error = base::ErrnoToPlatformFileError(errno);
+  return false;
 }
 
 bool CopyDirectory(const FilePath& from_path,
@@ -301,15 +263,16 @@ bool CopyDirectory(const FilePath& from_path,
   // This function does not properly handle destinations within the source
   FilePath real_to_path = to_path;
   if (PathExists(real_to_path)) {
-    if (!AbsolutePath(&real_to_path))
+    real_to_path = MakeAbsoluteFilePath(real_to_path);
+    if (real_to_path.empty())
       return false;
   } else {
-    real_to_path = real_to_path.DirName();
-    if (!AbsolutePath(&real_to_path))
+    real_to_path = MakeAbsoluteFilePath(real_to_path.DirName());
+    if (real_to_path.empty())
       return false;
   }
-  FilePath real_from_path = from_path;
-  if (!AbsolutePath(&real_from_path))
+  FilePath real_from_path = MakeAbsoluteFilePath(from_path);
+  if (real_from_path.empty())
     return false;
   if (real_to_path.value().size() >= real_from_path.value().size() &&
       real_to_path.value().compare(0, real_from_path.value().size(),
@@ -586,6 +549,24 @@ bool CreateDirectory(const FilePath& full_path) {
   return true;
 }
 
+base::FilePath MakeUniqueDirectory(const base::FilePath& path) {
+  const int kMaxAttempts = 20;
+  for (int attempts = 0; attempts < kMaxAttempts; attempts++) {
+    int uniquifier =
+        GetUniquePathNumber(path, base::FilePath::StringType());
+    if (uniquifier < 0)
+      break;
+    base::FilePath test_path = (uniquifier == 0) ? path :
+        path.InsertBeforeExtensionASCII(
+            base::StringPrintf(" (%d)", uniquifier));
+    if (mkdir(test_path.value().c_str(), 0777) == 0)
+      return test_path;
+    else if (errno != EEXIST)
+      break;
+  }
+  return base::FilePath();
+}
+
 // TODO(rkc): Refactor GetFileInfo and FileEnumerator to handle symlinks
 // correctly. http://code.google.com/p/chromium-os/issues/detail?id=15948
 bool IsLink(const FilePath& file_path) {
@@ -857,11 +838,6 @@ bool FileEnumerator::ReadDirectory(std::vector<DirectoryEntryInfo>* entries,
 
   closedir(dir);
   return true;
-}
-
-bool HasFileBeenModifiedSince(const FileEnumerator::FindInfo& find_info,
-                              const base::Time& cutoff_time) {
-  return static_cast<time_t>(find_info.stat.st_mtime) >= cutoff_time.ToTimeT();
 }
 
 bool NormalizeFilePath(const FilePath& path, FilePath* normalized_path) {

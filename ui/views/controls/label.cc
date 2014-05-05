@@ -36,7 +36,7 @@ const int kCachedSizeLimit = 10;
 namespace views {
 
 // static
-const char Label::kViewClassName[] = "views/Label";
+const char Label::kViewClassName[] = "Label";
 
 Label::Label() {
   Init(string16(), GetDefaultFont());
@@ -117,6 +117,15 @@ void Label::SetHorizontalAlignment(gfx::HorizontalAlignment alignment) {
   }
   if (horizontal_alignment_ != alignment) {
     horizontal_alignment_ = alignment;
+    SchedulePaint();
+  }
+}
+
+void Label::SetLineHeight(int height) {
+  if (height != line_height_) {
+    line_height_ = height;
+    ResetCachedSize();
+    PreferredSizeChanged();
     SchedulePaint();
   }
 }
@@ -226,14 +235,30 @@ int Label::GetHeightForWidth(int w) {
   int cache_width = w;
 
   int h = font_.GetHeight();
-  gfx::Canvas::SizeStringInt(text_, font_, &w, &h, ComputeDrawStringFlags());
+  const int flags = ComputeDrawStringFlags();
+  gfx::Canvas::SizeStringInt(text_, font_, &w, &h, line_height_, flags);
   cached_heights_[cached_heights_cursor_] = gfx::Size(cache_width, h);
   cached_heights_cursor_ = (cached_heights_cursor_ + 1) % kCachedSizeLimit;
   return h + GetInsets().height();
 }
 
-std::string Label::GetClassName() const {
+const char* Label::GetClassName() const {
   return kViewClassName;
+}
+
+View* Label::GetTooltipHandlerForPoint(const gfx::Point& point) {
+  // Bail out if the label does not contain the point.
+  // Note that HitTestPoint() cannot be used here as it uses
+  // Label::HitTestRect() to determine if the point hits the label; and
+  // Label::HitTestRect() always fails. Instead, default HitTestRect()
+  // implementation should be used.
+  if (!View::HitTestRect(gfx::Rect(point, gfx::Size(1, 1))))
+    return NULL;
+
+  if (tooltip_text_.empty() && !ShouldShowDefaultTooltip())
+    return NULL;
+
+  return this;
 }
 
 bool Label::HitTestRect(const gfx::Rect& rect) const {
@@ -250,11 +275,11 @@ bool Label::GetTooltipText(const gfx::Point& p, string16* tooltip) const {
   }
 
   // Show the full text if the text does not fit.
-  if (!is_multi_line_ &&
-      (font_.GetStringWidth(text_) > GetAvailableRect().width())) {
+  if (ShouldShowDefaultTooltip()) {
     *tooltip = text_;
     return true;
   }
+
   return false;
 }
 
@@ -274,7 +299,7 @@ void Label::PaintText(gfx::Canvas* canvas,
         enabled() ? enabled_shadow_color_ : disabled_shadow_color_));
   canvas->DrawStringWithShadows(text, font_,
       enabled() ? actual_enabled_color_ : actual_disabled_color_,
-      text_bounds, flags, shadows);
+      text_bounds, line_height_, flags, shadows);
 
   if (HasFocus()) {
     gfx::Rect focus_bounds = text_bounds;
@@ -297,7 +322,7 @@ gfx::Size Label::GetTextSize() const {
     int flags = ComputeDrawStringFlags();
     if (!is_multi_line_)
       flags |= gfx::Canvas::NO_ELLIPSIS;
-    gfx::Canvas::SizeStringInt(text_, font_, &w, &h, flags);
+    gfx::Canvas::SizeStringInt(text_, font_, &w, &h, line_height_, flags);
     text_size_.SetSize(w, h);
     text_size_valid_ = true;
   }
@@ -338,9 +363,10 @@ void Label::Init(const string16& text, const gfx::Font& font) {
   auto_color_readability_ = true;
   UpdateColorsFromTheme(ui::NativeTheme::instance());
   horizontal_alignment_ = gfx::ALIGN_CENTER;
+  line_height_ = 0;
   is_multi_line_ = false;
   allow_character_break_ = false;
-  elide_behavior_ = NO_ELIDE;
+  elide_behavior_ = ELIDE_AT_END;
   collapse_when_hidden_ = false;
   directionality_mode_ = USE_UI_DIRECTIONALITY;
   has_focus_border_ = false;
@@ -452,9 +478,10 @@ void Label::CalculateDrawStringParams(string16* paint_text,
                                       int* flags) const {
   DCHECK(paint_text && text_bounds && flags);
 
-  // TODO(msw): Use ElideRectangleText to support eliding multi-line text.
-  if (elide_behavior_ == ELIDE_AS_EMAIL) {
-    *paint_text = ui::ElideEmail(text_, font_, GetAvailableRect().width());
+  // TODO(msw): Use ElideRectangleText to support eliding multi-line text.  Once
+  // this is done, we can set NO_ELLIPSIS unconditionally at the bottom.
+  if (is_multi_line_ || (elide_behavior_ == NO_ELIDE)) {
+    *paint_text = text_;
   } else if (elide_behavior_ == ELIDE_IN_MIDDLE) {
     *paint_text = ui::ElideText(text_, font_, GetAvailableRect().width(),
                                 ui::ELIDE_IN_MIDDLE);
@@ -462,11 +489,14 @@ void Label::CalculateDrawStringParams(string16* paint_text,
     *paint_text = ui::ElideText(text_, font_, GetAvailableRect().width(),
                                 ui::ELIDE_AT_END);
   } else {
-    *paint_text = text_;
+    DCHECK_EQ(ELIDE_AS_EMAIL, elide_behavior_);
+    *paint_text = ui::ElideEmail(text_, font_, GetAvailableRect().width());
   }
 
   *text_bounds = GetTextBounds();
   *flags = ComputeDrawStringFlags();
+  if (!is_multi_line_ || (elide_behavior_ == NO_ELIDE))
+     *flags |= gfx::Canvas::NO_ELLIPSIS;
 }
 
 void Label::UpdateColorsFromTheme(const ui::NativeTheme* theme) {
@@ -490,6 +520,11 @@ void Label::ResetCachedSize() {
   cached_heights_cursor_ = 0;
   for (int i = 0; i < kCachedSizeLimit; ++i)
     cached_heights_[i] = gfx::Size();
+}
+
+bool Label::ShouldShowDefaultTooltip() const {
+  return !is_multi_line_ &&
+      font_.GetStringWidth(text_) > GetAvailableRect().width();
 }
 
 }  // namespace views

@@ -96,6 +96,7 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   virtual void FlashFrame(bool flash_frame) OVERRIDE;
   virtual void OnNativeWidgetFocus() OVERRIDE;
   virtual void OnNativeWidgetBlur() OVERRIDE;
+  virtual void SetInactiveRenderingDisabled(bool disable_inactive) OVERRIDE;
 
   // Overridden from aura::RootWindowHost:
   virtual void SetDelegate(aura::RootWindowHostDelegate* delegate) OVERRIDE;
@@ -121,9 +122,6 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   virtual bool CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
                                   const gfx::Point& dest_offset,
                                   SkCanvas* canvas) OVERRIDE;
-  virtual bool GrabSnapshot(
-      const gfx::Rect& snapshot_bounds,
-      std::vector<unsigned char>* png_representation) OVERRIDE;
   virtual void PostNativeEvent(const base::NativeEvent& native_event) OVERRIDE;
   virtual void OnDeviceScaleFactorChanged(float device_scale_factor) OVERRIDE;
   virtual void PrepareForShutdown() OVERRIDE;
@@ -257,6 +255,11 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   // completed. This variable indicates that a Close was converted to a Hide,
   // so that when the Hide is completed the host window should be closed.
   bool pending_close_;
+
+  // True if the widget is going to have a non_client_view. We cache this value
+  // rather than asking the Widget for the non_client_view so that we know at
+  // Init time, before the Widget has created the NonClientView.
+  bool has_non_client_view_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopRootWindowHostWin);
 };

@@ -5,13 +5,9 @@
 #ifndef SKIA_EXT_ANALYSIS_CANVAS_H_
 #define SKIA_EXT_ANALYSIS_CANVAS_H_
 
-#include <list>
-#include <set>
-
-#include "base/hash_tables.h"
-#include "skia/ext/lazy_pixel_ref.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkDevice.h"
+#include "third_party/skia/include/core/SkPicture.h"
 
 namespace skia {
 
@@ -22,24 +18,20 @@ class AnalysisDevice;
 // played back through it.
 // To use: create a SkBitmap with kNo_Config, create an AnalysisDevice
 // using that bitmap, and create an AnalysisCanvas using the device.
-// Play a picture into the canvas, and then check isCheap().
-class SK_API AnalysisCanvas : public SkCanvas {
+// Play a picture into the canvas, and then check result.
+class SK_API AnalysisCanvas : public SkCanvas, public SkDrawPictureCallback {
  public:
-  typedef std::list<skia::LazyPixelRef*> LazyPixelRefList;
-
   AnalysisCanvas(AnalysisDevice*);
   virtual ~AnalysisCanvas();
 
-  // Returns true if the estimated cost of drawing is below an
-  // arbitrary threshold.
-  bool isCheap() const;
+  // Returns true when a SkColor can be used to represent result.
   bool getColorIfSolid(SkColor* color) const;
-  bool isTransparent() const;
-  void consumeLazyPixelRefs(LazyPixelRefList* pixelRefs);
+  bool hasText() const;
 
-  // Returns the estimated cost of drawing, in arbitrary units.
-  int getEstimatedCost() const;
+  // SkDrawPictureCallback override.
+  virtual bool abortDrawing() OVERRIDE;
 
+  // SkCanvas overrides.
   virtual bool clipRect(const SkRect& rect,
                         SkRegion::Op op = SkRegion::kIntersect_Op,
                         bool doAntiAlias = false) OVERRIDE;
@@ -67,16 +59,11 @@ class SK_API AnalysisCanvas : public SkCanvas {
 
 class SK_API AnalysisDevice : public SkDevice {
  public:
-  typedef std::list<skia::LazyPixelRef*> LazyPixelRefList;
-  typedef base::hash_set<uint32_t> IdSet;
-
   AnalysisDevice(const SkBitmap& bm);
   virtual ~AnalysisDevice();
 
-  int getEstimatedCost() const;
   bool getColorIfSolid(SkColor* color) const;
-  bool isTransparent() const;
-  void consumeLazyPixelRefs(LazyPixelRefList* pixelRefs);
+  bool hasText() const;
 
   void setForceNotSolid(bool flag);
   void setForceNotTransparent(bool flag);
@@ -129,23 +116,16 @@ class SK_API AnalysisDevice : public SkDevice {
   virtual void drawDevice(const SkDraw&, SkDevice*, int x, int y,
                           const SkPaint&) OVERRIDE;
 
-  int estimatedCost_;
-
  private:
 
   typedef SkDevice INHERITED;
-
-  void addPixelRefIfLazy(SkPixelRef* pixelRef);
-  void addBitmap(const SkBitmap& bitmap);
-  void addBitmapFromPaint(const SkPaint& paint);
 
   bool isForcedNotSolid_;
   bool isForcedNotTransparent_;
   bool isSolidColor_;
   SkColor color_;
   bool isTransparent_;
-  IdSet existingPixelRefIDs_;
-  LazyPixelRefList lazyPixelRefs_;
+  bool hasText_;
 };
 
 }  // namespace skia

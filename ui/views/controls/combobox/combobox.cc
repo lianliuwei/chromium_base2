@@ -18,7 +18,7 @@
 namespace views {
 
 // static
-const char Combobox::kViewClassName[] = "views/Combobox";
+const char Combobox::kViewClassName[] = "Combobox";
 
 ////////////////////////////////////////////////////////////////////////////////
 // Combobox, public:
@@ -58,10 +58,7 @@ void Combobox::SelectionChanged() {
   selected_index_ = native_wrapper_->GetSelectedIndex();
   if (listener_)
     listener_->OnSelectedIndexChanged(this);
-  if (GetWidget()) {
-    GetWidget()->NotifyAccessibilityEvent(
-        this, ui::AccessibilityTypes::EVENT_VALUE_CHANGED, false);
-  }
+  NotifyAccessibilityEvent(ui::AccessibilityTypes::EVENT_VALUE_CHANGED, false);
 }
 
 void Combobox::SetAccessibleName(const string16& name) {
@@ -121,11 +118,13 @@ bool Combobox::OnKeyReleased(const ui::KeyEvent& e) {
 
 void Combobox::OnFocus() {
   // Forward the focus to the wrapper.
-  if (native_wrapper_)
+  if (native_wrapper_) {
     native_wrapper_->SetFocus();
-  else
+    NotifyAccessibilityEvent(ui::AccessibilityTypes::EVENT_FOCUS, true);
+  } else {
     View::OnFocus();  // Will focus the RootView window (so we still get
                       // keyboard messages).
+  }
 }
 
 void Combobox::OnBlur() {
@@ -141,8 +140,9 @@ void Combobox::GetAccessibleState(ui::AccessibleViewState* state) {
   state->count = model_->GetItemCount();
 }
 
-void Combobox::ViewHierarchyChanged(bool is_add, View* parent, View* child) {
-  if (is_add && !native_wrapper_ && GetWidget()) {
+void Combobox::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
+  if (details.is_add && !native_wrapper_ && GetWidget()) {
     // The native wrapper's lifetime will be managed by the view hierarchy after
     // we call AddChildView.
     native_wrapper_ = NativeComboboxWrapper::CreateWrapper(this);
@@ -156,7 +156,7 @@ void Combobox::ViewHierarchyChanged(bool is_add, View* parent, View* child) {
   }
 }
 
-std::string Combobox::GetClassName() const {
+const char* Combobox::GetClassName() const {
   return kViewClassName;
 }
 

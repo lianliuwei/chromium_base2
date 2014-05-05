@@ -40,6 +40,14 @@
       'rule_name': 'isolate',
       'extension': 'isolate',
       'inputs': [
+        # Files that are known to be involved in this step.
+        '<(DEPTH)/tools/swarm_client/isolate.py',
+        '<(DEPTH)/tools/swarm_client/isolateserver_archive.py',
+        '<(DEPTH)/tools/swarm_client/run_isolated.py',
+        '<(DEPTH)/tools/swarm_client/run_test_cases.py',
+        '<(DEPTH)/tools/swarm_client/short_expression_finder.py',
+        '<(DEPTH)/tools/swarm_client/trace_inputs.py',
+
         # Disable file tracking by the build driver for now. This means the
         # project must have the proper build-time dependency for their runtime
         # dependency. This improves the runtime of the build driver since it
@@ -63,13 +71,16 @@
             '<(test_isolation_mode)',
             # GYP will eliminate duplicate arguments so '<(PRODUCT_DIR)' cannot
             # be provided twice. To work around this behavior, append '/'.
+            #
             # Also have a space after <(PRODUCT_DIR) or visual studio will
             # escape the argument wrappping " with the \ and merge it into
             # the following arguments.
+            #
+            # Other variables should use the -V FOO=<(FOO) form so frequent
+            # values, like '0' or '1', aren't stripped out by GYP.
             '--outdir', '<(PRODUCT_DIR)/ ',
             '--variable', 'PRODUCT_DIR', '<(PRODUCT_DIR) ',
-            '--variable', 'OS', '<(OS)',
-            '--variable', 'chromeos', '<(chromeos)',
+            '--variable', 'OS=<(OS)',
             '--result', '<@(_outputs)',
             '--isolate', '<(RULE_INPUT_PATH)',
           ],
@@ -79,12 +90,9 @@
             '<(DEPTH)/tools/swarm_client/isolate.py',
             '<(test_isolation_mode)',
             '--outdir', '<(test_isolation_outdir)',
-            # Have a space after <(PRODUCT_DIR) or visual studio will
-            # escape the argument wrappping " with the \ and merge it into
-            # the following arguments.
+            # See comment above.
             '--variable', 'PRODUCT_DIR', '<(PRODUCT_DIR) ',
-            '--variable', 'OS', '<(OS)',
-            '--variable', 'chromeos', '<(chromeos)',
+            '--variable', 'OS=<(OS)',
             '--result', '<@(_outputs)',
             '--isolate', '<(RULE_INPUT_PATH)',
           ],

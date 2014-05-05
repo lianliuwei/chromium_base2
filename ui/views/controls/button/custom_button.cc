@@ -17,7 +17,7 @@ namespace views {
 static const int kHoverFadeDurationMs = 150;
 
 // static
-const char CustomButton::kViewClassName[] = "views/CustomButton";
+const char CustomButton::kViewClassName[] = "CustomButton";
 
 ////////////////////////////////////////////////////////////////////////////////
 // CustomButton, public:
@@ -84,10 +84,8 @@ void CustomButton::SetHotTracked(bool is_hot_tracked) {
   if (state_ != STATE_DISABLED)
     SetState(is_hot_tracked ? STATE_HOVERED : STATE_NORMAL);
 
-  if (is_hot_tracked && GetWidget()) {
-    GetWidget()->NotifyAccessibilityEvent(
-        this, ui::AccessibilityTypes::EVENT_FOCUS, true);
-  }
+  if (is_hot_tracked)
+    NotifyAccessibilityEvent(ui::AccessibilityTypes::EVENT_FOCUS, true);
 }
 
 bool CustomButton::IsHotTracked() const {
@@ -107,7 +105,7 @@ void CustomButton::OnEnabledChanged() {
     SetState(STATE_DISABLED);
 }
 
-std::string CustomButton::GetClassName() const {
+const char* CustomButton::GetClassName() const {
   return kViewClassName;
 }
 
@@ -327,10 +325,9 @@ bool CustomButton::ShouldEnterPushedState(const ui::Event& event) {
 ////////////////////////////////////////////////////////////////////////////////
 // CustomButton, View overrides (protected):
 
-void CustomButton::ViewHierarchyChanged(bool is_add,
-                                        View* parent,
-                                        View* child) {
-  if (!is_add && state_ != STATE_DISABLED)
+void CustomButton::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
+  if (!details.is_add && state_ != STATE_DISABLED)
     SetState(STATE_NORMAL);
 }
 

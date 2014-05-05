@@ -197,7 +197,7 @@ class VIEWS_EXPORT TextButtonBase : public CustomButton,
   virtual void OnEnabledChanged() OVERRIDE;
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
   virtual void OnBoundsChanged(const gfx::Rect& previous_bounds) OVERRIDE;
-  virtual std::string GetClassName() const OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
   virtual void OnNativeThemeChanged(const ui::NativeTheme* theme) OVERRIDE;
 
  protected:
@@ -357,7 +357,7 @@ class VIEWS_EXPORT TextButton : public TextButtonBase {
 
   // Overridden from View:
   virtual gfx::Size GetPreferredSize() OVERRIDE;
-  virtual std::string GetClassName() const OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
 
   // Overridden from TextButtonBase:
   virtual void PaintButton(gfx::Canvas* canvas, PaintButtonMode mode) OVERRIDE;
@@ -398,40 +398,6 @@ class VIEWS_EXPORT TextButton : public TextButtonBase {
   bool ignore_minimum_size_;
 
   DISALLOW_COPY_AND_ASSIGN(TextButton);
-};
-
-////////////////////////////////////////////////////////////////////////////////
-//
-// NativeTextButton
-//
-//  A TextButton that uses the NativeTheme border and sets some properties,
-//  like ignore-minimize-size and text alignment minimum size.
-//
-////////////////////////////////////////////////////////////////////////////////
-class VIEWS_EXPORT NativeTextButton : public TextButton {
- public:
-  // The button's class name.
-  static const char kViewClassName[];
-
-  explicit NativeTextButton(ButtonListener* listener);
-  NativeTextButton(ButtonListener* listener, const string16& text);
-
-  // Overridden from TextButton:
-  virtual gfx::Size GetMinimumSize() OVERRIDE;
-  virtual std::string GetClassName() const OVERRIDE;
-  virtual void OnNativeThemeChanged(const ui::NativeTheme* theme) OVERRIDE;
-
- private:
-  void Init();
-
-  // Sets the necessary theme specific state from |theme|.
-  void SetThemeSpecificState(const ui::NativeTheme* theme);
-
-  // Overridden from TextButton:
-  virtual void GetExtraParams(
-      ui::NativeTheme::ExtraParams* params) const OVERRIDE;
-
-  DISALLOW_COPY_AND_ASSIGN(NativeTextButton);
 };
 
 }  // namespace views

@@ -17,7 +17,11 @@ void MockInputMethod::SetDelegate(internal::InputMethodDelegate* delegate) {
 }
 
 void MockInputMethod::SetFocusedTextInputClient(TextInputClient* client) {
+  if (text_input_client_ == client)
+    return;
   text_input_client_ = client;
+  if (client)
+    OnTextInputTypeChanged(client);
 }
 
 TextInputClient* MockInputMethod::GetTextInputClient() const {
@@ -45,6 +49,7 @@ void MockInputMethod::OnBlur() {
 
 void MockInputMethod::OnTextInputTypeChanged(const TextInputClient* client) {
   FOR_EACH_OBSERVER(Observer, observer_list_, OnTextInputTypeChanged(client));
+  FOR_EACH_OBSERVER(Observer, observer_list_, OnTextInputStateChanged(client));
 }
 
 void MockInputMethod::OnCaretBoundsChanged(const TextInputClient* client) {
@@ -74,12 +79,12 @@ bool MockInputMethod::CanComposeInline() const {
   return true;
 }
 
-void MockInputMethod::AddObserver(Observer* observer) {
-  observer_list_.AddObserver(observer);
+void MockInputMethod::AddObserver(InputMethodObserver* observer) {
+  observer_list_.AddObserver(static_cast<Observer*>(observer));
 }
 
-void MockInputMethod::RemoveObserver(Observer* observer) {
-  observer_list_.RemoveObserver(observer);
+void MockInputMethod::RemoveObserver(InputMethodObserver* observer) {
+  observer_list_.RemoveObserver(static_cast<Observer*>(observer));
 }
 
 }  // namespace ui

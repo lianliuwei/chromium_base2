@@ -260,15 +260,15 @@ class ImageRepPNG : public ImageRep {
   virtual ~ImageRepPNG() {
   }
 
-  virtual int Width() const {
+  virtual int Width() const OVERRIDE {
     return Size().width();
   }
 
-  virtual int Height() const {
+  virtual int Height() const OVERRIDE {
     return Size().height();
   }
 
-  virtual gfx::Size Size() const {
+  virtual gfx::Size Size() const OVERRIDE {
     // Read the PNG data to get the image size, caching it.
     if (!size_cache_) {
       for (std::vector<ImagePNGRep>::const_iterator it = image_reps().begin();
@@ -306,15 +306,15 @@ class ImageRepSkia : public ImageRep {
   virtual ~ImageRepSkia() {
   }
 
-  virtual int Width() const {
+  virtual int Width() const OVERRIDE {
     return image_->width();
   }
 
-  virtual int Height() const {
+  virtual int Height() const OVERRIDE {
     return image_->height();
   }
 
-  virtual gfx::Size Size() const {
+  virtual gfx::Size Size() const OVERRIDE {
     return image_->size();
   }
 
@@ -342,15 +342,15 @@ class ImageRepGdk : public ImageRep {
     }
   }
 
-  virtual int Width() const {
+  virtual int Width() const OVERRIDE {
     return gdk_pixbuf_get_width(pixbuf_);
   }
 
-  virtual int Height() const {
+  virtual int Height() const OVERRIDE {
     return gdk_pixbuf_get_height(pixbuf_);
   }
 
-  virtual gfx::Size Size() const {
+  virtual gfx::Size Size() const OVERRIDE {
     return gfx::Size(Width(), Height());
   }
 
@@ -376,15 +376,15 @@ class ImageRepCairo : public ImageRep {
     delete cairo_cache_;
   }
 
-  virtual int Width() const {
+  virtual int Width() const OVERRIDE {
     return cairo_cache_->Width();
   }
 
-  virtual int Height() const {
+  virtual int Height() const OVERRIDE {
     return cairo_cache_->Height();
   }
 
-  virtual gfx::Size Size() const {
+  virtual gfx::Size Size() const OVERRIDE {
     return gfx::Size(Width(), Height());
   }
 
@@ -411,15 +411,15 @@ class ImageRepCocoaTouch : public ImageRep {
     image_ = nil;
   }
 
-  virtual int Width() const {
+  virtual int Width() const OVERRIDE {
     return Size().width();
   }
 
-  virtual int Height() const {
+  virtual int Height() const OVERRIDE {
     return Size().height();
   }
 
-  virtual gfx::Size Size() const {
+  virtual gfx::Size Size() const OVERRIDE {
     return internal::UIImageSize(image_);
   }
 
@@ -444,15 +444,15 @@ class ImageRepCocoa : public ImageRep {
     image_ = nil;
   }
 
-  virtual int Width() const {
+  virtual int Width() const OVERRIDE {
     return Size().width();
   }
 
-  virtual int Height() const {
+  virtual int Height() const OVERRIDE {
     return Size().height();
   }
 
-  virtual gfx::Size Size() const {
+  virtual gfx::Size Size() const OVERRIDE {
     return internal::NSImageSize(image_);
   }
 

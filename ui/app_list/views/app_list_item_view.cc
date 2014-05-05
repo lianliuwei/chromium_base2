@@ -39,9 +39,6 @@ const int kProgressBarHeight = 4;
 
 const SkColor kTitleColor = SkColorSetRGB(0x5A, 0x5A, 0x5A);
 const SkColor kTitleHoverColor = SkColorSetRGB(0x3C, 0x3C, 0x3C);
-
-const SkColor kSelectedColor = SkColorSetARGB(0x0D, 0, 0, 0);
-const SkColor kHighlightedColor = kHoverAndPushedColor;
 const SkColor kDownloadProgressBackgroundColor =
     SkColorSetRGB(0x90, 0x90, 0x90);
 const SkColor kDownloadProgressColor = SkColorSetRGB(0x20, 0xAA, 0x20);
@@ -182,6 +179,7 @@ void AppListItemView::ItemIconChanged() {
 void AppListItemView::ItemTitleChanged() {
   title_->SetText(UTF8ToUTF16(model_->title()));
   title_->Invalidate();
+  Layout();
 }
 
 void AppListItemView::ItemHighlightedChanged() {
@@ -200,7 +198,7 @@ void AppListItemView::ItemPercentDownloadedChanged() {
   SchedulePaint();
 }
 
-std::string AppListItemView::GetClassName() const {
+const char* AppListItemView::GetClassName() const {
   return kViewClassName;
 }
 
@@ -231,16 +229,12 @@ void AppListItemView::OnPaint(gfx::Canvas* canvas) {
 
   gfx::Rect rect(GetContentsBounds());
 
-  if (model_->highlighted() && !model_->is_installing()) {
-    canvas->FillRect(rect, kHighlightedColor);
-  } else if (hover_animation_->is_animating()) {
-    int alpha = SkColorGetA(kHoverAndPushedColor) *
-        hover_animation_->GetCurrentValue();
-    canvas->FillRect(rect, SkColorSetA(kHoverAndPushedColor, alpha));
-  } else if (state() == STATE_HOVERED || state() == STATE_PRESSED) {
-    canvas->FillRect(rect, kHoverAndPushedColor);
-  } else if (apps_grid_view_->IsSelectedView(this)) {
+  if (apps_grid_view_->IsSelectedView(this)) {
     canvas->FillRect(rect, kSelectedColor);
+  } else if (model_->highlighted() && !model_->is_installing()) {
+    canvas->FillRect(rect, kHighlightedColor);
+  } else if (state() == STATE_HOVERED || state() == STATE_PRESSED) {
+    canvas->FillRect(rect, kHighlightedColor);
   }
 
   if (model_->is_installing()) {

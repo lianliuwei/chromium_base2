@@ -37,7 +37,7 @@
 #include "ui/base/events/event.h"
 #include "ui/base/events/event_utils.h"
 #include "ui/base/keycodes/keyboard_codes.h"
-#include "ui/base/touch/touch_factory.h"
+#include "ui/base/touch/touch_factory_x11.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/base/view_prop.h"
 #include "ui/base/x/device_list_cache_x.h"
@@ -163,6 +163,8 @@ bool ShouldSendCharEventForKeyboardCode(ui::KeyboardCode keycode) {
   }
 }
 
+bool default_override_redirect = false;
+
 }  // namespace
 
 namespace internal {
@@ -180,7 +182,7 @@ class TouchEventCalibrate : public base::MessagePumpObserver {
       right_(0),
       top_(0),
       bottom_(0) {
-    MessageLoopForUI::current()->AddObserver(this);
+    base::MessageLoopForUI::current()->AddObserver(this);
 #if defined(USE_XI2_MT)
     std::vector<std::string> parts;
     if (Tokenize(CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
@@ -198,7 +200,7 @@ class TouchEventCalibrate : public base::MessagePumpObserver {
   }
 
   virtual ~TouchEventCalibrate() {
-    MessageLoopForUI::current()->RemoveObserver(this);
+    base::MessageLoopForUI::current()->RemoveObserver(this);
   }
 
   // Modify the location of the |event|,
@@ -357,6 +359,7 @@ RootWindowHostX11::RootWindowHostX11(const gfx::Rect& bounds)
   XSetWindowAttributes swa;
   memset(&swa, 0, sizeof(swa));
   swa.background_pixmap = None;
+  swa.override_redirect = default_override_redirect;
   xwindow_ = XCreateWindow(
       xdisplay_, x_root_window_,
       bounds.x(), bounds.y(), bounds.width(), bounds.height(),
@@ -364,7 +367,7 @@ RootWindowHostX11::RootWindowHostX11(const gfx::Rect& bounds)
       CopyFromParent,  // depth
       InputOutput,
       CopyFromParent,  // visual
-      CWBackPixmap,
+      CWBackPixmap | CWOverrideRedirect,
       &swa);
   base::MessagePumpAuraX11::Current()->AddDispatcherForWindow(this, xwindow_);
   base::MessagePumpAuraX11::Current()->AddDispatcherForRootWindow(this);
@@ -444,9 +447,12 @@ bool RootWindowHostX11::Dispatch(const base::NativeEvent& event) {
       TranslateAndDispatchMouseEvent(&mouseenter_event);
       break;
     }
-    case Expose:
-      delegate_->AsRootWindow()->ScheduleFullDraw();
+    case Expose: {
+      gfx::Rect damage_rect(xev->xexpose.x, xev->xexpose.y,
+                            xev->xexpose.width, xev->xexpose.height);
+      delegate_->AsRootWindow()->ScheduleRedrawRect(damage_rect);
       break;
+    }
     case KeyPress: {
       ui::KeyEvent keydown_event(xev, false);
       delegate_->OnHostKeyEvent(&keydown_event);
@@ -494,7 +500,7 @@ bool RootWindowHostX11::Dispatch(const base::NativeEvent& event) {
       UpdateIsInternalDisplay();
       // Always update barrier and mouse location because |bounds_| might
       // have already been updated in |SetBounds|.
-      if (pointer_barriers_.get()) {
+      if (pointer_barriers_) {
         UnConfineCursor();
         ConfineCursorToRootWindow();
       }
@@ -671,7 +677,7 @@ gfx::Insets RootWindowHostX11::GetInsets() const {
 
 void RootWindowHostX11::SetInsets(const gfx::Insets& insets) {
   insets_ = insets;
-  if (pointer_barriers_.get()) {
+  if (pointer_barriers_) {
     UnConfineCursor();
     ConfineCursorToRootWindow();
   }
@@ -723,7 +729,7 @@ bool RootWindowHostX11::QueryMouseLocation(gfx::Point* location_return) {
 bool RootWindowHostX11::ConfineCursorToRootWindow() {
 #if XFIXES_MAJOR >= 5
   DCHECK(!pointer_barriers_.get());
-  if (pointer_barriers_.get())
+  if (pointer_barriers_)
     return false;
   pointer_barriers_.reset(new XID[4]);
   gfx::Rect bounds(bounds_);
@@ -758,7 +764,7 @@ bool RootWindowHostX11::ConfineCursorToRootWindow() {
 
 void RootWindowHostX11::UnConfineCursor() {
 #if XFIXES_MAJOR >= 5
-  if (pointer_barriers_.get()) {
+  if (pointer_barriers_) {
     XFixesDestroyPointerBarrier(xdisplay_, pointer_barriers_[0]);
     XFixesDestroyPointerBarrier(xdisplay_, pointer_barriers_[1]);
     XFixesDestroyPointerBarrier(xdisplay_, pointer_barriers_[2]);
@@ -817,7 +823,7 @@ bool RootWindowHostX11::CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
                                              const gfx::Point& dest_offset,
                                              SkCanvas* canvas) {
   scoped_ptr<ui::XScopedImage> scoped_image(GetXImage(source_bounds));
-  if (!scoped_image.get())
+  if (!scoped_image)
     return false;
 
   XImage* image = scoped_image->get();
@@ -851,47 +857,6 @@ bool RootWindowHostX11::CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
     return false;
   }
 
-  return true;
-}
-
-bool RootWindowHostX11::GrabSnapshot(
-    const gfx::Rect& snapshot_bounds,
-    std::vector<unsigned char>* png_representation) {
-  scoped_ptr<ui::XScopedImage> scoped_image(GetXImage(snapshot_bounds));
-  if (!scoped_image.get())
-    return false;
-
-  XImage* image = scoped_image->get();
-  DCHECK(image);
-
-  gfx::PNGCodec::ColorFormat color_format;
-
-  if (image->bits_per_pixel == 32) {
-    color_format = (image->byte_order == LSBFirst) ?
-        gfx::PNGCodec::FORMAT_BGRA : gfx::PNGCodec::FORMAT_RGBA;
-  } else if (image->bits_per_pixel == 24) {
-    // PNGCodec accepts FORMAT_RGB for 3 bytes per pixel:
-    color_format = gfx::PNGCodec::FORMAT_RGB;
-    if (image->byte_order == LSBFirst) {
-      LOG(WARNING) << "Converting BGR->RGB will damage the performance...";
-      int image_size =
-          image->width * image->height * image->bits_per_pixel / 8;
-      for (int i = 0; i < image_size; i += 3) {
-        char tmp = image->data[i];
-        image->data[i] = image->data[i+2];
-        image->data[i+2] = tmp;
-      }
-    }
-  } else {
-    LOG(ERROR) << "bits_per_pixel is too small";
-    return false;
-  }
-
-  unsigned char* data = reinterpret_cast<unsigned char*>(image->data);
-  gfx::PNGCodec::Encode(data, color_format, snapshot_bounds.size(),
-                        image->width * image->bits_per_pixel / 8,
-                        true, std::vector<gfx::PNGCodec::Comment>(),
-                        png_representation);
   return true;
 }
 
@@ -980,10 +945,6 @@ void RootWindowHostX11::DispatchXI2Event(const base::NativeEvent& event) {
 
   switch (type) {
     case ui::ET_TOUCH_MOVED:
-      num_coalesced = ui::CoalescePendingMotionEvents(xev, &last_event);
-      if (num_coalesced > 0)
-        xev = &last_event;
-      // fallthrough
     case ui::ET_TOUCH_PRESSED:
     case ui::ET_TOUCH_CANCELLED:
     case ui::ET_TOUCH_RELEASED: {
@@ -1112,7 +1073,7 @@ scoped_ptr<ui::XScopedImage> RootWindowHostX11::GetXImage(
                 snapshot_bounds.x(), snapshot_bounds.y(),
                 snapshot_bounds.width(), snapshot_bounds.height(),
                 AllPlanes, ZPixmap)));
-  if (!image->get()) {
+  if (!image) {
     LOG(ERROR) << "XGetImage failed";
     image.reset();
   }
@@ -1137,4 +1098,11 @@ gfx::Size RootWindowHost::GetNativeScreenSize() {
   return gfx::Size(DisplayWidth(xdisplay, 0), DisplayHeight(xdisplay, 0));
 }
 
+namespace test {
+
+void SetUseOverrideRedirectWindowByDefault(bool override_redirect) {
+  default_override_redirect = override_redirect;
+}
+
+}  // namespace test
 }  // namespace aura

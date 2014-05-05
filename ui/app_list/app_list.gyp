@@ -12,6 +12,7 @@
       'type': '<(component)',
       'dependencies': [
         '../../base/base.gyp:base',
+        '../../base/base.gyp:base_i18n',
         '../../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
         '../../skia/skia.gyp:skia',
         '../base/strings/ui_strings.gyp:ui_strings',
@@ -34,19 +35,23 @@
         'app_list_model.cc',
         'app_list_model.h',
         'app_list_model_observer.h',
-        'app_list_switches.cc',
-        'app_list_switches.h',
         'app_list_view_delegate.h',
         'apps_grid_view_delegate.h',
+        'cocoa/app_list_pager_view.h',
+        'cocoa/app_list_pager_view.mm',
         'cocoa/app_list_view_controller.h',
         'cocoa/app_list_view_controller.mm',
         'cocoa/app_list_window_controller.h',
         'cocoa/app_list_window_controller.mm',
+        'cocoa/apps_collection_view_drag_manager.h',
+        'cocoa/apps_collection_view_drag_manager.mm',
         'cocoa/apps_grid_controller.h',
         'cocoa/apps_grid_controller.mm',
         'cocoa/apps_grid_view_item.h',
         'cocoa/apps_grid_view_item.mm',
         'cocoa/apps_pagination_model_observer.h',
+        'cocoa/item_drag_controller.h',
+        'cocoa/item_drag_controller.mm',
         'cocoa/scroll_view_with_no_scrollbars.h',
         'cocoa/scroll_view_with_no_scrollbars.mm',
         'pagination_model.cc',
@@ -65,6 +70,7 @@
         'signin_delegate_observer.h',
         'views/app_list_background.cc',
         'views/app_list_background.h',
+        'views/app_list_drag_and_drop_host.h',
         'views/app_list_item_view.cc',
         'views/app_list_item_view.h',
         'views/app_list_main_view.cc',
@@ -114,6 +120,11 @@
           'include_dirs': [
             '../../third_party/GTM',
           ],
+          'link_settings': {
+            'libraries': [
+              '$(SDKROOT)/System/Library/Frameworks/QuartzCore.framework',
+            ],
+          },
         }, {  # OS!="mac"
           'sources/': [
             ['exclude', 'cocoa/'],

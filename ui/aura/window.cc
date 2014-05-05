@@ -163,10 +163,10 @@ ui::Layer* Window::RecreateLayer() {
 
   UpdateLayerName(name_);
   layer_->SetFillsBoundsOpaquely(!transparent_);
-  // Install new layer as a sibling of the old layer, stacked on top of it.
+  // Install new layer as a sibling of the old layer, stacked below it.
   if (old_layer->parent()) {
     old_layer->parent()->Add(layer_);
-    old_layer->parent()->StackAbove(layer_, old_layer);
+    old_layer->parent()->StackBelow(layer_, old_layer);
   }
   // Migrate all the child layers over to the new layer. Copy the list because
   // the items are removed during iteration.
@@ -265,7 +265,7 @@ void Window::SetTransform(const gfx::Transform& transform) {
 }
 
 void Window::SetLayoutManager(LayoutManager* layout_manager) {
-  if (layout_manager == layout_manager_.get())
+  if (layout_manager == layout_manager_)
     return;
   layout_manager_.reset(layout_manager);
   if (!layout_manager)
@@ -363,7 +363,7 @@ void Window::AddChild(Window* child) {
   layer_->Add(child->layer_);
 
   children_.push_back(child);
-  if (layout_manager_.get())
+  if (layout_manager_)
     layout_manager_->OnWindowAddedToLayout(child);
   FOR_EACH_OBSERVER(WindowObserver, observers_, OnWindowAdded(child));
   child->OnParentChanged();
@@ -470,7 +470,7 @@ gfx::NativeCursor Window::GetCursor(const gfx::Point& point) const {
 }
 
 void Window::SetEventFilter(ui::EventHandler* event_filter) {
-  if (event_filter_.get())
+  if (event_filter_)
     RemovePreTargetHandler(event_filter_.get());
   event_filter_.reset(event_filter);
   if (event_filter)
@@ -712,15 +712,18 @@ void Window::SetVisible(bool visible) {
                     OnWindowVisibilityChanging(this, visible));
 
   RootWindow* root_window = GetRootWindow();
-  if (client::GetVisibilityClient(root_window)) {
-    client::GetVisibilityClient(root_window)->UpdateLayerVisibility(
-        this, visible);
-  } else {
+  if (root_window)
+    root_window->DispatchMouseExitToHidingWindow(this);
+
+  client::VisibilityClient* visibility_client =
+      client::GetVisibilityClient(this);
+  if (visibility_client)
+    visibility_client->UpdateLayerVisibility(this, visible);
+  else
     layer_->SetVisible(visible);
-  }
   visible_ = visible;
   SchedulePaint();
-  if (parent_ && parent_->layout_manager_.get())
+  if (parent_ && parent_->layout_manager_)
     parent_->layout_manager_->OnChildWindowVisibilityChanged(this, visible);
 
   if (delegate_)
@@ -798,7 +801,7 @@ Window* Window::GetWindowForPoint(const gfx::Point& local_point,
 }
 
 void Window::RemoveChildImpl(Window* child, Window* new_parent) {
-  if (layout_manager_.get())
+  if (layout_manager_)
     layout_manager_->OnWillRemoveWindowFromLayout(child);
   FOR_EACH_OBSERVER(WindowObserver, observers_, OnWillRemoveWindow(child));
   RootWindow* root_window = child->GetRootWindow();
@@ -811,13 +814,13 @@ void Window::RemoveChildImpl(Window* child, Window* new_parent) {
   // We should only remove the child's layer if the child still owns that layer.
   // Someone else may have acquired ownership of it via AcquireLayer() and may
   // expect the hierarchy to go unchanged as the Window is destroyed.
-  if (child->layer_owner_.get())
+  if (child->layer_owner_)
     layer_->Remove(child->layer_);
   Windows::iterator i = std::find(children_.begin(), children_.end(), child);
   DCHECK(i != children_.end());
   children_.erase(i);
   child->OnParentChanged();
-  if (layout_manager_.get())
+  if (layout_manager_)
     layout_manager_->OnWindowRemovedFromLayout(child);
 }
 
@@ -844,8 +847,14 @@ void Window::StackChildRelativeTo(Window* child,
   // for an explanation of this.
   size_t final_target_i = target_i;
   while (final_target_i > 0 &&
-         children_[final_target_i]->layer()->delegate() == NULL)
+         children_[final_target_i]->layer()->delegate() == NULL) {
     --final_target_i;
+  }
+
+  // Allow stacking immediately below a window with a NULL layer.
+  if (direction == STACK_BELOW && target_i != final_target_i)
+    direction = STACK_ABOVE;
+
   Window* final_target = children_[final_target_i];
 
   // If we couldn't find a valid target position, don't move anything.
@@ -1033,7 +1042,7 @@ void Window::NotifyWindowVisibilityChangedUp(aura::Window* target,
 
 void Window::OnLayerBoundsChanged(const gfx::Rect& old_bounds,
                                   bool contained_mouse) {
-  if (layout_manager_.get())
+  if (layout_manager_)
     layout_manager_->OnWindowResized();
   if (delegate_)
     delegate_->OnBoundsChanged(old_bounds, bounds());

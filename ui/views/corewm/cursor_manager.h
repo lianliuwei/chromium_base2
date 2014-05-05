@@ -8,6 +8,7 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/observer_list.h"
 #include "ui/aura/client/cursor_client.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/point.h"
@@ -44,6 +45,8 @@ class VIEWS_EXPORT CursorManager : public aura::client::CursorClient,
   virtual void ShowCursor() OVERRIDE;
   virtual void HideCursor() OVERRIDE;
   virtual bool IsCursorVisible() const OVERRIDE;
+  virtual void SetScale(float scale) OVERRIDE;
+  virtual float GetCurrentScale() const OVERRIDE;
   virtual void EnableMouseEvents() OVERRIDE;
   virtual void DisableMouseEvents() OVERRIDE;
   virtual bool IsMouseEventsEnabled() const OVERRIDE;
@@ -51,6 +54,10 @@ class VIEWS_EXPORT CursorManager : public aura::client::CursorClient,
   virtual void LockCursor() OVERRIDE;
   virtual void UnlockCursor() OVERRIDE;
   virtual void SetCursorResourceModule(const string16& module_name) OVERRIDE;
+  virtual void AddObserver(
+      aura::client::CursorClientObserver* observer) OVERRIDE;
+  virtual void RemoveObserver(
+      aura::client::CursorClientObserver* observer) OVERRIDE;
 
  private:
   // Overridden from NativeCursorManagerDelegate:
@@ -59,6 +66,7 @@ class VIEWS_EXPORT CursorManager : public aura::client::CursorClient,
   virtual bool GetMouseEventsEnabled() const OVERRIDE;
   virtual void CommitCursor(gfx::NativeCursor cursor) OVERRIDE;
   virtual void CommitVisibility(bool visible) OVERRIDE;
+  virtual void CommitScale(float scale) OVERRIDE;
   virtual void CommitMouseEventsEnabled(bool enabled) OVERRIDE;
 
   scoped_ptr<NativeCursorManager> delegate_;
@@ -72,6 +80,8 @@ class VIEWS_EXPORT CursorManager : public aura::client::CursorClient,
 
   // The cursor state to restore when the cursor is unlocked.
   scoped_ptr<internal::CursorState> state_on_unlock_;
+
+  ObserverList<aura::client::CursorClientObserver> observers_;
 
   DISALLOW_COPY_AND_ASSIGN(CursorManager);
 };

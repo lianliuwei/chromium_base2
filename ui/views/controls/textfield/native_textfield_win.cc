@@ -98,9 +98,8 @@ NativeTextfieldWin::NativeTextfieldWin(Textfield* textfield)
       ime_composition_length_(0),
       container_view_(new NativeViewHost),
       bg_color_(0),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          tsf_event_router_(base::win::IsTSFAwareRequired() ?
-              new ui::TSFEventRouter(this) : NULL)) {
+      tsf_event_router_(base::win::IsTSFAwareRequired() ?
+          new ui::TSFEventRouter(this) : NULL) {
   if (!loaded_libarary_module_) {
     // msftedit.dll is RichEdit ver 4.1.
     // This version is available from WinXP SP1 and has TSF support.
@@ -234,7 +233,7 @@ void NativeTextfieldWin::UpdateBorder() {
 }
 
 void NativeTextfieldWin::UpdateBorderColor() {
-  // TODO(estade): implement.
+  NOTIMPLEMENTED();
 }
 
 void NativeTextfieldWin::UpdateTextColor() {
@@ -304,6 +303,12 @@ void NativeTextfieldWin::UpdateVerticalMargins() {
   }
   // Non-zero margins case.
   NOTIMPLEMENTED();
+}
+
+void NativeTextfieldWin::UpdateVerticalAlignment() {
+  // Default alignment is vertically centered.
+  if (textfield_->vertical_alignment() != gfx::ALIGN_VCENTER)
+    NOTIMPLEMENTED();
 }
 
 bool NativeTextfieldWin::SetFocus() {
@@ -425,8 +430,18 @@ int NativeTextfieldWin::GetTextfieldBaseline() const {
   return textfield_->font().GetBaseline();
 }
 
+int NativeTextfieldWin::GetWidthNeededForText() const {
+  NOTIMPLEMENTED();
+  return 0;
+}
+
 void NativeTextfieldWin::ExecuteTextCommand(int command_id) {
   ExecuteCommand(command_id, 0);
+}
+
+bool NativeTextfieldWin::HasTextBeingDragged() {
+  NOTIMPLEMENTED();
+  return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -547,7 +562,7 @@ void NativeTextfieldWin::InitializeAccessibilityInfo() {
     // We expect it to be a Label preceeding this view (if it exists).
     string16 name;
     View* label_view = parent->child_at(label_index);
-    if (label_view->GetClassName() == Label::kViewClassName) {
+    if (!strcmp(label_view->GetClassName(), Label::kViewClassName)) {
       ui::AccessibleViewState state;
       label_view->GetAccessibleState(&state);
       hr = pAccPropServices->SetHwndPropStr(m_hWnd, OBJID_CLIENT,

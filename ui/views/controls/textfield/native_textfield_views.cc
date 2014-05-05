@@ -8,7 +8,6 @@
 #include <set>
 
 #include "base/bind.h"
-#include "base/command_line.h"
 #include "base/debug/trace_event.h"
 #include "base/i18n/case_conversion.h"
 #include "base/logging.h"
@@ -24,7 +23,7 @@
 #include "ui/base/events/event.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/range/range.h"
-#include "ui/base/ui_base_switches.h"
+#include "ui/base/ui_base_switches_util.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/insets.h"
@@ -58,6 +57,14 @@ namespace {
 // Default "system" color for text cursor.
 const SkColor kDefaultCursorColor = SK_ColorBLACK;
 
+void ConvertRectToScreen(const views::View* src, gfx::Rect* r) {
+  DCHECK(src);
+
+  gfx::Point new_origin = r->origin();
+  views::View::ConvertPointToScreen(src, &new_origin);
+  r->set_origin(new_origin);
+}
+
 }  // namespace
 
 namespace views {
@@ -69,13 +76,13 @@ const int NativeTextfieldViews::kCursorBlinkCycleMs = 1000;
 
 NativeTextfieldViews::NativeTextfieldViews(Textfield* parent)
     : textfield_(parent),
-      ALLOW_THIS_IN_INITIALIZER_LIST(model_(new TextfieldViewsModel(this))),
+      model_(new TextfieldViewsModel(this)),
       text_border_(new FocusableBorder()),
       is_cursor_visible_(false),
       is_drop_cursor_visible_(false),
       skip_input_method_cancel_composition_(false),
       initiating_drag_(false),
-      ALLOW_THIS_IN_INITIALIZER_LIST(cursor_timer_(this)),
+      cursor_timer_(this),
       aggregated_clicks_(0),
       touch_selection_controller_(NULL) {
   set_border(text_border_);
@@ -121,15 +128,30 @@ bool NativeTextfieldViews::ExceededDragThresholdFromLastClickLocation(
 bool NativeTextfieldViews::OnMouseDragged(const ui::MouseEvent& event) {
   // Don't adjust the cursor on a potential drag and drop, or if the mouse
   // movement from the last mouse click does not exceed the drag threshold.
-  if (initiating_drag_ || !ExceededDragThresholdFromLastClickLocation(event))
+  if (initiating_drag_ || !ExceededDragThresholdFromLastClickLocation(event) ||
+      !event.IsOnlyLeftMouseButton()) {
     return true;
+  }
 
   OnBeforeUserAction();
   // TODO: Remove once NativeTextfield implementations are consolidated to
   // Textfield.
   if (!textfield_->OnMouseDragged(event)) {
-    if (MoveCursorTo(event.location(), true))
-      SchedulePaint();
+    MoveCursorTo(event.location(), true);
+    if (aggregated_clicks_ == 1) {
+      model_->SelectWord();
+      // Expand the selection so the initially selected word remains selected.
+      ui::Range selection = GetRenderText()->selection();
+      const size_t min = std::min(selection.GetMin(),
+                                  double_click_word_.GetMin());
+      const size_t max = std::max(selection.GetMax(),
+                                  double_click_word_.GetMax());
+      const bool reversed = selection.is_reversed();
+      selection.set_start(reversed ? max : min);
+      selection.set_end(reversed ? min : max);
+      model_->SelectRange(selection);
+    }
+    SchedulePaint();
   }
   OnAfterUserAction();
   return true;
@@ -199,8 +221,7 @@ void NativeTextfieldViews::OnGestureEvent(ui::GestureEvent* event) {
         OnAfterUserAction();
         if (touch_selection_controller_.get())
           event->SetHandled();
-      } else if (CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableTouchDragDrop)) {
+      } else if (switches::IsTouchDragDropEnabled()) {
         touch_selection_controller_.reset();
       } else {
         if (!touch_selection_controller_.get())
@@ -261,7 +282,11 @@ bool NativeTextfieldViews::CanDrop(const OSExchangeData& data) {
 
 int NativeTextfieldViews::OnDragUpdated(const ui::DropTargetEvent& event) {
   DCHECK(CanDrop(event.data()));
-  bool in_selection = GetRenderText()->IsPointInSelection(event.location());
+
+  const ui::Range& selection = GetRenderText()->selection();
+  drop_cursor_position_ = GetRenderText()->FindCursorPosition(event.location());
+  bool in_selection = !selection.is_empty() &&
+      selection.Contains(ui::Range(drop_cursor_position_.caret_pos()));
   is_drop_cursor_visible_ = !in_selection;
   // TODO(msw): Pan over text when the user drags to the visible text edge.
   OnCaretBoundsChanged();
@@ -276,8 +301,15 @@ int NativeTextfieldViews::OnDragUpdated(const ui::DropTargetEvent& event) {
   return ui::DragDropTypes::DRAG_COPY | ui::DragDropTypes::DRAG_MOVE;
 }
 
+void NativeTextfieldViews::OnDragExited() {
+  is_drop_cursor_visible_ = false;
+  SchedulePaint();
+}
+
 int NativeTextfieldViews::OnPerformDrop(const ui::DropTargetEvent& event) {
   DCHECK(CanDrop(event.data()));
+
+  is_drop_cursor_visible_ = false;
 
   TextfieldController* controller = textfield_->GetController();
   if (controller) {
@@ -460,7 +492,7 @@ int NativeTextfieldViews::GetDragOperationsForView(views::View* sender,
 bool NativeTextfieldViews::CanStartDragForView(View* sender,
                                                const gfx::Point& press_pt,
                                                const gfx::Point& p) {
-  return GetRenderText()->IsPointInSelection(press_pt);
+  return initiating_drag_ && GetRenderText()->IsPointInSelection(press_pt);
 }
 
 /////////////////////////////////////////////////////////////////
@@ -474,8 +506,8 @@ void NativeTextfieldViews::UpdateText() {
   model_->SetText(GetTextForDisplay(textfield_->text()));
   OnCaretBoundsChanged();
   SchedulePaint();
-  textfield_->GetWidget()->NotifyAccessibilityEvent(
-      textfield_, ui::AccessibilityTypes::EVENT_TEXT_CHANGED, true);
+  textfield_->NotifyAccessibilityEvent(
+      ui::AccessibilityTypes::EVENT_TEXT_CHANGED, true);
 }
 
 void NativeTextfieldViews::AppendText(const string16& text) {
@@ -515,14 +547,17 @@ void NativeTextfieldViews::ClearSelection() {
 }
 
 void NativeTextfieldViews::UpdateBorder() {
-  if (textfield_->draw_border()) {
-    gfx::Insets insets = GetInsets();
-    textfield_->SetHorizontalMargins(insets.left(), insets.right());
-    textfield_->SetVerticalMargins(insets.top(), insets.bottom());
-  } else {
-    textfield_->SetHorizontalMargins(0, 0);
-    textfield_->SetVerticalMargins(0, 0);
-  }
+  // By default, if a caller calls Textfield::RemoveBorder() and does not set
+  // any explicit margins, they should get zero margins.  But also call
+  // UpdateXXXMargins() so we respect any explicitly-set margins.
+  //
+  // NOTE: If someday Textfield supports toggling |draw_border_| back on, we'll
+  // need to update this conditional to set the insets to their default values.
+  if (!textfield_->draw_border())
+    text_border_->SetInsets(0, 0, 0, 0);
+  UpdateHorizontalMargins();
+  UpdateVerticalMargins();
+  UpdateBorderColor();
 }
 
 void NativeTextfieldViews::UpdateBorderColor() {
@@ -582,9 +617,8 @@ void NativeTextfieldViews::UpdateHorizontalMargins() {
   if (!textfield_->GetHorizontalMargins(&left, &right))
     return;
   gfx::Insets inset = GetInsets();
-
   text_border_->SetInsets(inset.top(), left, inset.bottom(), right);
-  OnCaretBoundsChanged();
+  OnBoundsChanged(GetBounds());
 }
 
 void NativeTextfieldViews::UpdateVerticalMargins() {
@@ -593,7 +627,12 @@ void NativeTextfieldViews::UpdateVerticalMargins() {
     return;
   gfx::Insets inset = GetInsets();
   text_border_->SetInsets(top, inset.left(), bottom, inset.right());
-  OnCaretBoundsChanged();
+  OnBoundsChanged(GetBounds());
+}
+
+void NativeTextfieldViews::UpdateVerticalAlignment() {
+  GetRenderText()->SetVerticalAlignment(textfield_->vertical_alignment());
+  SchedulePaint();
 }
 
 bool NativeTextfieldViews::SetFocus() {
@@ -621,8 +660,8 @@ void NativeTextfieldViews::SelectRange(const ui::Range& range) {
   model_->SelectRange(range);
   OnCaretBoundsChanged();
   SchedulePaint();
-  textfield_->GetWidget()->NotifyAccessibilityEvent(
-      textfield_, ui::AccessibilityTypes::EVENT_SELECTION_CHANGED, true);
+  textfield_->NotifyAccessibilityEvent(
+      ui::AccessibilityTypes::EVENT_SELECTION_CHANGED, true);
 }
 
 gfx::SelectionModel NativeTextfieldViews::GetSelectionModel() const {
@@ -667,7 +706,7 @@ void NativeTextfieldViews::HandleFocus() {
   SchedulePaint();
   OnCaretBoundsChanged();
   // Start blinking cursor.
-  MessageLoop::current()->PostDelayedTask(
+  base::MessageLoop::current()->PostDelayedTask(
       FROM_HERE,
       base::Bind(&NativeTextfieldViews::UpdateCursor,
                  cursor_timer_.GetWeakPtr()),
@@ -704,8 +743,16 @@ int NativeTextfieldViews::GetTextfieldBaseline() const {
   return GetRenderText()->GetFont().GetBaseline();
 }
 
+int NativeTextfieldViews::GetWidthNeededForText() const {
+  return GetRenderText()->GetContentWidth() + GetInsets().width();
+}
+
 void NativeTextfieldViews::ExecuteTextCommand(int command_id) {
   ExecuteCommand(command_id, 0);
+}
+
+bool NativeTextfieldViews::HasTextBeingDragged() {
+  return initiating_drag_;
 }
 
 /////////////////////////////////////////////////////////////////
@@ -756,37 +803,46 @@ void NativeTextfieldViews::ExecuteCommand(int command_id, int event_flags) {
   if (!IsCommandIdEnabled(command_id))
     return;
 
-  bool text_changed = false;
-  OnBeforeUserAction();
   TextfieldController* controller = textfield_->GetController();
   if (controller && controller->HandlesCommand(command_id)) {
     controller->ExecuteCommand(command_id, 0);
   } else {
+    bool text_changed = false;
     switch (command_id) {
       case IDS_APP_CUT:
+        OnBeforeUserAction();
         text_changed = Cut();
+        UpdateAfterChange(text_changed, text_changed);
+        OnAfterUserAction();
         break;
       case IDS_APP_COPY:
+        OnBeforeUserAction();
         Copy();
+        OnAfterUserAction();
         break;
       case IDS_APP_PASTE:
+        OnBeforeUserAction();
         text_changed = Paste();
+        UpdateAfterChange(text_changed, text_changed);
+        OnAfterUserAction();
         break;
       case IDS_APP_DELETE:
+        OnBeforeUserAction();
         text_changed = model_->Delete();
+        UpdateAfterChange(text_changed, text_changed);
+        OnAfterUserAction();
         break;
       case IDS_APP_SELECT_ALL:
+        OnBeforeUserAction();
         SelectAll(false);
+        UpdateAfterChange(false, true);
+        OnAfterUserAction();
         break;
       default:
         controller->ExecuteCommand(command_id, 0);
         break;
     }
   }
-
-  // The cursor must have changed if text changed during cut/paste/delete.
-  UpdateAfterChange(text_changed, text_changed);
-  OnAfterUserAction();
 }
 
 void NativeTextfieldViews::SetColor(SkColor value) {
@@ -907,7 +963,11 @@ bool NativeTextfieldViews::CanComposeInline() const {
 }
 
 gfx::Rect NativeTextfieldViews::GetCaretBounds() {
-  return GetRenderText()->GetUpdatedCursorBounds();
+  // TextInputClient::GetCaretBounds is expected to return a value in screen
+  // coordinates.
+  gfx::Rect rect = GetRenderText()->GetUpdatedCursorBounds();
+  ConvertRectToScreen(this, &rect);
+  return rect;
 }
 
 bool NativeTextfieldViews::GetCompositionCharacterBounds(uint32 index,
@@ -928,10 +988,15 @@ bool NativeTextfieldViews::GetCompositionCharacterBounds(uint32 index,
   gfx::Rect start_cursor = GetRenderText()->GetCursorBounds(start_position,
                                                             false);
   gfx::Rect end_cursor = GetRenderText()->GetCursorBounds(end_position, false);
+
+  // TextInputClient::GetCompositionCharacterBounds is expected to fill |rect|
+  // in screen coordinates and GetCaretBounds returns screen coordinates.
   *rect = gfx::Rect(start_cursor.x(),
                     start_cursor.y(),
                     end_cursor.x() - start_cursor.x(),
                     start_cursor.height());
+  ConvertRectToScreen(this, rect);
+
   return true;
 }
 
@@ -1001,7 +1066,7 @@ bool NativeTextfieldViews::GetTextFromRange(
 }
 
 void NativeTextfieldViews::OnInputMethodChanged() {
-  NOTIMPLEMENTED();
+  // TODO(msw): NOTIMPLEMENTED(); see http://crbug.com/140402
 }
 
 bool NativeTextfieldViews::ChangeTextDirectionAndLayoutAlignment(
@@ -1013,9 +1078,17 @@ bool NativeTextfieldViews::ChangeTextDirectionAndLayoutAlignment(
 void NativeTextfieldViews::ExtendSelectionAndDelete(
     size_t before,
     size_t after) {
-  // TODO(horo): implement this method if it is required.
-  // http://crbug.com/149155
-  NOTIMPLEMENTED();
+  ui::Range range = GetSelectedRange();
+  DCHECK_GE(range.start(), before);
+
+  range.set_start(range.start() - before);
+  range.set_end(range.end() + after);
+  ui::Range text_range;
+  if (GetTextRange(&text_range) && text_range.Contains(range))
+    DeleteRange(range);
+}
+
+void NativeTextfieldViews::EnsureCaretInRect(const gfx::Rect& rect) {
 }
 
 void NativeTextfieldViews::OnCompositionTextConfirmedOrCleared() {
@@ -1050,7 +1123,7 @@ void NativeTextfieldViews::UpdateColorsFromTheme(const ui::NativeTheme* theme) {
 void NativeTextfieldViews::UpdateCursor() {
   is_cursor_visible_ = !is_cursor_visible_;
   RepaintCursor();
-  MessageLoop::current()->PostDelayedTask(
+  base::MessageLoop::current()->PostDelayedTask(
       FROM_HERE,
       base::Bind(&NativeTextfieldViews::UpdateCursor,
                  cursor_timer_.GetWeakPtr()),
@@ -1058,7 +1131,7 @@ void NativeTextfieldViews::UpdateCursor() {
 }
 
 void NativeTextfieldViews::RepaintCursor() {
-  gfx::Rect r(GetCaretBounds());
+  gfx::Rect r(GetRenderText()->GetUpdatedCursorBounds());
   r.Inset(-1, -1, -1, -1);
   SchedulePaintInRect(r);
 }
@@ -1066,10 +1139,14 @@ void NativeTextfieldViews::RepaintCursor() {
 void NativeTextfieldViews::PaintTextAndCursor(gfx::Canvas* canvas) {
   TRACE_EVENT0("views", "NativeTextfieldViews::PaintTextAndCursor");
   canvas->Save();
-  GetRenderText()->set_cursor_visible(is_drop_cursor_visible_ ||
-      (is_cursor_visible_ && !model_->HasSelection()));
+  GetRenderText()->set_cursor_visible(!is_drop_cursor_visible_ &&
+      is_cursor_visible_ && !model_->HasSelection());
   // Draw the text, cursor, and selection.
   GetRenderText()->Draw(canvas);
+
+  // Draw the detached drop cursor that marks where the text will be dropped.
+  if (is_drop_cursor_visible_)
+    GetRenderText()->DrawCursor(canvas, drop_cursor_position_);
 
   // Draw placeholder text if needed.
   if (model_->GetText().empty() &&
@@ -1091,54 +1168,57 @@ bool NativeTextfieldViews::HandleKeyEvent(const ui::KeyEvent& key_event) {
       return false;
 
     OnBeforeUserAction();
-    bool editable = !textfield_->read_only();
-    bool readable = !textfield_->IsObscured();
-    bool shift = key_event.IsShiftDown();
-    bool control = key_event.IsControlDown();
+    const bool editable = !textfield_->read_only();
+    const bool readable = !textfield_->IsObscured();
+    const bool shift = key_event.IsShiftDown();
+    const bool control = key_event.IsControlDown();
+    const bool alt = key_event.IsAltDown();
     bool text_changed = false;
     bool cursor_changed = false;
     switch (key_code) {
       case ui::VKEY_Z:
-        if (control && !shift && editable)
+        if (control && !shift && !alt && editable)
           cursor_changed = text_changed = model_->Undo();
-        else if (control && shift && editable)
+        else if (control && shift && !alt && editable)
           cursor_changed = text_changed = model_->Redo();
         break;
       case ui::VKEY_Y:
-        if (control && editable)
+        if (control && !alt && editable)
           cursor_changed = text_changed = model_->Redo();
         break;
       case ui::VKEY_A:
-        if (control) {
+        if (control && !alt) {
           model_->SelectAll(false);
           cursor_changed = true;
         }
         break;
       case ui::VKEY_X:
-        if (control && editable && readable)
+        if (control && !alt && editable && readable)
           cursor_changed = text_changed = Cut();
         break;
       case ui::VKEY_C:
-        if (control && readable)
+        if (control && !alt && readable)
           Copy();
         break;
       case ui::VKEY_V:
-        if (control && editable)
+        if (control && !alt && editable)
           cursor_changed = text_changed = Paste();
         break;
       case ui::VKEY_RIGHT:
-      case ui::VKEY_LEFT:
+      case ui::VKEY_LEFT: {
         // We should ignore the alt-left/right keys because alt key doesn't make
         // any special effects for them and they can be shortcut keys such like
         // forward/back of the browser history.
-        if (key_event.IsAltDown())
+        if (alt)
           break;
+        size_t cursor_position = model_->GetCursorPosition();
         model_->MoveCursor(
             control ? gfx::WORD_BREAK : gfx::CHARACTER_BREAK,
             (key_code == ui::VKEY_RIGHT) ? gfx::CURSOR_RIGHT : gfx::CURSOR_LEFT,
             shift);
-        cursor_changed = true;
+        cursor_changed = model_->GetCursorPosition() != cursor_position;
         break;
+      }
       case ui::VKEY_END:
       case ui::VKEY_HOME:
         if ((key_code == ui::VKEY_HOME) ==
@@ -1179,9 +1259,9 @@ bool NativeTextfieldViews::HandleKeyEvent(const ui::KeyEvent& key_event) {
         text_changed = true;
         break;
       case ui::VKEY_INSERT:
-        if (control && !shift)
+        if (control && !shift && readable)
           Copy();
-        else if (shift && !control)
+        else if (shift && !control && editable)
           cursor_changed = text_changed = Paste();
         break;
       default:
@@ -1213,8 +1293,8 @@ void NativeTextfieldViews::UpdateAfterChange(bool text_changed,
                                              bool cursor_changed) {
   if (text_changed) {
     PropagateTextChange();
-    textfield_->GetWidget()->NotifyAccessibilityEvent(
-        textfield_, ui::AccessibilityTypes::EVENT_TEXT_CHANGED, true);
+    textfield_->NotifyAccessibilityEvent(
+        ui::AccessibilityTypes::EVENT_TEXT_CHANGED, true);
   }
   if (cursor_changed) {
     is_cursor_visible_ = true;
@@ -1222,8 +1302,8 @@ void NativeTextfieldViews::UpdateAfterChange(bool text_changed,
     if (!text_changed) {
       // TEXT_CHANGED implies SELECTION_CHANGED, so we only need to fire
       // this if only the selection changed.
-      textfield_->GetWidget()->NotifyAccessibilityEvent(
-          textfield_, ui::AccessibilityTypes::EVENT_SELECTION_CHANGED, true);
+      textfield_->NotifyAccessibilityEvent(
+          ui::AccessibilityTypes::EVENT_SELECTION_CHANGED, true);
     }
   }
   if (text_changed || cursor_changed) {
@@ -1284,7 +1364,7 @@ void NativeTextfieldViews::OnAfterUserAction() {
 }
 
 bool NativeTextfieldViews::Cut() {
-  if (model_->Cut()) {
+  if (!textfield_->read_only() && !textfield_->IsObscured() && model_->Cut()) {
     TextfieldController* controller = textfield_->GetController();
     if (controller)
       controller->OnAfterCutOrCopy();
@@ -1294,7 +1374,7 @@ bool NativeTextfieldViews::Cut() {
 }
 
 bool NativeTextfieldViews::Copy() {
-  if (model_->Copy()) {
+  if (!textfield_->IsObscured() && model_->Copy()) {
     TextfieldController* controller = textfield_->GetController();
     if (controller)
       controller->OnAfterCutOrCopy();
@@ -1304,6 +1384,9 @@ bool NativeTextfieldViews::Copy() {
 }
 
 bool NativeTextfieldViews::Paste() {
+  if (textfield_->read_only())
+    return false;
+
   const string16 original_text = GetText();
   const bool success = model_->Paste();
 
@@ -1340,33 +1423,36 @@ void NativeTextfieldViews::TrackMouseClicks(const ui::MouseEvent& event) {
 }
 
 void NativeTextfieldViews::HandleMousePressEvent(const ui::MouseEvent& event) {
-  if (event.IsOnlyLeftMouseButton()) {
+  if (event.IsOnlyLeftMouseButton() || event.IsOnlyRightMouseButton())
     textfield_->RequestFocus();
 
-    initiating_drag_ = false;
-    bool can_drag = true;
+  if (!event.IsOnlyLeftMouseButton())
+    return;
 
-    switch (aggregated_clicks_) {
-      case 0:
-        if (can_drag && GetRenderText()->IsPointInSelection(event.location()))
-          initiating_drag_ = true;
-        else
-          MoveCursorTo(event.location(), event.IsShiftDown());
-        break;
-      case 1:
-        MoveCursorTo(event.location(), false);
-        model_->SelectWord();
-        OnCaretBoundsChanged();
-        break;
-      case 2:
-        model_->SelectAll(false);
-        OnCaretBoundsChanged();
-        break;
-      default:
-        NOTREACHED();
-    }
-    SchedulePaint();
+  initiating_drag_ = false;
+  bool can_drag = true;
+
+  switch (aggregated_clicks_) {
+    case 0:
+      if (can_drag && GetRenderText()->IsPointInSelection(event.location()))
+        initiating_drag_ = true;
+      else
+        MoveCursorTo(event.location(), event.IsShiftDown());
+      break;
+    case 1:
+      MoveCursorTo(event.location(), false);
+      model_->SelectWord();
+      double_click_word_ = GetRenderText()->selection();
+      OnCaretBoundsChanged();
+      break;
+    case 2:
+      model_->SelectAll(false);
+      OnCaretBoundsChanged();
+      break;
+    default:
+      NOTREACHED();
   }
+  SchedulePaint();
 }
 
 bool NativeTextfieldViews::ImeEditingAllowed() const {

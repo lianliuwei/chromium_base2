@@ -8,8 +8,8 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
-#include "third_party/angle/include/EGL/egl.h"
-#include "third_party/angle/include/EGL/eglext.h"
+#include "third_party/khronos/EGL/egl.h"
+#include "third_party/khronos/EGL/eglext.h"
 #include "ui/gl/egl_util.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_surface_egl.h"
@@ -28,7 +28,8 @@ GLContextEGL::GLContextEGL(GLShareGroup* share_group)
     : GLContext(share_group),
       context_(NULL),
       display_(NULL),
-      config_(NULL) {
+      config_(NULL),
+      unbind_fbo_on_makecurrent_(false) {
 }
 
 bool GLContextEGL::Initialize(
@@ -97,6 +98,11 @@ bool GLContextEGL::MakeCurrent(GLSurface* surface) {
                "context", context_,
                "surface", surface);
 
+  if (unbind_fbo_on_makecurrent_ &&
+      eglGetCurrentContext() != EGL_NO_CONTEXT) {
+    glBindFramebufferEXT(GL_FRAMEBUFFER, 0);
+  }
+
   if (!eglMakeCurrent(display_,
                       surface->GetHandle(),
                       surface->GetHandle(),
@@ -121,9 +127,16 @@ bool GLContextEGL::MakeCurrent(GLSurface* surface) {
   return true;
 }
 
+void GLContextEGL::SetUnbindFboOnMakeCurrent() {
+  unbind_fbo_on_makecurrent_ = true;
+}
+
 void GLContextEGL::ReleaseCurrent(GLSurface* surface) {
   if (!IsCurrent(surface))
     return;
+
+  if (unbind_fbo_on_makecurrent_)
+    glBindFramebufferEXT(GL_FRAMEBUFFER, 0);
 
   SetCurrent(NULL, NULL);
   eglMakeCurrent(display_,

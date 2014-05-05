@@ -10,7 +10,7 @@
 namespace views {
 
 // static
-const char Separator::kViewClassName[] = "views/Separator";
+const char Separator::kViewClassName[] = "Separator";
 
 // The separator height in pixels.
 const int kSeparatorHeight = 1;
@@ -18,7 +18,7 @@ const int kSeparatorHeight = 1;
 // Default color of the separator.
 const SkColor kDefaultColor = SkColorSetARGB(255, 233, 233, 233);
 
-Separator::Separator() {
+Separator::Separator(Orientation orientation) : orientation_(orientation) {
   set_focusable(false);
 }
 
@@ -29,7 +29,9 @@ Separator::~Separator() {
 // Separator, View overrides:
 
 gfx::Size Separator::GetPreferredSize() {
-  return gfx::Size(width(), kSeparatorHeight);
+  if (orientation_ == HORIZONTAL)
+    return gfx::Size(width(), kSeparatorHeight);
+  return gfx::Size(kSeparatorHeight, height());
 }
 
 void Separator::GetAccessibleState(ui::AccessibleViewState* state) {
@@ -40,7 +42,7 @@ void Separator::Paint(gfx::Canvas* canvas) {
   canvas->FillRect(bounds(), kDefaultColor);
 }
 
-std::string Separator::GetClassName() const {
+const char* Separator::GetClassName() const {
   return kViewClassName;
 }
 

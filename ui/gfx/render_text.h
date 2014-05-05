@@ -14,6 +14,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/i18n/rtl.h"
 #include "base/string16.h"
+#include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkRect.h"
@@ -76,7 +77,7 @@ class SkiaTextRenderer {
   bool started_drawing_;
   SkPaint paint_;
   SkRect bounds_;
-  SkRefPtr<SkShader> deferred_fade_shader_;
+  skia::RefPtr<SkShader> deferred_fade_shader_;
   SkScalar underline_thickness_;
   SkScalar underline_position_;
 
@@ -130,6 +131,11 @@ class UI_EXPORT RenderText {
     return horizontal_alignment_;
   }
   void SetHorizontalAlignment(HorizontalAlignment alignment);
+
+  VerticalAlignment vertical_alignment() const {
+    return vertical_alignment_;
+  }
+  void SetVerticalAlignment(VerticalAlignment alignment);
 
   const FontList& font_list() const { return font_list_; }
   void SetFontList(const FontList& font_list);
@@ -237,7 +243,9 @@ class UI_EXPORT RenderText {
   // of text that overflows its display area.
   void SelectAll(bool reversed);
 
-  // Selects the word at the current cursor position.
+  // Selects the word at the current cursor position. If there is a non-empty
+  // selection, the selection bounds are extended to their nearest word
+  // boundaries.
   void SelectWord();
 
   const ui::Range& GetCompositionRange() const;
@@ -269,11 +277,18 @@ class UI_EXPORT RenderText {
   // the margin area of text shadows.
   virtual Size GetStringSize() = 0;
 
+  // Returns the width of content, which reserves room for the cursor if
+  // |cursor_enabled_| is true.
+  int GetContentWidth();
+
   // Returns the common baseline of the text. The returned value is the vertical
   // offset from the top of |display_rect| to the text baseline, in pixels.
   virtual int GetBaseline() = 0;
 
   void Draw(Canvas* canvas);
+
+  // Draws a cursor at |position|.
+  void DrawCursor(Canvas* canvas, const SelectionModel& position);
 
   // Draw the selected text without a cursor or selection highlight.
   void DrawSelectedText(Canvas* canvas);
@@ -353,11 +368,11 @@ class UI_EXPORT RenderText {
   // Sets the selection model, the argument is assumed to be valid.
   virtual void SetSelectionModel(const SelectionModel& model);
 
-  // Get the height and horizontal bounds (relative to the left of the text, not
-  // the view) of the glyph starting at |index|. If the glyph is RTL then
-  // xspan->is_reversed(). This does not return a Rect because a Rect can't have
-  // a negative width.
-  virtual void GetGlyphBounds(size_t index, ui::Range* xspan, int* height) = 0;
+  // Get the horizontal bounds (relative to the left of the text, not the view)
+  // of the glyph starting at |index|. If the glyph is RTL then the returned
+  // Range will have is_reversed() true.  (This does not return a Rect because a
+  // Rect can't have a negative width.)
+  virtual ui::Range GetGlyphBounds(size_t index) = 0;
 
   // Get the visual bounds containing the logical substring within the |range|.
   // If |range| is empty, the result is empty. These bounds could be visually
@@ -402,16 +417,9 @@ class UI_EXPORT RenderText {
   Point ToTextPoint(const Point& point);
   Point ToViewPoint(const Point& point);
 
-  // Returns the width of content, which reserves room for the cursor if
-  // |cursor_enabled_| is true.
-  int GetContentWidth();
-
-  // Returns display offset based on current text alignment.
+  // Returns the text offset from the origin, taking into account text alignment
+  // only.
   Vector2d GetAlignmentOffset();
-
-  // Returns the offset for drawing text. Does not account for font
-  // baseline, as needed by Skia.
-  Vector2d GetOffsetForDrawing();
 
   // Applies fade effects to |renderer|.
   void ApplyFadeEffects(internal::SkiaTextRenderer* renderer);
@@ -433,7 +441,8 @@ class UI_EXPORT RenderText {
   FRIEND_TEST_ALL_PREFIXES(RenderTextTest, ObscuredText);
   FRIEND_TEST_ALL_PREFIXES(RenderTextTest, GraphemePositions);
   FRIEND_TEST_ALL_PREFIXES(RenderTextTest, EdgeSelectionModels);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, OriginForDrawing);
+  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, GetTextOffset);
+  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, GetTextOffsetHorizontalDefaultInRTL);
 
   // Set the cursor to |position|, with the caret trailing the previous
   // grapheme, or if there is no previous grapheme, leading the cursor position.
@@ -449,15 +458,19 @@ class UI_EXPORT RenderText {
   // cursor is within the visible display area.
   void UpdateCachedBoundsAndOffset();
 
-  // Draw the selection and cursor.
+  // Draw the selection.
   void DrawSelection(Canvas* canvas);
-  void DrawCursor(Canvas* canvas);
 
   // Logical UTF-16 string data to be drawn.
   string16 text_;
 
-  // Horizontal alignment of the text with respect to |display_rect_|.
+  // Horizontal alignment of the text with respect to |display_rect_|.  The
+  // default is to align left if the application UI is LTR and right if RTL.
   HorizontalAlignment horizontal_alignment_;
+
+  // Vertical alignment of the text with respect to |display_rect_|.  The
+  // default is to align vertically centered.
+  VerticalAlignment vertical_alignment_;
 
   // The text directionality mode, defaults to DIRECTIONALITY_FROM_TEXT.
   DirectionalityMode directionality_mode_;

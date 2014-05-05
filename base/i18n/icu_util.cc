@@ -12,7 +12,6 @@
 
 #include <string>
 
-#include "base/file_util.h"
 #include "base/files/file_path.h"
 #include "base/files/memory_mapped_file.h"
 #include "base/logging.h"
@@ -112,7 +111,7 @@ bool Initialize() {
 
   // Chrome doesn't normally shut down ICU, so the mapped data shouldn't ever
   // be released.
-  static base::MemoryMappedFile mapped_file;
+  CR_DEFINE_STATIC_LOCAL(base::MemoryMappedFile, mapped_file, ());
   if (!mapped_file.IsValid()) {
     // Assume it is in the framework bundle's Resources directory.
     FilePath data_path =

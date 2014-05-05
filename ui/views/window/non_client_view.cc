@@ -149,12 +149,12 @@ void NonClientView::Layout() {
   client_view_->Layout();
 }
 
-void NonClientView::ViewHierarchyChanged(bool is_add, View* parent,
-                                         View* child) {
+void NonClientView::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
   // Add our two child views here as we are added to the Widget so that if we
   // are subsequently resized all the parent-child relationships are
   // established.
-  if (is_add && GetWidget() && child == this) {
+  if (details.is_add && GetWidget() && details.child == this) {
     AddChildViewAt(frame_view_.get(), kFrameViewIndex);
     AddChildViewAt(client_view_, kClientViewIndex);
   }
@@ -165,7 +165,7 @@ void NonClientView::GetAccessibleState(ui::AccessibleViewState* state) {
   state->name = accessible_name_;
 }
 
-std::string NonClientView::GetClassName() const {
+const char* NonClientView::GetClassName() const {
   return kViewClassName;
 }
 
@@ -188,6 +188,23 @@ views::View* NonClientView::GetEventHandlerForPoint(const gfx::Point& point) {
   }
 
   return View::GetEventHandlerForPoint(point);
+}
+
+views::View* NonClientView::GetTooltipHandlerForPoint(const gfx::Point& point) {
+  // The same logic as for |GetEventHandlerForPoint()| applies here.
+  if (frame_view_->parent() == this) {
+    // During the reset of the frame_view_ it's possible to be in this code
+    // after it's been removed from the view hierarchy but before it's been
+    // removed from the NonClientView.
+    gfx::Point point_in_child_coords(point);
+    View::ConvertPointToTarget(this, frame_view_.get(), &point_in_child_coords);
+    views::View* handler =
+        frame_view_->GetTooltipHandlerForPoint(point_in_child_coords);
+    if (handler)
+      return handler;
+  }
+
+  return View::GetTooltipHandlerForPoint(point);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -274,7 +291,7 @@ void NonClientFrameView::GetAccessibleState(ui::AccessibleViewState* state) {
   state->role = ui::AccessibilityTypes::ROLE_CLIENT;
 }
 
-std::string NonClientFrameView::GetClassName() const {
+const char* NonClientFrameView::GetClassName() const {
   return kViewClassName;
 }
 

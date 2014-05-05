@@ -4,11 +4,16 @@
 
 #include "ui/base/win/ime_input.h"
 
+#include <atlbase.h>
+#include <atlcom.h>
+#include <msctf.h>
+
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/string16.h"
 #include "base/string_util.h"
 #include "base/utf_string_conversions.h"
+#include "base/win/scoped_comptr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/ime/composition_text.h"
 
@@ -53,13 +58,6 @@ void GetCompositionTargetRange(HIMC imm_context, int* target_start,
       for (end = start; end < attribute_size; ++end) {
         if (!IsTargetAttribute(attribute_data[end]))
           break;
-      }
-      if (start == attribute_size) {
-        // This composition clause does not contain any target clauses,
-        // i.e. this clauses is an input clause.
-        // We treat the whole composition as a target clause.
-        start = 0;
-        end = attribute_size;
       }
     }
     *target_start = start;
@@ -137,7 +135,23 @@ bool ImeInput::SetInputLanguage() {
   // while composing a text.
   HKL keyboard_layout = ::GetKeyboardLayout(0);
   input_language_id_ = reinterpret_cast<LANGID>(keyboard_layout);
-  ime_status_ = (::ImmIsIME(keyboard_layout) == TRUE);
+
+  // Check TSF Input Processor first.
+  // If the active profile is TSF INPUTPROCESSOR, this is IME.
+  base::win::ScopedComPtr<ITfInputProcessorProfileMgr> prof_mgr;
+  TF_INPUTPROCESSORPROFILE prof;
+  if (SUCCEEDED(prof_mgr.CreateInstance(CLSID_TF_InputProcessorProfiles)) &&
+      SUCCEEDED(prof_mgr->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &prof)) &&
+      prof.hkl == NULL &&
+      prof.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR) {
+      ime_status_ = true;
+  } else {
+    // If the curent language is not using TSF, check IMM32 based IMEs.
+    // As ImmIsIME always returns non-0 value on Vista+, use ImmGetIMEFileName
+    // instead to check if this HKL has any associated IME file.
+    ime_status_ = (ImmGetIMEFileName(keyboard_layout, NULL, 0) != 0);
+  }
+
   return ime_status_;
 }
 
@@ -189,6 +203,14 @@ void ImeInput::DestroyImeWindow(HWND window_handle) {
 }
 
 void ImeInput::MoveImeWindow(HWND window_handle, HIMC imm_context) {
+  // Does nothing when the target window has no input focus. This is important
+  // because the renderer may issue SelectionBoundsChanged event even when it
+  // has no input focus. (e.g. the page update caused by incremental search.)
+  // So this event should be ignored when the |window_handle| no longer has the
+  // input focus.
+  if (GetFocus() != window_handle)
+    return;
+
   int x = caret_rect_.x();
   int y = caret_rect_.y();
 
@@ -303,22 +325,13 @@ void ImeInput::GetCompositionInfo(HIMC imm_context, LPARAM lparam,
   // GCS_CURSORPOS value if it's available.
   // TODO(suzhe): due to a bug of webkit, we currently can't use selection range
   // with composition string. See: https://bugs.webkit.org/show_bug.cgi?id=40805
-  if (lparam & CS_NOMOVECARET) {
-    composition->selection = ui::Range(0);
-  } else if (lparam & GCS_CURSORPOS) {
-    // If cursor position is same as target_start or target_end, then selects
-    // the target range instead. We always use cursor position as selection end,
-    // so that if the client doesn't support drawing selection with composition,
-    // it can always retrieve the correct cursor position.
+  if (!(lparam & CS_NOMOVECARET) && (lparam & GCS_CURSORPOS)) {
+    // IMM32 does not support non-zero-width selection in a composition. So
+    // always use the caret position as selection range.
     int cursor = ::ImmGetCompositionString(imm_context, GCS_CURSORPOS, NULL, 0);
-    if (cursor == target_start)
-      composition->selection = ui::Range(target_end, cursor);
-    else if (cursor == target_end)
-      composition->selection = ui::Range(target_start, cursor);
-    else
-      composition->selection = ui::Range(cursor);
+    composition->selection = ui::Range(cursor);
   } else {
-    composition->selection = ui::Range(target_start, target_end);
+    composition->selection = ui::Range(0);
   }
 
   // Retrieve the clause segmentations and convert them to underlines.

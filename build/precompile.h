@@ -106,3 +106,5 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "intsafe_workaround.h"

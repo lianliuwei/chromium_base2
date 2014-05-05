@@ -543,9 +543,6 @@ TEST_F(ProcessUtilTest, LaunchAsUser) {
 // The following code tests the system implementation of malloc() thus no need
 // to test it under AddressSanitizer.
 TEST_F(ProcessUtilTest, MacMallocFailureDoesNotTerminate) {
-  // Install the OOM killer.
-  base::EnableTerminationOnOutOfMemory();
-
   // Test that ENOMEM doesn't crash via CrMallocErrorBreak two ways: the exit
   // code and lack of the error string. The number of bytes is one less than
   // MALLOC_ABSOLUTE_MAX_SIZE, more than which the system early-returns NULL and
@@ -553,7 +550,11 @@ TEST_F(ProcessUtilTest, MacMallocFailureDoesNotTerminate) {
   // EnableTerminationOnOutOfMemory() for more information.
   void* buf = NULL;
   ASSERT_EXIT(
-      buf = malloc(std::numeric_limits<size_t>::max() - (2 * PAGE_SIZE) - 1),
+      {
+        base::EnableTerminationOnOutOfMemory();
+
+        buf = malloc(std::numeric_limits<size_t>::max() - (2 * PAGE_SIZE) - 1);
+      },
       testing::KilledBySignal(SIGTRAP),
       "\\*\\*\\* error: can't allocate region.*"
           "(Terminating process due to a potential for future heap "
@@ -567,16 +568,20 @@ TEST_F(ProcessUtilTest, MacTerminateOnHeapCorruption) {
   // Assert that freeing an unallocated pointer will crash the process.
   char buf[3];
   asm("" : "=r" (buf));  // Prevent clang from being too smart.
-#if !defined(ADDRESS_SANITIZER)
-  ASSERT_DEATH(free(buf), "being freed.*"
-      "\\*\\*\\* set a breakpoint in malloc_error_break to debug.*"
-      "Terminating process due to a potential for future heap corruption");
-#else
+#if ARCH_CPU_64_BITS
+  // On 64 bit Macs, the malloc system automatically abort()s on heap corruption
+  // but does not output anything.
+  ASSERT_DEATH(free(buf), "");
+#elif defined(ADDRESS_SANITIZER)
   // AddressSanitizer replaces malloc() and prints a different error message on
   // heap corruption.
   ASSERT_DEATH(free(buf), "attempting free on address which "
       "was not malloc\\(\\)-ed");
-#endif  // !defined(ADDRESS_SANITIZER)
+#else
+  ASSERT_DEATH(free(buf), "being freed.*"
+      "\\*\\*\\* set a breakpoint in malloc_error_break to debug.*"
+      "Terminating process due to a potential for future heap corruption");
+#endif  // ARCH_CPU_64_BITS || defined(ADDRESS_SANITIZER)
 }
 
 #endif  // defined(OS_MACOSX)
@@ -664,9 +669,10 @@ int ProcessUtilTest::CountOpenFDsInChild() {
   return num_open_files;
 }
 
-#if defined(ADDRESS_SANITIZER)
+#if defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER)
 // ProcessUtilTest.FDRemapping is flaky when ran under xvfb-run on Precise.
-// The problem is 100% reproducible with ASan. See http://crbug.com/136720.
+// The problem is 100% reproducible with both ASan and TSan.
+// See http://crbug.com/136720.
 #define MAYBE_FDRemapping DISABLED_FDRemapping
 #else
 #define MAYBE_FDRemapping FDRemapping
@@ -752,8 +758,8 @@ TEST_F(ProcessUtilTest, LaunchProcess) {
   EXPECT_EQ(0, setenv("BASE_TEST", "testing", 1 /* override */));
   EXPECT_EQ("testing\n", TestLaunchProcess(env_changes, no_clone_flags));
 
-  env_changes.push_back(std::make_pair(std::string("BASE_TEST"),
-                                       std::string("")));
+  env_changes.push_back(
+      std::make_pair(std::string("BASE_TEST"), std::string()));
   EXPECT_EQ("\n", TestLaunchProcess(env_changes, no_clone_flags));
 
   env_changes[0].second = "foo";
@@ -794,7 +800,7 @@ TEST_F(ProcessUtilTest, AlterEnvironment) {
   delete[] e;
 
   changes.clear();
-  changes.push_back(std::make_pair(std::string("A"), std::string("")));
+  changes.push_back(std::make_pair(std::string("A"), std::string()));
   e = base::AlterEnvironment(changes, empty);
   EXPECT_TRUE(e[0] == NULL);
   delete[] e;
@@ -813,7 +819,7 @@ TEST_F(ProcessUtilTest, AlterEnvironment) {
   delete[] e;
 
   changes.clear();
-  changes.push_back(std::make_pair(std::string("A"), std::string("")));
+  changes.push_back(std::make_pair(std::string("A"), std::string()));
   e = base::AlterEnvironment(changes, a2);
   EXPECT_TRUE(e[0] == NULL);
   delete[] e;
@@ -1063,12 +1069,13 @@ MULTIPROCESS_TEST_MAIN(process_util_test_die_immediately) {
 // Android doesn't implement set_new_handler, so we can't use the
 // OutOfMemoryTest cases.
 // OpenBSD does not support these tests either.
-// AddressSanitizer defines the malloc()/free()/etc. functions so that they
-// don't crash if the program is out of memory, so the OOM tests aren't supposed
-// to work.
+// AddressSanitizer and ThreadSanitizer define the malloc()/free()/etc.
+// functions so that they don't crash if the program is out of memory, so the
+// OOM tests aren't supposed to work.
 // TODO(vandebo) make this work on Windows too.
 #if !defined(OS_ANDROID) && !defined(OS_OPENBSD) && \
-    !defined(OS_WIN) && !defined(ADDRESS_SANITIZER)
+    !defined(OS_WIN) && \
+    !defined(ADDRESS_SANITIZER) && !defined(THREAD_SANITIZER)
 
 #if defined(USE_TCMALLOC)
 extern "C" {

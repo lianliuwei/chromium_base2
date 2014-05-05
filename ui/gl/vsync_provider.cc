@@ -4,6 +4,8 @@
 
 #include "ui/gl/vsync_provider.h"
 
+#include <math.h>
+
 #include "base/logging.h"
 #include "base/time.h"
 
@@ -13,6 +15,11 @@ namespace {
 // Calculating refreshes out of this range will be considered a fatal error.
 const int64 kMinVsyncIntervalUs = base::Time::kMicrosecondsPerSecond / 400;
 const int64 kMaxVsyncIntervalUs = base::Time::kMicrosecondsPerSecond / 10;
+
+// How much noise we'll tolerate between successive computed intervals before
+// we think the latest computed interval is invalid (noisey due to
+// monitor configuration change, moving a window between monitors, etc.).
+const double kRelativeIntervalDifferenceThreshold = 0.05;
 
 }  // namespace
 
@@ -56,6 +63,15 @@ void SyncControlVSyncProvider::GetVSyncParameters(
                      &swap_buffer_counter))
     return;
 
+  // Both Intel and Mali drivers will return TRUE for GetSyncValues
+  // but a value of 0 for MSC if they cannot access the CRTC data structure
+  // associated with the surface. crbug.com/231945
+  if (media_stream_counter == 0) {
+    LOG(ERROR) << "glXGetSyncValuesOML should not return TRUE with a "
+               << "media stream counter of 0.";
+    return;
+  }
+
   struct timespec real_time;
   struct timespec monotonic_time;
   clock_gettime(CLOCK_REALTIME, &real_time);
@@ -94,32 +110,46 @@ void SyncControlVSyncProvider::GetVSyncParameters(
 
   timebase = base::TimeTicks::FromInternalValue(system_time);
 
+  // Only need the previous calculated interval for our filtering.
+  while (last_computed_intervals_.size() > 1)
+    last_computed_intervals_.pop();
+
   int32 numerator, denominator;
-  base::TimeDelta new_interval;
   if (GetMscRate(&numerator, &denominator)) {
-    new_interval =
-        base::TimeDelta::FromSeconds(denominator) / numerator;
+    last_computed_intervals_.push(
+        base::TimeDelta::FromSeconds(denominator) / numerator);
   } else if (!last_timebase_.is_null()) {
     base::TimeDelta timebase_diff = timebase - last_timebase_;
-    uint64 counter_diff = media_stream_counter -
+    int64 counter_diff = media_stream_counter -
         last_media_stream_counter_;
     if (counter_diff > 0 && timebase > last_timebase_)
-      new_interval = timebase_diff / counter_diff;
+      last_computed_intervals_.push(timebase_diff / counter_diff);
   }
-  if (new_interval.InMicroseconds() < kMinVsyncIntervalUs ||
-      new_interval.InMicroseconds() > kMaxVsyncIntervalUs) {
-    LOG(ERROR) << "Calculated bogus refresh interval of "
-               << new_interval.InMicroseconds() << " us. "
-               << "Last time base of "
-               << last_timebase_.ToInternalValue() << " us. "
-               << "Current time base of "
-               << timebase.ToInternalValue() << " us. "
-               << "Last media stream count of "
-               << last_media_stream_counter_ << ". "
-               << "Current media stream count of "
-               << media_stream_counter << ".";
-  } else {
-    last_good_interval_ = new_interval;
+
+  if (last_computed_intervals_.size() == 2) {
+    const base::TimeDelta& old_interval = last_computed_intervals_.front();
+    const base::TimeDelta& new_interval = last_computed_intervals_.back();
+
+    double relative_change =
+        fabs(old_interval.InMillisecondsF() - new_interval.InMillisecondsF()) /
+        new_interval.InMillisecondsF();
+    if (relative_change < kRelativeIntervalDifferenceThreshold) {
+      if (new_interval.InMicroseconds() < kMinVsyncIntervalUs ||
+          new_interval.InMicroseconds() > kMaxVsyncIntervalUs) {
+        LOG(FATAL) << "Calculated bogus refresh interval of "
+                   << new_interval.InMicroseconds() << " us. "
+                   << "Last time base of "
+                   << last_timebase_.ToInternalValue() << " us. "
+                   << "Current time base of "
+                   << timebase.ToInternalValue() << " us. "
+                   << "Last media stream count of "
+                   << last_media_stream_counter_ << ". "
+                   << "Current media stream count of "
+                   << media_stream_counter << ".";
+      } else {
+        last_good_interval_ = new_interval;
+      }
+    }
   }
 
   last_timebase_ = timebase;

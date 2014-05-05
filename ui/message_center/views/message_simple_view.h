@@ -9,14 +9,14 @@
 
 namespace message_center {
 
+class MessageCenter;
 class Notification;
-class NotificationChangeObserver;
 
 // A simple view for a notification entry (icon + message + buttons).
 class MessageSimpleView : public MessageView {
  public:
   MessageSimpleView(const Notification& notification,
-                    NotificationChangeObserver* observer);
+                    MessageCenter* message_center);
   virtual ~MessageSimpleView();
 
   // Overridden from MessageView:
@@ -26,6 +26,7 @@ class MessageSimpleView : public MessageView {
  protected:
   // Overridden from views::View:
   virtual gfx::Size GetPreferredSize() OVERRIDE;
+  virtual int GetHeightForWidth(int width) OVERRIDE;
   virtual void Layout() OVERRIDE;
 
   MessageSimpleView();

@@ -7,12 +7,12 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "ui/native_theme/native_theme_base.h"
+#include "ui/native_theme/fallback_theme.h"
 
 namespace ui {
 
 // Aura implementation of native theme support.
-class NATIVE_THEME_EXPORT NativeThemeAura : public NativeThemeBase {
+class NATIVE_THEME_EXPORT NativeThemeAura : public FallbackTheme {
  public:
   static NativeThemeAura* instance();
 
@@ -21,11 +21,15 @@ class NATIVE_THEME_EXPORT NativeThemeAura : public NativeThemeBase {
   virtual ~NativeThemeAura();
 
   // Overridden from NativeThemeBase:
-  virtual SkColor GetSystemColor(ColorId color_id) const OVERRIDE;
   virtual void PaintMenuPopupBackground(
       SkCanvas* canvas,
       const gfx::Size& size,
       const MenuBackgroundExtraParams& menu_background) const OVERRIDE;
+  virtual void PaintMenuItemBackground(
+      SkCanvas* canvas,
+      State state,
+      const gfx::Rect& rect,
+      const MenuListExtraParams& menu_list) const OVERRIDE;
   virtual void PaintScrollbarTrack(
       SkCanvas* canvas,
       Part part,

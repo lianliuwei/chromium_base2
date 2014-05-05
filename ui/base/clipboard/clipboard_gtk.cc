@@ -245,7 +245,7 @@ void Clipboard::WriteObjectsImpl(Buffer buffer,
 
 // Take ownership of the GTK clipboard and inform it of the targets we support.
 void Clipboard::SetGtkClipboard(Buffer buffer) {
-  scoped_array<GtkTargetEntry> targets(
+  scoped_ptr<GtkTargetEntry[]> targets(
       new GtkTargetEntry[clipboard_data_->size()]);
 
   int i = 0;
@@ -463,7 +463,6 @@ void Clipboard::ReadAvailableTypes(Clipboard::Buffer buffer,
 
 void Clipboard::ReadText(Clipboard::Buffer buffer, string16* result) const {
   DCHECK(CalledOnValidThread());
-  ReportAction(buffer, READ_TEXT);
   GtkClipboard* clipboard = LookupBackingClipboard(buffer);
   if (clipboard == NULL)
     return;
@@ -482,7 +481,6 @@ void Clipboard::ReadText(Clipboard::Buffer buffer, string16* result) const {
 void Clipboard::ReadAsciiText(Clipboard::Buffer buffer,
                               std::string* result) const {
   DCHECK(CalledOnValidThread());
-  ReportAction(buffer, READ_TEXT);
   GtkClipboard* clipboard = LookupBackingClipboard(buffer);
   if (clipboard == NULL)
     return;
@@ -544,7 +542,6 @@ void Clipboard::ReadHTML(Clipboard::Buffer buffer, string16* markup,
 
 void Clipboard::ReadRTF(Buffer buffer, std::string* result) const {
   DCHECK(CalledOnValidThread());
-  ReportAction(buffer, READ_TEXT);
   ReadData(GetRtfFormatType(), result);
 }
 
@@ -611,7 +608,7 @@ void Clipboard::ReadDataImpl(Buffer buffer,
   gtk_selection_data_free(data);
 }
 
-Clipboard::SourceTag Clipboard::ReadSourceTag(Buffer buffer) const {
+SourceTag Clipboard::ReadSourceTag(Buffer buffer) const {
   std::string result;
   ReadDataImpl(buffer, GetSourceTagFormatType(), &result);
   return Binary2SourceTag(result);

@@ -153,6 +153,9 @@ Event::Event(EventType type, base::TimeDelta time_stamp, int flags)
       time_stamp_(time_stamp),
       flags_(flags),
       dispatch_to_hidden_targets_(false),
+#if defined(USE_X11)
+      native_event_(NULL),
+#endif
       delete_native_event_(false),
       cancelable_(true),
       target_(NULL),
@@ -194,11 +197,11 @@ Event::Event(const base::NativeEvent& native_event,
 }
 
 Event::Event(const Event& copy)
-    : native_event_(::CopyNativeEvent(copy.native_event_)),
-      type_(copy.type_),
+    : type_(copy.type_),
       time_stamp_(copy.time_stamp_),
       flags_(copy.flags_),
       dispatch_to_hidden_targets_(false),
+      native_event_(::CopyNativeEvent(copy.native_event_)),
       delete_native_event_(false),
       cancelable_(true),
       target_(NULL),
@@ -250,9 +253,7 @@ LocatedEvent::LocatedEvent(const base::NativeEvent& native_event)
             EventTypeFromNative(native_event),
             EventFlagsFromNative(native_event)),
       location_(EventLocationFromNative(native_event)),
-      root_location_(location_),
-      valid_system_location_(true),
-      system_location_(EventSystemLocationFromNative(native_event)) {
+      root_location_(location_) {
 }
 
 LocatedEvent::LocatedEvent(EventType type,
@@ -262,9 +263,7 @@ LocatedEvent::LocatedEvent(EventType type,
                            int flags)
     : Event(type, time_stamp, flags),
       location_(location),
-      root_location_(root_location),
-      valid_system_location_(false),
-      system_location_(0, 0) {
+      root_location_(root_location) {
 }
 
 void LocatedEvent::UpdateForRootTransform(
@@ -395,12 +394,14 @@ MouseWheelEvent::MouseWheelEvent(const base::NativeEvent& native_event)
 
 MouseWheelEvent::MouseWheelEvent(const ScrollEvent& scroll_event)
     : MouseEvent(scroll_event),
-      offset_(scroll_event.y_offset()) {
+      offset_(scroll_event.x_offset(), scroll_event.y_offset()){
   SetType(ET_MOUSEWHEEL);
 }
 
-MouseWheelEvent::MouseWheelEvent(const MouseEvent& mouse_event, int offset)
-    : MouseEvent(mouse_event), offset_(offset) {
+MouseWheelEvent::MouseWheelEvent(const MouseEvent& mouse_event,
+                                 int x_offset,
+                                 int y_offset)
+    : MouseEvent(mouse_event), offset_(x_offset, y_offset) {
   DCHECK(type() == ET_MOUSEWHEEL);
 }
 
@@ -462,15 +463,16 @@ void TouchEvent::Relocate(const gfx::Point& origin) {
   root_location_ -= origin.OffsetFromOrigin();
 }
 
-void TouchEvent::UpdateForRootTransform(const gfx::Transform& root_transform) {
-  LocatedEvent::UpdateForRootTransform(root_transform);
+void TouchEvent::UpdateForRootTransform(
+    const gfx::Transform& inverted_root_transform) {
+  LocatedEvent::UpdateForRootTransform(inverted_root_transform);
   gfx::DecomposedTransform decomp;
-  bool success = gfx::DecomposeTransform(&decomp, root_transform);
+  bool success = gfx::DecomposeTransform(&decomp, inverted_root_transform);
   DCHECK(success);
   if (decomp.scale[0])
-    radius_x_ /= decomp.scale[0];
+    radius_x_ *= decomp.scale[0];
   if (decomp.scale[1])
-    radius_y_ /= decomp.scale[1];
+    radius_y_ *= decomp.scale[1];
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -690,15 +692,16 @@ void ScrollEvent::Scale(const float factor) {
   y_offset_ordinal_ *= factor;
 }
 
-void ScrollEvent::UpdateForRootTransform(const gfx::Transform& root_transform) {
-  LocatedEvent::UpdateForRootTransform(root_transform);
+void ScrollEvent::UpdateForRootTransform(
+    const gfx::Transform& inverted_root_transform) {
+  LocatedEvent::UpdateForRootTransform(inverted_root_transform);
   gfx::DecomposedTransform decomp;
-  bool success = gfx::DecomposeTransform(&decomp, root_transform);
+  bool success = gfx::DecomposeTransform(&decomp, inverted_root_transform);
   DCHECK(success);
   if (decomp.scale[0])
-    x_offset_ordinal_ /= decomp.scale[0];
+    x_offset_ordinal_ *= decomp.scale[0];
   if (decomp.scale[1])
-    y_offset_ordinal_ /= decomp.scale[1];
+    y_offset_ordinal_ *= decomp.scale[1];
 }
 
 ////////////////////////////////////////////////////////////////////////////////

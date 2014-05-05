@@ -42,6 +42,13 @@ bool GLContext::GetTotalGpuMemory(size_t* bytes) {
   return false;
 }
 
+void GLContext::SetSafeToForceGpuSwitch() {
+}
+
+void GLContext::SetUnbindFboOnMakeCurrent() {
+  NOTIMPLEMENTED();
+}
+
 std::string GLContext::GetExtensions() {
   DCHECK(IsCurrent(NULL));
   const char* ext = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
@@ -89,7 +96,11 @@ void GLContext::SetCurrent(GLContext* context, GLSurface* surface) {
 }
 
 GLStateRestorer* GLContext::GetGLStateRestorer() {
-  return NULL;
+  return state_restorer_.get();
+}
+
+void GLContext::SetGLStateRestorer(GLStateRestorer* state_restorer) {
+  state_restorer_ = make_scoped_ptr(state_restorer);
 }
 
 bool GLContext::WasAllocatedUsingRobustnessExtension() {

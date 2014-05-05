@@ -40,14 +40,12 @@ void TraceEventAnalyzerTest::BeginTracing() {
   output_.json_output.clear();
   buffer_.Start();
   base::debug::TraceLog::GetInstance()->SetEnabled(
-      true,
+      base::debug::CategoryFilter("*"),
       base::debug::TraceLog::RECORD_UNTIL_FULL);
 }
 
 void TraceEventAnalyzerTest::EndTracing() {
-  base::debug::TraceLog::GetInstance()->SetEnabled(
-      false,
-      base::debug::TraceLog::RECORD_UNTIL_FULL);
+  base::debug::TraceLog::GetInstance()->SetDisabled();
   base::debug::TraceLog::GetInstance()->Flush(
       base::Bind(&TraceEventAnalyzerTest::OnTraceDataCollected,
                  base::Unretained(this)));
@@ -500,8 +498,8 @@ TEST_F(TraceEventAnalyzerTest, AsyncBeginEndAssocations) {
   TraceEventVector found;
   analyzer->FindEvents(Query::MatchAsyncBeginWithNext(), &found);
   ASSERT_EQ(2u, found.size());
-  EXPECT_STRCASEEQ("B", found[0]->id.c_str());
-  EXPECT_STRCASEEQ("C", found[1]->id.c_str());
+  EXPECT_STRCASEEQ("0xb", found[0]->id.c_str());
+  EXPECT_STRCASEEQ("0xc", found[1]->id.c_str());
 }
 
 // Test AssociateAsyncBeginEndEvents
@@ -533,13 +531,13 @@ TEST_F(TraceEventAnalyzerTest, AsyncBeginEndAssocationsWithSteps) {
   analyzer->FindEvents(Query::MatchAsyncBeginWithNext(), &found);
   ASSERT_EQ(3u, found.size());
 
-  EXPECT_STRCASEEQ("B", found[0]->id.c_str());
+  EXPECT_STRCASEEQ("0xb", found[0]->id.c_str());
   EXPECT_EQ(TRACE_EVENT_PHASE_ASYNC_STEP, found[0]->other_event->phase);
   EXPECT_TRUE(found[0]->other_event->other_event);
   EXPECT_EQ(TRACE_EVENT_PHASE_ASYNC_END,
             found[0]->other_event->other_event->phase);
 
-  EXPECT_STRCASEEQ("C", found[1]->id.c_str());
+  EXPECT_STRCASEEQ("0xc", found[1]->id.c_str());
   EXPECT_EQ(TRACE_EVENT_PHASE_ASYNC_STEP, found[1]->other_event->phase);
   EXPECT_TRUE(found[1]->other_event->other_event);
   EXPECT_EQ(TRACE_EVENT_PHASE_ASYNC_STEP,
@@ -552,7 +550,7 @@ TEST_F(TraceEventAnalyzerTest, AsyncBeginEndAssocationsWithSteps) {
   EXPECT_EQ(TRACE_EVENT_PHASE_ASYNC_END,
             found[1]->other_event->other_event->other_event->phase);
 
-  EXPECT_STRCASEEQ("A", found[2]->id.c_str());
+  EXPECT_STRCASEEQ("0xa", found[2]->id.c_str());
   EXPECT_EQ(TRACE_EVENT_PHASE_ASYNC_STEP, found[2]->other_event->phase);
 }
 
@@ -786,7 +784,7 @@ TEST_F(TraceEventAnalyzerTest, FindClosest) {
   events[0].name = "one";
   events[2].name = "two";
   events[4].name = "three";
-  Query query_named = Query::EventName() != Query::String("");
+  Query query_named = Query::EventName() != Query::String(std::string());
   Query query_one = Query::EventName() == Query::String("one");
 
   // Only one event matches query_one, so two closest can't be found.
@@ -822,7 +820,7 @@ TEST_F(TraceEventAnalyzerTest, CountMatches) {
   events[0].name = "one";
   events[2].name = "two";
   events[4].name = "three";
-  Query query_named = Query::EventName() != Query::String("");
+  Query query_named = Query::EventName() != Query::String(std::string());
   Query query_one = Query::EventName() == Query::String("one");
 
   EXPECT_EQ(0u, CountMatches(event_ptrs, Query::Bool(false)));

@@ -31,7 +31,7 @@ const SkScalar kTabBorderRadius = 2.0f;
 namespace views {
 
 // static
-const char TabbedPane::kViewClassName[] = "views/TabbedPane";
+const char TabbedPane::kViewClassName[] = "TabbedPane";
 
 // The tab view shown in the tab strip.
 class Tab : public View {
@@ -326,8 +326,9 @@ void TabbedPane::Layout() {
     contents_->child_at(i)->SetSize(contents_->size());
 }
 
-void TabbedPane::ViewHierarchyChanged(bool is_add, View* parent, View* child) {
-  if (is_add) {
+void TabbedPane::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
+  if (details.is_add) {
     // Support navigating tabs by Ctrl+Tab and Ctrl+Shift+Tab.
     AddAccelerator(ui::Accelerator(ui::VKEY_TAB,
                                    ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN));
@@ -350,7 +351,7 @@ bool TabbedPane::AcceleratorPressed(const ui::Accelerator& accelerator) {
   return true;
 }
 
-std::string TabbedPane::GetClassName() const {
+const char* TabbedPane::GetClassName() const {
   return kViewClassName;
 }
 
@@ -359,8 +360,8 @@ void TabbedPane::OnFocus() {
 
   View* selected_tab = GetSelectedTab();
   if (selected_tab) {
-    selected_tab->GetWidget()->NotifyAccessibilityEvent(
-        selected_tab, ui::AccessibilityTypes::EVENT_FOCUS, true);
+    selected_tab->NotifyAccessibilityEvent(
+        ui::AccessibilityTypes::EVENT_FOCUS, true);
   }
 }
 

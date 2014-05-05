@@ -49,19 +49,17 @@ ContentsView::ContentsView(AppListMainView* app_list_main_view,
     : show_state_(SHOW_APPS),
       pagination_model_(pagination_model),
       view_model_(new views::ViewModel),
-      ALLOW_THIS_IN_INITIALIZER_LIST(
-          bounds_animator_(new views::BoundsAnimator(this))) {
+      bounds_animator_(new views::BoundsAnimator(this)) {
   pagination_model_->SetTransitionDurations(
       kPageTransitionDurationInMs,
       kOverscrollPageTransitionDurationMs);
 
-  AppsGridView* apps_grid_view = new AppsGridView(app_list_main_view,
-                                                  pagination_model);
-  apps_grid_view->SetLayout(kPreferredIconDimension,
-                            kPreferredCols,
-                            kPreferredRows);
-  AddChildView(apps_grid_view);
-  view_model_->Add(apps_grid_view, kIndexAppsGrid);
+  apps_grid_view_ = new AppsGridView(app_list_main_view, pagination_model);
+  apps_grid_view_->SetLayout(kPreferredIconDimension,
+                             kPreferredCols,
+                             kPreferredRows);
+  AddChildView(apps_grid_view_);
+  view_model_->Add(apps_grid_view_, kIndexAppsGrid);
 
   SearchResultListView* search_results_view = new SearchResultListView(
       app_list_main_view);
@@ -80,6 +78,11 @@ void ContentsView::SetModel(AppListModel* model) {
     GetAppsGridView(view_model_.get())->SetModel(NULL);
     GetSearchResultListView(view_model_.get())->SetResults(NULL);
   }
+}
+
+void ContentsView::SetDragAndDropHostOfCurrentAppList(
+    app_list::ApplicationDragAndDropHost* drag_and_drop_host) {
+  apps_grid_view_->SetDragAndDropHostOfCurrentAppList(drag_and_drop_host);
 }
 
 void ContentsView::SetShowState(ShowState show_state) {
@@ -179,9 +182,11 @@ bool ContentsView::OnMouseWheel(const ui::MouseWheelEvent& event) {
   if (show_state_ != SHOW_APPS)
     return false;
 
-  if (abs(event.offset()) > kMinMouseWheelToSwitchPage) {
-    if (!pagination_model_->has_transition())
-      pagination_model_->SelectPageRelative(event.offset() > 0 ? -1 : 1, true);
+  if (abs(event.y_offset()) > kMinMouseWheelToSwitchPage) {
+    if (!pagination_model_->has_transition()) {
+      pagination_model_->SelectPageRelative(
+          event.y_offset() > 0 ? -1 : 1, true);
+    }
     return true;
   }
 

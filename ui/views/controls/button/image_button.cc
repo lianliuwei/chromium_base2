@@ -5,6 +5,7 @@
 #include "ui/views/controls/button/image_button.h"
 
 #include "base/utf_string_conversions.h"
+#include "ui/base/accessibility/accessible_view_state.h"
 #include "ui/base/animation/throb_animation.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/image/image_skia_operations.h"
@@ -72,11 +73,15 @@ void ImageButton::SetImageAlignment(HorizontalAlignment h_align,
 // ImageButton, View overrides:
 
 gfx::Size ImageButton::GetPreferredSize() {
+  gfx::Size size = preferred_size_;
   if (!images_[STATE_NORMAL].isNull()) {
-    return gfx::Size(images_[STATE_NORMAL].width(),
+    size = gfx::Size(images_[STATE_NORMAL].width(),
                      images_[STATE_NORMAL].height());
   }
-  return preferred_size_;
+
+  gfx::Insets insets = GetInsets();
+  size.Enlarge(insets.width(), insets.height());
+  return size;
 }
 
 void ImageButton::OnPaint(gfx::Canvas* canvas) {
@@ -159,6 +164,8 @@ void ToggleImageButton::SetToggled(bool toggled) {
   }
   toggled_ = toggled;
   SchedulePaint();
+
+  NotifyAccessibilityEvent(ui::AccessibilityTypes::EVENT_VALUE_CHANGED, true);
 }
 
 void ToggleImageButton::SetToggledImage(ButtonState state,
@@ -207,6 +214,11 @@ bool ToggleImageButton::GetTooltipText(const gfx::Point& p,
 
   *tooltip = toggled_tooltip_text_;
   return true;
+}
+
+void ToggleImageButton::GetAccessibleState(ui::AccessibleViewState* state) {
+  ImageButton::GetAccessibleState(state);
+  GetTooltipText(gfx::Point(), &state->name);
 }
 
 }  // namespace views

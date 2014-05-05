@@ -94,6 +94,7 @@
         'gfx/color_utils_unittest.cc',
         'gfx/display_unittest.cc',
         'gfx/font_unittest.cc',
+        'gfx/image/image_family_unittest.cc',
         'gfx/image/image_skia_unittest.cc',
         'gfx/image/image_unittest.cc',
         'gfx/image/image_unittest_util.cc',
@@ -128,6 +129,7 @@
         'base/cocoa/tracking_area_unittest.mm',
         'base/events/event_dispatcher_unittest.cc',
         'base/events/event_unittest.cc',
+        'base/events/key_identifier_conversion_unittest.cc',
         'base/gtk/gtk_expanded_container_unittest.cc',
         'base/gtk/gtk_im_context_util_unittest.cc',
         'base/gtk/menu_label_accelerator_util_unittest.cc',
@@ -150,7 +152,6 @@
         'gfx/platform_font_mac_unittest.mm',
         'gfx/render_text_unittest.cc',
         'gfx/transform_util_unittest.cc',
-        'gfx/video_decode_acceleration_support_mac_unittest.mm',
         'shell_dialogs/select_file_dialog_win_unittest.cc',
         'webui/web_ui_util_unittest.cc',
       ],
@@ -208,12 +209,6 @@
           # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
           'msvs_disabled_warnings': [ 4267, ],
         }],
-        ['OS == "linux"', {
-          'sources': [
-            'base/x/x11_util_unittest.cc',
-            'gfx/platform_font_pango_unittest.cc',
-          ],
-        }],
         ['OS == "linux" and toolkit_views==1', {
           'sources': [
             'base/x/events_x_unittest.cc',
@@ -235,9 +230,12 @@
             'base/strings/ui_strings.gyp:ui_unittest_strings',
           ],
         }],
-        ['use_glib == 1', {
+        ['use_pango == 1', {
           'dependencies': [
             '../build/linux/system.gyp:pangocairo',
+          ],
+          'sources': [
+            'gfx/platform_font_pango_unittest.cc',
           ],
           'conditions': [
             ['linux_use_tcmalloc==1', {
@@ -283,6 +281,7 @@
           'sources!': [
             'base/events/event_dispatcher_unittest.cc',
             'base/events/event_unittest.cc',
+            'base/events/key_identifier_conversion_unittest.cc',
           ],
         }],
         ['use_aura==1', {

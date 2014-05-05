@@ -75,9 +75,10 @@ var parseHtmlSubset = (function() {
     var tags = allowedTags.concat(extraTags);
     var attrs = merge(allowedAttributes, opt_extraAttrs || {});
 
-    var r = document.createRange();
-    r.selectNode(document.body);
-    // This does not execute any scripts.
+    var doc = document.implementation.createHTMLDocument('');
+    var r = doc.createRange();
+    r.selectNode(doc.body);
+    // This does not execute any scripts because the document has no view.
     var df = r.createContextualFragment(s);
     walk(df, function(node) {
       switch (node.nodeType) {

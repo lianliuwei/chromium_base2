@@ -8,17 +8,32 @@
 
 namespace views {
 
-HWND HWNDForView(View* view) {
+HWND HWNDForView(const View* view) {
   return view->GetWidget() ? HWNDForWidget(view->GetWidget()) : NULL;
 }
 
 // Returns the HWND associated with the specified widget.
-HWND HWNDForWidget(Widget* widget) {
+HWND HWNDForWidget(const Widget* widget) {
   return widget->GetNativeView();
 }
 
-HWND HWNDForNativeWindow(gfx::NativeWindow window) {
+HWND HWNDForNativeView(const gfx::NativeView view) {
+  return view;
+}
+
+HWND HWNDForNativeWindow(const gfx::NativeWindow window) {
   return window;
 }
 
+gfx::Rect GetWindowBoundsForClientBounds(View* view,
+                                         const gfx::Rect& client_bounds) {
+  DCHECK(view);
+  HWND hwnd = view->GetWidget()->GetNativeWindow();
+  RECT rect = client_bounds.ToRECT();
+  DWORD style = ::GetWindowLong(hwnd, GWL_STYLE);
+  DWORD ex_style = ::GetWindowLong(hwnd, GWL_EXSTYLE);
+  AdjustWindowRectEx(&rect, style, FALSE, ex_style);
+  return gfx::Rect(rect);
 }
+
+}  // namespace views

@@ -13,6 +13,8 @@
 #include "ui/gfx/render_text.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/image_view.h"
+#include "ui/views/controls/menu/menu_item_view.h"
+#include "ui/views/controls/menu/menu_runner.h"
 
 namespace {
 
@@ -38,10 +40,6 @@ const SkColor kBorderColor = SkColorSetRGB(0xE5, 0xE5, 0xE5);
 const SkColor kDefaultTextColor = SkColorSetRGB(0x33, 0x33, 0x33);
 const SkColor kDimmedTextColor = SkColorSetRGB(0x96, 0x96, 0x96);
 const SkColor kURLTextColor = SkColorSetRGB(0x00, 0x99, 0x33);
-
-const SkColor kSelectedBackgroundColor = SkColorSetRGB(0xEC, 0xEC, 0xEC);
-// 6% black on top of kSelectedBackgroundColor
-const SkColor kHoverSelectedColor = SkColorSetRGB(0xE6, 0xE6, 0xE6);
 
 // A non-interactive image view to display result icon.
 class IconView : public views::ImageView {
@@ -99,6 +97,7 @@ SearchResultView::SearchResultView(SearchResultListView* list_view,
       delegate_(delegate),
       icon_(new IconView) {
   AddChildView(icon_);
+  set_context_menu_controller(this);
 }
 
 SearchResultView::~SearchResultView() {
@@ -143,7 +142,7 @@ void SearchResultView::UpdateDetailsText() {
   }
 }
 
-std::string SearchResultView::GetClassName() const {
+const char* SearchResultView::GetClassName() const {
   return kViewClassName;
 }
 
@@ -184,10 +183,10 @@ void SearchResultView::OnPaint(gfx::Canvas* canvas) {
 
   const bool selected = list_view_->IsResultViewSelected(this);
   const bool hover = state() == STATE_HOVERED || state() == STATE_PRESSED;
-  if (hover && selected)
-    canvas->FillRect(content_rect, kHoverSelectedColor);
-  else if (selected || hover)
-    canvas->FillRect(content_rect, kSelectedBackgroundColor);
+  if (selected)
+    canvas->FillRect(content_rect, kSelectedColor);
+  else if (hover)
+    canvas->FillRect(content_rect, kHighlightedColor);
   else
     canvas->FillRect(content_rect, kContentsBackgroundColor);
 
@@ -203,7 +202,7 @@ void SearchResultView::OnPaint(gfx::Canvas* canvas) {
   text_bounds.set_x(GetMirroredXWithWidthInView(text_bounds.x(),
                                                 text_bounds.width()));
 
-  if (title_text_.get() && details_text_.get()) {
+  if (title_text_ && details_text_) {
     gfx::Size title_size(text_bounds.width(),
                          title_text_->GetStringSize().height());
     gfx::Size details_size(text_bounds.width(),
@@ -219,7 +218,7 @@ void SearchResultView::OnPaint(gfx::Canvas* canvas) {
     details_text_->SetDisplayRect(gfx::Rect(gfx::Point(text_bounds.x(), y),
                                             details_size));
     details_text_->Draw(canvas);
-  } else if (title_text_.get()) {
+  } else if (title_text_) {
     gfx::Size title_size(text_bounds.width(),
                          title_text_->GetStringSize().height());
     gfx::Rect centered_title_rect(text_bounds);
@@ -294,6 +293,20 @@ void SearchResultView::OnActionIconsChanged() {
       button->SetTooltipText(icon.tooltip_text);
     }
   }
+}
+
+void SearchResultView::ShowContextMenuForView(views::View* source,
+                                              const gfx::Point& point) {
+  ui::MenuModel* menu_model = result_->GetContextMenuModel();
+  if (!menu_model)
+    return;
+
+  context_menu_runner_.reset(new views::MenuRunner(menu_model));
+  if (context_menu_runner_->RunMenuAt(
+          GetWidget(), NULL, gfx::Rect(point, gfx::Size()),
+          views::MenuItemView::TOPLEFT, views::MenuRunner::HAS_MNEMONICS) ==
+      views::MenuRunner::MENU_DELETED)
+    return;
 }
 
 }  // namespace app_list

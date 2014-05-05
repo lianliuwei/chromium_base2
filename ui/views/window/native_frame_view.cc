@@ -7,6 +7,10 @@
 #include "ui/views/widget/native_widget.h"
 #include "ui/views/widget/widget.h"
 
+#if defined(OS_WIN)
+#include "ui/views/win/hwnd_util.h"
+#endif
+
 namespace views {
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -29,12 +33,9 @@ gfx::Rect NativeFrameView::GetBoundsForClientView() const {
 
 gfx::Rect NativeFrameView::GetWindowBoundsForClientBounds(
     const gfx::Rect& client_bounds) const {
-#if defined(OS_WIN) && !defined(USE_AURA)
-  RECT rect = client_bounds.ToRECT();
-  DWORD style = ::GetWindowLong(GetWidget()->GetNativeView(), GWL_STYLE);
-  DWORD ex_style = ::GetWindowLong(GetWidget()->GetNativeView(), GWL_EXSTYLE);
-  AdjustWindowRectEx(&rect, style, FALSE, ex_style);
-  return gfx::Rect(rect);
+#if defined(OS_WIN)
+  return views::GetWindowBoundsForClientBounds(
+      static_cast<View*>(const_cast<NativeFrameView*>(this)), client_bounds);
 #else
   // TODO(sad):
   return client_bounds;
@@ -62,8 +63,20 @@ void NativeFrameView::UpdateWindowTitle() {
   // Nothing to do.
 }
 
+// Returns the client size. On Windows, this is the expected behavior for
+// native frames (see |NativeWidgetWin::WidgetSizeIsClientSize()|), while other
+// platforms currently always return client bounds from
+// |GetWindowBoundsForClientBounds()|.
 gfx::Size NativeFrameView::GetPreferredSize() {
   return frame_->client_view()->GetPreferredSize();
+}
+
+gfx::Size NativeFrameView::GetMinimumSize() {
+  return frame_->client_view()->GetMinimumSize();
+}
+
+gfx::Size NativeFrameView::GetMaximumSize() {
+  return frame_->client_view()->GetMaximumSize();
 }
 
 }  // namespace views

@@ -6,32 +6,39 @@ ExternalClearKey/EncryptedMediaTest.*
 ClearKey/EncryptedMediaTest.*
 WorkerTest.*
 MediaTest.*
-AudioLayoutTest.*
 WebGLConformanceTest.*
 MessagePortTest.Tests
 EncryptedMediaTest.InvalidKeySystem
-IndexedDBBrowserTest.DoesntHangTest
-IndexedDBBrowserTest.NullKeyPathPersistence
-IndexedDBBrowserTest.VersionChangeCrashResilience
-IndexedDBBrowserTest.ValueSizeTest
-IndexedDBBrowserTest.ConnectionsClosedOnTabClose
 CrossPlatformAccessibilityBrowserTest.*
 DatabaseTest.*
 
 # Failures
-WorkerLayoutTest.*
-MediaLayoutTest.*
-IndexedDBLayoutTest.*
 RenderViewHostTest.BaseURLParam
 OffTheRecordClipboardTest.ClearContentData
-FileSystemLayoutTest.*
 GpuPixelBrowserTest.*
-BlobLayoutTest.XhrResponseBlob
 FileSystemBrowserTestWithLowQuota.QuotaTest
-BlobLayoutTest.*
 ChildProcessSecurityPolicyInProcessBrowserTest.NoLeak
-
-# Crashes
+AudioLayoutTest.AudioDataUrl
+AudioLayoutTest.AudioConstructor
+AudioLayoutTest.AudioConstructorPreload
+AudioLayoutTest.AudioConstructorSrc
+AudioLayoutTest.AudioOnlyVideoIntrinsicSize
+MediaLayoutTest.VideoNoAutoplayTest
+MediaLayoutTest.VideoAutoplayTest
+MediaLayoutTest.VideoLoopTest
+WorkerLayoutTest.SharedWorkerFastConstructor
+WorkerLayoutTest.SharedWorkerFastContextGC
+WorkerLayoutTest.SharedWorkerFastException
+WorkerLayoutTest.SharedWorkerFastGC
+WorkerLayoutTest.SharedWorkerFastInIframe
+WorkerLayoutTest.SharedWorkerFastLocation
+WorkerLayoutTest.SharedWorkerFastName
+WorkerLayoutTest.SharedWorkerFastNavigator
+WorkerLayoutTest.SharedWorkerFastReplaceGlobalConstructor
+WorkerLayoutTest.SharedWorkerFastReplaceSelf
+WorkerLayoutTest.SharedWorkerFastScriptError
+WorkerLayoutTest.SharedWorkerFastShared
+WorkerLayoutTest.SharedWorkerFastSimple
 WorkerXHRHttpLayoutTest.Tests
 
 # Needs to start the test server before
@@ -43,6 +50,10 @@ SecurityExploitBrowserTest.SetWebUIProperty
 BrowserPluginHostTest.*
 BrowserPluginTest.*
 PluginTest.*
+
+# These used to be test_shell_tests and were ported to content_browsertests in
+# https://codereview.chromium.org/14304004/. Investigate more.
+DomSerializerTests.*
 
 # http://crbug.com/187500
 RenderViewImplTest.*
@@ -58,6 +69,10 @@ PasswordFormConversionUtilsTest.InvalidWebFormElementToPasswordForm
 RenderViewHostManagerTest.*
 
 # http://crbug.com/215894
+DownloadContentTest.CancelInterruptedDownload
+DownloadContentTest.CancelResumingDownload
+DownloadContentTest.RemoveDownload
+DownloadContentTest.RemoveResumingDownload
 DownloadContentTest.ResumeInterruptedDownload
 DownloadContentTest.ResumeInterruptedDownloadNoRange
 DownloadContentTest.ResumeInterruptedDownloadNoVerifiers
@@ -71,6 +86,31 @@ WebrtcBrowserTest.CanSetupAudioAndVideoCallWithoutMsidAndBundle
 WebrtcBrowserTest.CallWithDataOnly
 WebrtcBrowserTest.CallWithDataAndMedia
 WebrtcBrowserTest.CanMakeEmptyCallThenAddStreamsAndRenegotiate
+WebrtcBrowserTest.CallWithNewVideoMediaStream
+WebrtcBrowserTest.GetAudioAndVideoStreamAndClone
+WebrtcBrowserTest.GetAudioAndVideoStreamAndStop
+WebrtcBrowserTest.GetVideoStreamAndStop
+WebRTCInternalsBrowserTest.WithRealPeerConnectionCall
+
+# http://crbug.com/175683
+WebrtcBrowserTest.CallWithDataAndLaterAddMedia
 
 # http://crbug.com/224134
 RenderWidgetHostBrowserTest.GetSnapshotFromRendererTest
+
+# http://crbug.com/233118
+FileSystemLayoutTest.*
+IndexedDBBrowserTest.*
+IndexedDBBrowserTestWithMissingSSTFile.DestroyTest
+IndexedDBBrowserTestWithVersion0Schema.MigrationTest
+IndexedDBBrowserTestWithVersion123456Schema.DestroyTest
+IndexedDBBrowserTestWithVersion987654SSVData.DestroyTest
+IndexedDBLayoutTest.*
+BlobLayoutTest.XhrResponseBlob
+
+# http://crbug.com/243843
+MediaSourceTest.ConfigChangeVideo
+MediaSourceTest.Playback_AudioOnly_WebM
+MediaSourceTest.Playback_Type_Error
+MediaSourceTest.Playback_VideoAudio_WebM
+MediaSourceTest.Playback_VideoOnly_WebM

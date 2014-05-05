@@ -30,6 +30,9 @@ namespace views {
 // in any region of a View.
 class VIEWS_EXPORT Painter {
  public:
+  Painter();
+  virtual ~Painter();
+
   // A convenience method for painting a Painter in a particular region.
   // This translates the canvas to x/y and paints the painter.
   static void PaintPainterAt(gfx::Canvas* canvas,
@@ -50,23 +53,27 @@ class VIEWS_EXPORT Painter {
 
   // Creates a painter that divides |image| into nine regions. The four corners
   // are rendered at the size specified in insets (eg. the upper-left corner is
-  // rendered at 0 x 0 with a size of insets.left() x insets.top()). The four
-  // edges are tiled and the center is stretched to fill the destination size.
+  // rendered at 0 x 0 with a size of insets.left() x insets.top()). The center
+  // and edge images are stretched to fill the painted area.
   static Painter* CreateImagePainter(const gfx::ImageSkia& image,
                                      const gfx::Insets& insets);
 
-  // Creates a painter that paints nine images as a scalable grid. The four
-  // corners are rendered in their full sizes (they are assumed to share widths
-  // by column and heights by row). The four edges are tiled and the center is
-  // stretched to fill the destination size.
-  // |image_ids| must contain nine image IDs specified in this order: Top-Left,
-  // Top, Top-Right, Left, Center, Right, Bottom-Left, Bottom, Bottom-Right.
+  // Creates a painter that paints images in a scalable grid. The images must
+  // share widths by column and heights by row. The corners are painted at full
+  // size, while center and edge images are stretched to fill the painted area.
+  // The center image may be zero (to be skipped). This ordering must be used:
+  // Top-Left/Top/Top-Right/Left/[Center]/Right/Bottom-Left/Bottom/Bottom-Right.
   static Painter* CreateImageGridPainter(const int image_ids[]);
 
-  virtual ~Painter() {}
+  // Returns the minimum size this painter can paint without obvious graphical
+  // problems (e.g. overlapping images).
+  virtual gfx::Size GetMinimumSize() const = 0;
 
   // Paints the painter in the specified region.
   virtual void Paint(gfx::Canvas* canvas, const gfx::Size& size) = 0;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(Painter);
 };
 
 // HorizontalPainter paints 3 images into a box: left, center and right. The
@@ -78,14 +85,11 @@ class VIEWS_EXPORT HorizontalPainter : public Painter {
   // Constructs a new HorizontalPainter loading the specified image names.
   // The images must be in the order left, right and center.
   explicit HorizontalPainter(const int image_resource_names[]);
+  virtual ~HorizontalPainter();
 
-  virtual ~HorizontalPainter() {}
-
-  // Paints the images.
+  // Painter:
+  virtual gfx::Size GetMinimumSize() const OVERRIDE;
   virtual void Paint(gfx::Canvas* canvas, const gfx::Size& size) OVERRIDE;
-
-  // Height of the images.
-  int height() const { return height_; }
 
  private:
   // The image chunks.
@@ -95,8 +99,6 @@ class VIEWS_EXPORT HorizontalPainter : public Painter {
     RIGHT
   };
 
-  // The height.
-  int height_;
   // NOTE: the images are owned by ResourceBundle. Don't free them.
   const gfx::ImageSkia* images_[3];
 

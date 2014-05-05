@@ -75,6 +75,7 @@ class NativeTextfieldWin
   virtual gfx::Insets CalculateInsets() OVERRIDE;
   virtual void UpdateHorizontalMargins() OVERRIDE;
   virtual void UpdateVerticalMargins() OVERRIDE;
+  virtual void UpdateVerticalAlignment() OVERRIDE;
   virtual bool SetFocus() OVERRIDE;
   virtual View* GetView() OVERRIDE;
   virtual gfx::NativeView GetTestingHandle() const OVERRIDE;
@@ -100,7 +101,9 @@ class NativeTextfieldWin
   virtual void ClearEditHistory() OVERRIDE;
   virtual int GetFontHeight() OVERRIDE;
   virtual int GetTextfieldBaseline() const OVERRIDE;
+  virtual int GetWidthNeededForText() const OVERRIDE;
   virtual void ExecuteTextCommand(int command_id) OVERRIDE;
+  virtual bool HasTextBeingDragged() OVERRIDE;
 
   // ui::SimpleMenuModel::Delegate:
   virtual bool IsCommandIdChecked(int command_id) const OVERRIDE;

@@ -4,9 +4,10 @@
 
 #include "ui/message_center/views/message_simple_view.h"
 
+#include "base/strings/utf_string_conversions.h"
 #include "grit/ui_resources.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/message_center/message_center_constants.h"
+#include "ui/message_center/message_center_style.h"
 #include "ui/message_center/notification.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/image_button.h"
@@ -21,8 +22,8 @@ const SkColor kNotificationColor = SkColorSetRGB(0xfe, 0xfe, 0xfe);
 const SkColor kNotificationReadColor = SkColorSetRGB(0xfa, 0xfa, 0xfa);
 
 MessageSimpleView::MessageSimpleView(const Notification& notification,
-                                     NotificationChangeObserver* observer)
-    : MessageView(notification, observer, false) {
+                                     MessageCenter* message_center)
+    : MessageView(notification, message_center, false) {
   set_focusable(true);
   views::ImageButton* close = new views::ImageButton(this);
   close->SetImage(
@@ -58,6 +59,12 @@ gfx::Size MessageSimpleView::GetPreferredSize() {
     size.Enlarge(border_insets.width(), border_insets.height());
   }
   return size;
+}
+
+int MessageSimpleView::GetHeightForWidth(int width) {
+  if (!content_view_)
+    return 0;
+  return content_view_->GetHeightForWidth(width);
 }
 
 void MessageSimpleView::SetUpView(const Notification& notification) {
@@ -126,6 +133,8 @@ void MessageSimpleView::SetUpView(const Notification& notification) {
   layout->SkipColumns(2);
   layout->AddView(message, 1, 1);
   layout->AddPaddingRow(0, kPaddingBetweenItems);
+  set_accessible_name(
+      notification.title() + base::ASCIIToUTF16("\n") + notification.message());
 }
 
 void MessageSimpleView::ButtonPressed(views::Button* sender,

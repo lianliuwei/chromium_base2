@@ -11,6 +11,7 @@
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 #include "ui/app_list/search_result_observer.h"
+#include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/button/custom_button.h"
 
 namespace gfx {
@@ -20,6 +21,7 @@ class RenderText;
 namespace views {
 class ImageButton;
 class ImageView;
+class MenuRunner;
 }
 
 namespace app_list {
@@ -31,6 +33,7 @@ class SearchResultViewDelegate;
 // SearchResultView displays a SearchResult.
 class SearchResultView : public views::CustomButton,
                          public views::ButtonListener,
+                         public views::ContextMenuController,
                          public SearchResultObserver {
  public:
   // Internal class name.
@@ -42,7 +45,7 @@ class SearchResultView : public views::CustomButton,
 
   // Sets/gets SearchResult displayed by this view.
   void SetResult(SearchResult* result);
-  const SearchResult* result() const { return result_; }
+  SearchResult* result() { return result_; }
 
   // Clears reference to SearchResult but don't schedule repaint.
   void ClearResultNoRepaint();
@@ -52,7 +55,7 @@ class SearchResultView : public views::CustomButton,
   void UpdateDetailsText();
 
   // views::View overrides:
-  virtual std::string GetClassName() const OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
   virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual void Layout() OVERRIDE;
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
@@ -60,6 +63,10 @@ class SearchResultView : public views::CustomButton,
   // views::ButtonListener overrides:
   virtual void ButtonPressed(views::Button* sender,
                              const ui::Event& event) OVERRIDE;
+
+  // views::ContextMenuController overrides:
+  virtual void ShowContextMenuForView(views::View* source,
+                                      const gfx::Point& point) OVERRIDE;
 
   // SearchResultObserver overrides:
   virtual void OnIconChanged() OVERRIDE;
@@ -79,6 +86,8 @@ class SearchResultView : public views::CustomButton,
 
   // Owned by the views hierarchy.
   std::vector<views::ImageButton*> action_buttons_;
+
+  scoped_ptr<views::MenuRunner> context_menu_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchResultView);
 };

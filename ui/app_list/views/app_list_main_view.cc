@@ -60,8 +60,8 @@ class AppListMainView::IconLoader : public AppListItemModelObserver {
   }
   virtual void ItemTitleChanged() OVERRIDE {}
   virtual void ItemHighlightedChanged() OVERRIDE {}
-  virtual void ItemIsInstallingChanged() OVERRIDE {};
-  virtual void ItemPercentDownloadedChanged() OVERRIDE {};
+  virtual void ItemIsInstallingChanged() OVERRIDE {}
+  virtual void ItemPercentDownloadedChanged() OVERRIDE {}
 
   AppListMainView* owner_;
   AppListItemModel* item_;
@@ -134,6 +134,11 @@ void AppListMainView::Prerender() {
   contents_view_->Prerender();
 }
 
+void AppListMainView::SetDragAndDropHostOfCurrentAppList(
+    app_list::ApplicationDragAndDropHost* drag_and_drop_host) {
+  contents_view_->SetDragAndDropHostOfCurrentAppList(drag_and_drop_host);
+}
+
 void AppListMainView::PreloadIcons(PaginationModel* pagination_model,
                                    views::View* anchor) {
   ui::ScaleFactor scale_factor = ui::SCALE_FACTOR_100P;
@@ -197,12 +202,12 @@ void AppListMainView::QueryChanged(SearchBoxView* sender) {
   }
 }
 
-void AppListMainView::OpenResult(const SearchResult& result, int event_flags) {
+void AppListMainView::OpenResult(SearchResult* result, int event_flags) {
   if (delegate_)
     delegate_->OpenSearchResult(result, event_flags);
 }
 
-void AppListMainView::InvokeResultAction(const SearchResult& result,
+void AppListMainView::InvokeResultAction(SearchResult* result,
                                          int action_index,
                                          int event_flags) {
   if (delegate_)

@@ -18,6 +18,7 @@
 #include "ui/base/accessibility/accessibility_types.h"
 #include "ui/base/accessibility/accessible_view_state.h"
 #include "ui/base/events/event.h"
+#include "ui/views/accessibility/native_view_accessibility.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/views_delegate.h"
@@ -25,8 +26,7 @@
 namespace views {
 
 // static
-const char WebView::kViewClassName[] =
-    "ui/views/WebView";
+const char WebView::kViewClassName[] = "WebView";
 
 ////////////////////////////////////////////////////////////////////////////////
 // WebView, public:
@@ -37,9 +37,11 @@ WebView::WebView(content::BrowserContext* browser_context)
       browser_context_(browser_context),
       allow_accelerators_(false) {
   AddChildView(wcv_holder_);
+  NativeViewAccessibility::RegisterWebView(this);
 }
 
 WebView::~WebView() {
+  NativeViewAccessibility::UnregisterWebView(this);
 }
 
 content::WebContents* WebView::GetWebContents() {
@@ -90,7 +92,7 @@ void WebView::SetPreferredSize(const gfx::Size& preferred_size) {
 ////////////////////////////////////////////////////////////////////////////////
 // WebView, View overrides:
 
-std::string WebView::GetClassName() const {
+const char* WebView::GetClassName() const {
   return kViewClassName;
 }
 
@@ -98,8 +100,9 @@ void WebView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
   wcv_holder_->SetSize(bounds().size());
 }
 
-void WebView::ViewHierarchyChanged(bool is_add, View* parent, View* child) {
-  if (is_add)
+void WebView::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
+  if (details.is_add)
     AttachWebContents();
 }
 
@@ -183,6 +186,28 @@ void WebView::WebContentsFocused(content::WebContents* web_contents) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// WebView, AccessibleWebView implementation:
+
+gfx::NativeViewAccessible WebView::AccessibleObjectFromChildId(long child_id) {
+#if defined(OS_WIN) && defined(USE_AURA)
+  if (!web_contents_)
+    return NULL;
+  content::RenderWidgetHostView* host_view =
+      web_contents_->GetRenderWidgetHostView();
+  if (host_view)
+    return host_view->AccessibleObjectFromChildId(child_id);
+  return NULL;
+#else
+  NOTIMPLEMENTED();
+  return NULL;
+#endif
+}
+
+View* WebView::AsView() {
+  return this;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // WebView, private:
 
 void WebView::AttachWebContents() {
@@ -215,12 +240,8 @@ void WebView::AttachWebContents() {
   }
 
 #if defined(OS_WIN) && defined(USE_AURA)
-  content::RenderWidgetHostView* host_view =
-      web_contents_->GetRenderWidgetHostView();
-  if (host_view) {
-    host_view->SetParentNativeViewAccessible(
-        parent()->GetNativeViewAccessible());
-  }
+  web_contents_->SetParentNativeViewAccessible(
+      parent()->GetNativeViewAccessible());
 #endif
 }
 
@@ -237,10 +258,7 @@ void WebView::DetachWebContents() {
     // calling member functions on a half-destroyed WebContents.
     ShowWindow(web_contents_->GetView()->GetNativeView(), SW_HIDE);
 #elif defined(OS_WIN) && defined(USE_AURA)
-  content::RenderWidgetHostView* host_view =
-      web_contents_->GetRenderWidgetHostView();
-  if (host_view)
-    host_view->SetParentNativeViewAccessible(NULL);
+    web_contents_->SetParentNativeViewAccessible(NULL);
 #endif
   }
   registrar_.RemoveAll();

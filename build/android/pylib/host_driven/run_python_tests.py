@@ -71,13 +71,12 @@ def DispatchPythonTests(options):
   logging.debug('All available tests: ' + str(test_names))
 
   available_tests = test_collection.GetAvailableTests(
-      options.annotation, options.test_filter)
+      options.annotations, options.exclude_annotations, options.test_filter)
 
   if not available_tests:
     logging.warning('No Python tests to run with current args.')
     return base_test_result.TestRunResults()
 
-  available_tests *= options.number_of_runs
   test_names = [t.qualified_name for t in available_tests]
   logging.debug('Final list of tests to run: ' + str(test_names))
 
@@ -86,9 +85,9 @@ def DispatchPythonTests(options):
     logging.debug('Pushing files to device %s', device_id)
     test_pkg = test_package.TestPackage(options.test_apk_path,
                                         options.test_apk_jar_path)
-    test_files_copier = test_runner.TestRunner(options, device_id, 0, False,
-                                               test_pkg, [])
-    test_files_copier.CopyTestFilesOnce()
+    test_files_copier = test_runner.TestRunner(
+        options, device_id, 0, test_pkg, [])
+    test_files_copier.PushDependencies()
 
   # Actually run the tests.
   if len(attached_devices) > 1 and options.wait_for_debugger:

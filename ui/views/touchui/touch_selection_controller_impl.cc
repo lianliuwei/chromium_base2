@@ -4,14 +4,15 @@
 
 #include "ui/views/touchui/touch_selection_controller_impl.h"
 
-#include "base/command_line.h"
 #include "base/time.h"
 #include "grit/ui_strings.h"
-#include "ui/base/ui_base_switches.h"
+#include "ui/base/ui_base_switches_util.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/path.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/screen.h"
 #include "ui/gfx/size.h"
+#include "ui/views/corewm/shadow_types.h"
 #include "ui/views/widget/widget.h"
 
 namespace {
@@ -25,7 +26,7 @@ const SkColor kSelectionHandleColor =
 // The minimum selection size to trigger selection controller.
 const int kMinSelectionSize = 4;
 
-const int kContextMenuTimoutMs = 500;
+const int kContextMenuTimoutMs = 200;
 
 // Convenience struct to represent a circle shape.
 struct Circle {
@@ -35,14 +36,20 @@ struct Circle {
 };
 
 // Creates a widget to host SelectionHandleView.
-views::Widget* CreateTouchSelectionPopupWidget(gfx::NativeView context) {
+views::Widget* CreateTouchSelectionPopupWidget(
+    gfx::NativeView context,
+    views::WidgetDelegate* widget_delegate) {
   views::Widget* widget = new views::Widget;
-  views::Widget::InitParams params(views::Widget::InitParams::TYPE_POPUP);
+  views::Widget::InitParams params(views::Widget::InitParams::TYPE_TOOLTIP);
   params.can_activate = false;
   params.transparent = true;
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.context = context;
+  params.delegate = widget_delegate;
   widget->Init(params);
+#if defined(USE_AURA)
+  SetShadowType(widget->GetNativeView(), views::corewm::SHADOW_TYPE_NONE);
+#endif
   return widget;
 }
 
@@ -74,13 +81,14 @@ gfx::Rect GetHandleBoundsFromCursor(const gfx::Rect& cursor) {
 namespace views {
 
 // A View that displays the text selection handle.
-class TouchSelectionControllerImpl::EditingHandleView : public View {
+class TouchSelectionControllerImpl::EditingHandleView
+    : public views::WidgetDelegateView {
  public:
   explicit EditingHandleView(TouchSelectionControllerImpl* controller,
                              gfx::NativeView context)
       : controller_(controller),
         cursor_height_(0) {
-    widget_.reset(CreateTouchSelectionPopupWidget(context));
+    widget_.reset(CreateTouchSelectionPopupWidget(context, this));
     widget_->SetContentsView(this);
     widget_->SetAlwaysOnTop(true);
 
@@ -93,7 +101,22 @@ class TouchSelectionControllerImpl::EditingHandleView : public View {
 
   int cursor_height() const { return cursor_height_; }
 
-  // Overridden from View:
+  // Overridden from views::WidgetDelegateView:
+  virtual bool WidgetHasHitTestMask() const OVERRIDE {
+    return true;
+  }
+
+  virtual void GetWidgetHitTestMask(gfx::Path* mask) const OVERRIDE {
+    mask->addCircle(SkIntToScalar(kSelectionHandleRadius),
+                    SkIntToScalar(kSelectionHandleRadius + cursor_height_),
+                    SkIntToScalar(kSelectionHandleRadius));
+  }
+
+  virtual void DeleteDelegate() OVERRIDE {
+    // We are owned and deleted by TouchSelectionController.
+  }
+
+  // Overridden from views::View:
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE {
     Circle circle = {kSelectionHandleRadius, gfx::Point(kSelectionHandleRadius,
                      kSelectionHandleRadius + cursor_height_),
@@ -245,6 +268,10 @@ void TouchSelectionControllerImpl::SelectionChanged() {
   }
 }
 
+bool TouchSelectionControllerImpl::IsHandleDragInProgress() {
+  return !!dragging_handle_;
+}
+
 void TouchSelectionControllerImpl::SetDraggingHandle(
     EditingHandleView* handle) {
   dragging_handle_ = handle;
@@ -261,10 +288,12 @@ void TouchSelectionControllerImpl::SelectionHandleDragged(
 
   DCHECK(dragging_handle_);
 
+  gfx::Point offset_drag_pos(drag_pos.x(),
+      drag_pos.y() - dragging_handle_->cursor_height() / 2 -
+      2 * kSelectionHandleRadius);
+  ConvertPointToClientView(dragging_handle_, &offset_drag_pos);
   if (dragging_handle_ == cursor_handle_.get()) {
-    gfx::Point p(drag_pos.x() + kSelectionHandleRadius, drag_pos.y());
-    ConvertPointToClientView(dragging_handle_, &p);
-    client_view_->MoveCaretTo(p);
+    client_view_->MoveCaretTo(offset_drag_pos);
     return;
   }
 
@@ -274,16 +303,13 @@ void TouchSelectionControllerImpl::SelectionHandleDragged(
     fixed_handle = selection_handle_2_.get();
 
   // Find selection end points in client_view's coordinate system.
-  gfx::Point p1(drag_pos.x() + kSelectionHandleRadius, drag_pos.y());
-  ConvertPointToClientView(dragging_handle_, &p1);
-
   gfx::Point p2(kSelectionHandleRadius, fixed_handle->cursor_height() / 2);
   ConvertPointToClientView(fixed_handle, &p2);
 
   // Instruct client_view to select the region between p1 and p2. The position
   // of |fixed_handle| is the start and that of |dragging_handle| is the end
   // of selection.
-  client_view_->SelectRect(p2, p1);
+  client_view_->SelectRect(p2, offset_drag_pos);
 }
 
 void TouchSelectionControllerImpl::ConvertPointToClientView(
@@ -303,7 +329,7 @@ void TouchSelectionControllerImpl::ExecuteCommand(int command_id,
 }
 
 void TouchSelectionControllerImpl::OpenContextMenu() {
-  gfx::Point anchor = context_menu_->anchor_point();
+  gfx::Point anchor = context_menu_->anchor_rect().origin();
   anchor.Offset(0, -kSelectionHandleRadius);
   HideContextMenu();
   client_view_->OpenContextMenu(anchor);
@@ -413,11 +439,8 @@ ViewsTouchSelectionControllerFactory::ViewsTouchSelectionControllerFactory() {
 
 ui::TouchSelectionController* ViewsTouchSelectionControllerFactory::create(
     ui::TouchEditable* client_view) {
-#if defined(OS_CHROMEOS)
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableTouchEditing))
+  if (switches::IsTouchEditingEnabled())
     return new views::TouchSelectionControllerImpl(client_view);
-#endif
   return NULL;
 }
 

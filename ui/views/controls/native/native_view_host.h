@@ -86,10 +86,9 @@ class VIEWS_EXPORT NativeViewHost : public View {
  protected:
   virtual bool NeedsNotificationWhenVisibleBoundsChange() const OVERRIDE;
   virtual void OnVisibleBoundsChanged() OVERRIDE;
-  virtual void ViewHierarchyChanged(bool is_add,
-                                    View* parent,
-                                    View* child) OVERRIDE;
-  virtual std::string GetClassName() const OVERRIDE;
+  virtual void ViewHierarchyChanged(
+      const ViewHierarchyChangedDetails& details) OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
 
  private:
   friend class NativeViewHostAuraTest;

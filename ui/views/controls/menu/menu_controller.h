@@ -45,7 +45,7 @@ class MenuRunnerImpl;
 // MenuController is used internally by the various menu classes to manage
 // showing, selecting and drag/drop for menus. All relevant events are
 // forwarded to the MenuController from SubmenuView and MenuHost.
-class VIEWS_EXPORT MenuController : public MessageLoop::Dispatcher,
+class VIEWS_EXPORT MenuController : public base::MessageLoop::Dispatcher,
                                     public WidgetObserver {
  public:
   // Enumeration of how the menu should exit.
@@ -135,6 +135,9 @@ class VIEWS_EXPORT MenuController : public MessageLoop::Dispatcher,
 
   // WidgetObserver overrides:
   virtual void OnWidgetDestroying(Widget* widget) OVERRIDE;
+
+  // Only used for testing.
+  static void TurnOffContextMenuSelectionHoldForTest();
 
  private:
   friend class internal::MenuRunnerImpl;
@@ -566,6 +569,9 @@ class VIEWS_EXPORT MenuController : public MessageLoop::Dispatcher,
 
   // The timestamp of the event which closed the menu - or 0 otherwise.
   base::TimeDelta closing_event_time_;
+
+  // Time when the menu is first shown.
+  base::TimeTicks menu_start_time_;
 
   DISALLOW_COPY_AND_ASSIGN(MenuController);
 };

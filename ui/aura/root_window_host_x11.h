@@ -14,6 +14,7 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop.h"
+#include "ui/aura/aura_export.h"
 #include "ui/aura/env_observer.h"
 #include "ui/aura/root_window_host.h"
 #include "ui/base/x/x11_atom_cache.h"
@@ -32,8 +33,8 @@ class TouchEventCalibrate;
 }
 
 class RootWindowHostX11 : public RootWindowHost,
-                            public MessageLoop::Dispatcher,
-                            public EnvObserver {
+                          public base::MessageLoop::Dispatcher,
+                          public EnvObserver {
  public:
   explicit RootWindowHostX11(const gfx::Rect& bounds);
   virtual ~RootWindowHostX11();
@@ -65,9 +66,6 @@ class RootWindowHostX11 : public RootWindowHost,
   virtual bool CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
                                   const gfx::Point& dest_offset,
                                   SkCanvas* canvas) OVERRIDE;
-  virtual bool GrabSnapshot(
-      const gfx::Rect& snapshot_bounds,
-      std::vector<unsigned char>* png_representation) OVERRIDE;
   virtual void PostNativeEvent(const base::NativeEvent& event) OVERRIDE;
   virtual void OnDeviceScaleFactorChanged(float device_scale_factor) OVERRIDE;
   virtual void PrepareForShutdown() OVERRIDE;
@@ -146,6 +144,13 @@ class RootWindowHostX11 : public RootWindowHost,
   DISALLOW_COPY_AND_ASSIGN(RootWindowHostX11);
 };
 
+namespace test {
+
+// Set the default value of the override redirect flag used to
+// create a X window for RootWindowHostX11.
+AURA_EXPORT void SetUseOverrideRedirectWindowByDefault(bool override_redirect);
+
+}  // namespace test
 }  // namespace aura
 
 #endif  // UI_AURA_ROOT_WINDOW_HOST_X11_H_

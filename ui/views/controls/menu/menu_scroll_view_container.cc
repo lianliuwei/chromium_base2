@@ -8,7 +8,6 @@
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/base/accessibility/accessible_view_state.h"
 #include "ui/gfx/canvas.h"
-#include "ui/native_theme/native_theme.h"
 #include "ui/views/border.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/controls/menu/menu_config.h"
@@ -171,7 +170,7 @@ class MenuScrollViewContainer::MenuScrollView : public View {
 
 MenuScrollViewContainer::MenuScrollViewContainer(SubmenuView* content_view)
     : content_view_(content_view),
-      arrow_location_(BubbleBorder::NONE),
+      arrow_(BubbleBorder::NONE),
       bubble_border_(NULL) {
   scroll_up_button_ = new MenuScrollButton(content_view, true);
   scroll_down_button_ = new MenuScrollButton(content_view, false);
@@ -181,17 +180,17 @@ MenuScrollViewContainer::MenuScrollViewContainer(SubmenuView* content_view)
   scroll_view_ = new MenuScrollView(content_view);
   AddChildView(scroll_view_);
 
-  arrow_location_ = BubbleBorderTypeFromAnchor(
+  arrow_ = BubbleBorderTypeFromAnchor(
       content_view_->GetMenuItem()->GetMenuController()->GetAnchorPosition());
 
-  if (arrow_location_ != BubbleBorder::NONE)
+  if (arrow_ != BubbleBorder::NONE)
     CreateBubbleBorder();
   else
     CreateDefaultBorder();
 }
 
 bool MenuScrollViewContainer::HasBubbleBorder() {
-  return arrow_location_ != BubbleBorder::NONE;
+  return arrow_ != BubbleBorder::NONE;
 }
 
 void MenuScrollViewContainer::SetBubbleArrowOffset(int offset) {
@@ -268,7 +267,7 @@ void MenuScrollViewContainer::OnBoundsChanged(
 }
 
 void MenuScrollViewContainer::CreateDefaultBorder() {
-  arrow_location_ = BubbleBorder::NONE;
+  arrow_ = BubbleBorder::NONE;
   bubble_border_ = NULL;
 
   const MenuConfig& menu_config =
@@ -292,7 +291,7 @@ void MenuScrollViewContainer::CreateDefaultBorder() {
   int bottom = menu_config.menu_vertical_border_size + padding;
   int right = menu_config.menu_horizontal_border_size + padding;
 
-  if (use_border && NativeTheme::IsNewMenuStyleEnabled()) {
+  if (use_border) {
     set_border(views::Border::CreateBorderPainter(
         new views::RoundRectPainter(menu_config.native_theme->GetSystemColor(
                 ui::NativeTheme::kColorId_MenuBorderColor),
@@ -304,14 +303,14 @@ void MenuScrollViewContainer::CreateDefaultBorder() {
 }
 
 void MenuScrollViewContainer::CreateBubbleBorder() {
-  bubble_border_ = new BubbleBorder(arrow_location_,
+  bubble_border_ = new BubbleBorder(arrow_,
                                     BubbleBorder::SMALL_SHADOW,
                                     SK_ColorWHITE);
   set_border(bubble_border_);
   set_background(new BubbleBackground(bubble_border_));
 }
 
-BubbleBorder::ArrowLocation
+BubbleBorder::Arrow
 MenuScrollViewContainer::BubbleBorderTypeFromAnchor(
     MenuItemView::AnchorPosition anchor) {
   switch (anchor) {

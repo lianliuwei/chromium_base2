@@ -8,7 +8,7 @@
 #include "ui/aura/window.h"
 #include "ui/gfx/canvas.h"
 #include "ui/views/background.h"
-#include "ui/views/controls/button/text_button.h"
+#include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/corewm/window_modality_controller.h"
@@ -108,8 +108,8 @@ ui::ModalType ChildModalWindow::GetModalType() const {
 }
 
 ChildModalParent::ChildModalParent(gfx::NativeView context)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(button_(new NativeTextButton(
-          this, ASCIIToUTF16("Show/Hide Child Modal Window")))),
+    : button_(new LabelButton(this,
+                              ASCIIToUTF16("Show/Hide Child Modal Window"))),
       textfield_(new Textfield),
       host_(new NativeViewHost),
       modal_parent_(NULL),
@@ -186,10 +186,9 @@ void ChildModalParent::Layout() {
   host_->SetBounds(x(), running_y, width(), height() - running_y);
 }
 
-void ChildModalParent::ViewHierarchyChanged(bool is_add,
-                                            View* parent,
-                                            View* child) {
-  if (is_add && child == this) {
+void ChildModalParent::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
+  if (details.is_add && details.child == this) {
     host_->Attach(modal_parent_);
     GetWidget()->GetNativeView()->SetName("Parent");
   }

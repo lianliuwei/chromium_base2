@@ -65,14 +65,14 @@ void NativeControlWin::OnEnabledChanged() {
     EnableWindow(native_view(), enabled());
 }
 
-void NativeControlWin::ViewHierarchyChanged(bool is_add, View* parent,
-                                            View* child) {
+void NativeControlWin::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
   // Call the base class to hide the view if we're being removed.
-  NativeViewHost::ViewHierarchyChanged(is_add, parent, child);
+  NativeViewHost::ViewHierarchyChanged(details);
 
   // Create the HWND when we're added to a valid Widget. Many controls need a
   // parent HWND to function properly.
-  if (is_add && GetWidget() && !native_view())
+  if (details.is_add && GetWidget() && !native_view())
     CreateNativeControl();
 }
 
@@ -109,14 +109,12 @@ void NativeControlWin::OnFocus() {
   // a native win32 control, we don't always send a native (MSAA)
   // focus notification.
   bool send_native_event =
-      parent_view->GetClassName() != Combobox::kViewClassName &&
+      strcmp(parent_view->GetClassName(), Combobox::kViewClassName) &&
       parent_view->HasFocus();
 
   // Send the accessibility focus notification.
-  if (parent_view->GetWidget()) {
-    parent_view->GetWidget()->NotifyAccessibilityEvent(
-        parent_view, ui::AccessibilityTypes::EVENT_FOCUS, send_native_event);
-  }
+  parent_view->NotifyAccessibilityEvent(
+      ui::AccessibilityTypes::EVENT_FOCUS, send_native_event);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

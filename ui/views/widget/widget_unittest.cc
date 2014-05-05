@@ -1187,7 +1187,9 @@ TEST_F(WidgetTest, KeyboardInputEvent) {
 }
 
 // Verifies bubbles result in a focus lost when shown.
-TEST_F(WidgetTest, FocusChangesOnBubble) {
+// TODO(msw): this tests relies on focus, it needs to be in
+// interactive_ui_tests.
+TEST_F(WidgetTest, DISABLED_FocusChangesOnBubble) {
   // Create a widget, show and activate it and focus the contents view.
   View* contents_view = new View;
   contents_view->set_focusable(true);
@@ -1346,7 +1348,7 @@ class DesktopAuraFullscreenChildWindowDestructionTest
         parent_destroyed_(false),
         child_destroyed_(false) {}
 
-  ~DesktopAuraFullscreenChildWindowDestructionTest() {
+  virtual ~DesktopAuraFullscreenChildWindowDestructionTest() {
     EXPECT_TRUE(parent_destroyed_);
     EXPECT_TRUE(child_destroyed_);
     full_screen_widget_ = NULL;
@@ -1444,29 +1446,41 @@ TEST_F(WidgetTest, DesktopAuraFullscreenChildParentDestroyed) {
   RunPendingMessages();
 }
 
+// Test to ensure that the aura Window's visiblity state is set to visible if
+// the underlying widget is hidden and then shown.
+TEST_F(WidgetTest, TestWindowVisibilityAfterHide) {
+  // Create a widget.
+  Widget widget;
+  Widget::InitParams init_params =
+      CreateParams(Widget::InitParams::TYPE_WINDOW);
+  init_params.show_state = ui::SHOW_STATE_NORMAL;
+  gfx::Rect initial_bounds(0, 0, 300, 400);
+  init_params.bounds = initial_bounds;
+  init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  init_params.native_widget = new DesktopNativeWidgetAura(&widget);
+  widget.Init(init_params);
+  NonClientView* non_client_view = widget.non_client_view();
+  NonClientFrameView* frame_view = new MinimumSizeFrameView(&widget);
+  non_client_view->SetFrameView(frame_view);
+
+  widget.Hide();
+  EXPECT_FALSE(widget.GetNativeView()->IsVisible());
+  widget.Show();
+  EXPECT_TRUE(widget.GetNativeView()->IsVisible());
+}
+
 #endif  // !defined(OS_CHROMEOS)
 
-// Tests that wheel events generted from scroll events are targetted to the
+// Tests that wheel events generated from scroll events are targetted to the
 // views under the cursor when the focused view does not processed them.
 TEST_F(WidgetTest, WheelEventsFromScrollEventTarget) {
-  EventCountView* focused_view = new EventCountView;
-  focused_view->set_focusable(true);
-
   EventCountView* cursor_view = new EventCountView;
-
-  focused_view->SetBounds(0, 0, 50, 40);
   cursor_view->SetBounds(60, 0, 50, 40);
 
   Widget* widget = CreateTopLevelPlatformWidget();
-  widget->GetRootView()->AddChildView(focused_view);
   widget->GetRootView()->AddChildView(cursor_view);
 
-  focused_view->RequestFocus();
-  EXPECT_TRUE(focused_view->HasFocus());
-
-  // Generate a scroll event on the cursor view. The focused view will receive a
-  // wheel event, but since it doesn't process the event, the view under the
-  // cursor will receive the wheel event.
+  // Generate a scroll event on the cursor view.
   ui::ScrollEvent scroll(ui::ET_SCROLL,
                          gfx::Point(65, 5),
                          ui::EventTimeForNow(),
@@ -1476,13 +1490,9 @@ TEST_F(WidgetTest, WheelEventsFromScrollEventTarget) {
                          2);
   widget->OnScrollEvent(&scroll);
 
-  EXPECT_EQ(0, focused_view->GetEventCount(ui::ET_SCROLL));
-  EXPECT_EQ(1, focused_view->GetEventCount(ui::ET_MOUSEWHEEL));
-
   EXPECT_EQ(1, cursor_view->GetEventCount(ui::ET_SCROLL));
   EXPECT_EQ(1, cursor_view->GetEventCount(ui::ET_MOUSEWHEEL));
 
-  focused_view->ResetCounts();
   cursor_view->ResetCounts();
 
   ui::ScrollEvent scroll2(ui::ET_SCROLL,
@@ -1493,8 +1503,6 @@ TEST_F(WidgetTest, WheelEventsFromScrollEventTarget) {
                           0, 20,
                           2);
   widget->OnScrollEvent(&scroll2);
-  EXPECT_EQ(1, focused_view->GetEventCount(ui::ET_SCROLL));
-  EXPECT_EQ(1, focused_view->GetEventCount(ui::ET_MOUSEWHEEL));
 
   EXPECT_EQ(0, cursor_view->GetEventCount(ui::ET_SCROLL));
   EXPECT_EQ(0, cursor_view->GetEventCount(ui::ET_MOUSEWHEEL));
@@ -1633,6 +1641,33 @@ TEST_F(WidgetTest, EventHandlersOnRootView) {
   widget->CloseNow();
 }
 
+TEST_F(WidgetTest, SynthesizeMouseMoveEvent) {
+  Widget* widget = CreateTopLevelNativeWidget();
+  View* root_view = widget->GetRootView();
+
+  EventCountView* v1 = new EventCountView();
+  v1->SetBounds(0, 0, 10, 10);
+  root_view->AddChildView(v1);
+  EventCountView* v2 = new EventCountView();
+  v2->SetBounds(0, 10, 10, 10);
+  root_view->AddChildView(v2);
+
+  gfx::Point cursor_location(5, 5);
+  ui::MouseEvent move(ui::ET_MOUSE_MOVED, cursor_location, cursor_location,
+                      ui::EF_NONE);
+  widget->OnMouseEvent(&move);
+
+  EXPECT_EQ(1, v1->GetEventCount(ui::ET_MOUSE_ENTERED));
+  EXPECT_EQ(0, v2->GetEventCount(ui::ET_MOUSE_ENTERED));
+
+  delete v1;
+  v2->SetBounds(0, 0, 10, 10);
+  EXPECT_EQ(0, v2->GetEventCount(ui::ET_MOUSE_ENTERED));
+
+  widget->SynthesizeMouseMoveEvent();
+  EXPECT_EQ(1, v2->GetEventCount(ui::ET_MOUSE_ENTERED));
+}
+
 // Used by SingleWindowClosing to count number of times WindowClosing() has
 // been invoked.
 class ClosingDelegate : public WidgetDelegate {
@@ -1713,6 +1748,41 @@ TEST_F(WidgetTest, SetTopLevelCorrectly) {
   widget->Init(params);
   EXPECT_TRUE(delegate->on_before_init_called());
   EXPECT_TRUE(delegate->is_top_level());
+}
+
+// A scumbag View that deletes its owning widget OnMousePressed.
+class WidgetDeleterView : public View {
+ public:
+  WidgetDeleterView() : View() {}
+
+  // Overridden from View.
+  virtual bool OnMousePressed(const ui::MouseEvent& event) OVERRIDE {
+    delete GetWidget();
+    return true;
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(WidgetDeleterView);
+};
+
+TEST_F(WidgetTest, TestWidgetDeletedInOnMousePressed) {
+  Widget* widget = new Widget;
+  Widget::InitParams params =
+      CreateParams(views::Widget::InitParams::TYPE_POPUP);
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  widget->Init(params);
+
+  widget->SetContentsView(new WidgetDeleterView);
+
+  widget->SetSize(gfx::Size(100, 100));
+  widget->Show();
+
+  gfx::Point click_location(45, 15);
+  ui::MouseEvent press(ui::ET_MOUSE_PRESSED, click_location, click_location,
+      ui::EF_LEFT_MOUSE_BUTTON);
+  widget->OnMouseEvent(&press);
+
+  // Yay we did not crash!
 }
 
 }  // namespace

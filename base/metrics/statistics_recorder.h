@@ -49,11 +49,6 @@ class BASE_EXPORT StatisticsRecorder {
   static const BucketRanges* RegisterOrDeleteDuplicateRanges(
       const BucketRanges* ranges);
 
-  // Method for collecting stats about histograms created in browser and
-  // renderer processes. |suffix| is appended to histogram names. |suffix| could
-  // be either browser or renderer.
-  static void CollectHistogramStats(const std::string& suffix);
-
   // Methods for printing histograms.  Only histograms which have query as
   // a substring are written to output (an empty string will process all
   // registered histograms).
@@ -69,10 +64,6 @@ class BASE_EXPORT StatisticsRecorder {
   // Find a histogram by name. It matches the exact name. This method is thread
   // safe.  It returns NULL if a matching histogram is not found.
   static HistogramBase* FindHistogram(const std::string& name);
-
-  static bool dump_on_exit() { return dump_on_exit_; }
-
-  static void set_dump_on_exit(bool enable) { dump_on_exit_ = enable; }
 
   // GetSnapshot copies some of the pointers to registered histograms into the
   // caller supplied vector (Histograms).  Only histograms with names matching
@@ -101,14 +92,13 @@ class BASE_EXPORT StatisticsRecorder {
   StatisticsRecorder();
   ~StatisticsRecorder();
 
+  static void DumpHistogramsToVlog(void* instance);
+
   static HistogramMap* histograms_;
   static RangesMap* ranges_;
 
   // Lock protects access to above maps.
   static base::Lock* lock_;
-
-  // Dump all known histograms to log.
-  static bool dump_on_exit_;
 
   DISALLOW_COPY_AND_ASSIGN(StatisticsRecorder);
 };

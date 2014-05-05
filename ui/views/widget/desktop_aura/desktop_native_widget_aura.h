@@ -29,6 +29,7 @@ class InputMethodEventFilter;
 class ShadowController;
 class TooltipController;
 class VisibilityController;
+class WindowModalityController;
 }
 
 class DesktopRootWindowHost;
@@ -36,7 +37,6 @@ class DropHelper;
 class NativeWidgetAuraWindowObserver;
 class TooltipManagerAura;
 
-// TODO(erg): May also need to be a DragDropDelegate
 class VIEWS_EXPORT DesktopNativeWidgetAura
     : public internal::NativeWidgetPrivate,
       public aura::WindowDelegate,
@@ -79,8 +79,7 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   virtual Widget* GetTopLevelWidget() OVERRIDE;
   virtual const ui::Compositor* GetCompositor() const OVERRIDE;
   virtual ui::Compositor* GetCompositor() OVERRIDE;
-  virtual gfx::Vector2d CalculateOffsetToAncestorWithLayer(
-      ui::Layer** layer_parent) OVERRIDE;
+  virtual ui::Layer* GetLayer() OVERRIDE;
   virtual void ViewRemoved(View* view) OVERRIDE;
   virtual void SetNativeWindowProperty(const char* name, void* value) OVERRIDE;
   virtual void* GetNativeWindowProperty(const char* name) const OVERRIDE;
@@ -230,6 +229,9 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   scoped_ptr<TooltipManagerAura> tooltip_manager_;
 
   scoped_ptr<views::corewm::VisibilityController> visibility_controller_;
+
+  scoped_ptr<views::corewm::WindowModalityController>
+      window_modality_controller_;
 
   // See comments in OnLostActive().
   bool restore_focus_on_activate_;

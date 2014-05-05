@@ -85,6 +85,13 @@ class NATIVE_THEME_EXPORT NativeTheme {
     kMaxState,
   };
 
+  enum MenuVariation {
+    MENU_VARIATION_NORMAL,
+    MENU_VARIATION_COMPACT_1,
+    MENU_VARIATION_COMPACT_2,
+    MENU_VARIATION_CONTRAST
+  };
+
   // Each structure below holds extra information needed when painting a given
   // part.
 
@@ -230,15 +237,16 @@ class NATIVE_THEME_EXPORT NativeTheme {
     // FocusableBorder
     kColorId_FocusedBorderColor,
     kColorId_UnfocusedBorderColor,
-    // TextButton
-    kColorId_TextButtonBackgroundColor,
-    kColorId_TextButtonEnabledColor,
-    kColorId_TextButtonDisabledColor,
-    kColorId_TextButtonHighlightColor,
-    kColorId_TextButtonHoverColor,
+    // Button
+    kColorId_ButtonBackgroundColor,
+    kColorId_ButtonEnabledColor,
+    kColorId_ButtonDisabledColor,
+    kColorId_ButtonHighlightColor,
+    kColorId_ButtonHoverColor,
     // MenuItem
     kColorId_EnabledMenuItemForegroundColor,
     kColorId_DisabledMenuItemForegroundColor,
+    kColorId_SelectedMenuItemForegroundColor,
     kColorId_FocusedMenuItemBackgroundColor,
     kColorId_HoverMenuItemBackgroundColor,
     kColorId_MenuSeparatorColor,
@@ -289,7 +297,7 @@ class NATIVE_THEME_EXPORT NativeTheme {
   // function, returning the port's subclass.
   static NativeTheme* instance();
 
-  static bool IsNewMenuStyleEnabled();
+  static MenuVariation GetMenuVariation();
 
  protected:
   NativeTheme();

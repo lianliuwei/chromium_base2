@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <cmath>
 
-#include "base/command_line.h"
 #include "base/debug/trace_event.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
@@ -19,7 +18,7 @@
 #include "third_party/skia/include/core/SkRect.h"
 #include "ui/base/accessibility/accessibility_types.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
-#include "ui/base/ui_base_switches.h"
+#include "ui/base/ui_base_switches_util.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animator.h"
@@ -55,6 +54,12 @@ namespace {
 bool use_acceleration_when_possible = true;
 #else
 bool use_acceleration_when_possible = false;
+#endif
+
+#if defined(OS_WIN)
+const bool kContextMenuOnMousePress = false;
+#else
+const bool kContextMenuOnMousePress = true;
 #endif
 
 // Saves the drawing state, and restores the state when going out of scope.
@@ -102,8 +107,7 @@ class PostEventDispatchHandler : public ui::EventHandler {
  public:
   explicit PostEventDispatchHandler(View* owner)
       : owner_(owner),
-        touch_dnd_enabled_(CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableTouchDragDrop)) {
+        touch_dnd_enabled_(switches::IsTouchDragDropEnabled()) {
   }
   virtual ~PostEventDispatchHandler() {}
 
@@ -150,7 +154,7 @@ class PostEventDispatchHandler : public ui::EventHandler {
 ViewsDelegate* ViewsDelegate::views_delegate = NULL;
 
 // static
-const char View::kViewClassName[] = "views/View";
+const char View::kViewClassName[] = "View";
 
 ////////////////////////////////////////////////////////////////////////////////
 // View, public:
@@ -180,8 +184,7 @@ View::View()
       accessibility_focusable_(false),
       context_menu_controller_(NULL),
       drag_controller_(NULL),
-      ALLOW_THIS_IN_INITIALIZER_LIST(post_dispatch_handler_(
-          new internal::PostEventDispatchHandler(this))),
+      post_dispatch_handler_(new internal::PostEventDispatchHandler(this)),
       native_view_accessibility_(NULL) {
   AddPostTargetHandler(post_dispatch_handler_.get());
 }
@@ -232,7 +235,7 @@ void View::AddChildViewAt(View* view, int index) {
       ReorderChildView(view, index);
       return;
     }
-    parent->RemoveChildView(view);
+    parent->DoRemoveChildView(view, true, true, false, this);
   }
 
   // Sets the prev/next focus views.
@@ -242,10 +245,12 @@ void View::AddChildViewAt(View* view, int index) {
   view->parent_ = this;
   children_.insert(children_.begin() + index, view);
 
-  for (View* v = this; v; v = v->parent_)
-    v->ViewHierarchyChangedImpl(false, true, this, view);
+  ViewHierarchyChangedDetails details(true, this, view, parent);
 
-  view->PropagateAddNotifications(this, view);
+  for (View* v = this; v; v = v->parent_)
+    v->ViewHierarchyChangedImpl(false, details);
+
+  view->PropagateAddNotifications(details);
   UpdateTooltip();
   views::Widget* widget = GetWidget();
   if (widget) {
@@ -298,12 +303,12 @@ void View::ReorderChildView(View* view, int index) {
 }
 
 void View::RemoveChildView(View* view) {
-  DoRemoveChildView(view, true, true, false);
+  DoRemoveChildView(view, true, true, false, NULL);
 }
 
 void View::RemoveAllChildViews(bool delete_children) {
   while (!children_.empty())
-    DoRemoveChildView(children_.front(), false, false, delete_children);
+    DoRemoveChildView(children_.front(), false, false, delete_children, NULL);
   UpdateTooltip();
 }
 
@@ -378,7 +383,6 @@ gfx::Rect View::GetLocalBounds() const {
 gfx::Rect View::GetLayerBoundsInPixel() const {
   return layer()->GetTargetBounds();
 }
-
 
 gfx::Insets View::GetInsets() const {
   return border_.get() ? border_->GetInsets() : gfx::Insets();
@@ -531,6 +535,12 @@ ui::Layer* View::RecreateLayer() {
     return NULL;
 
   CreateLayer();
+
+  // TODO(pkotwicz): Remove this once ReorderLayers() stacks layers not attached
+  // to a view above layers attached to a view.
+  if (layer->parent())
+    layer->parent()->StackAtTop(layer);
+
   layer_->set_scale_content(layer->scale_content());
   return layer;
 }
@@ -611,13 +621,13 @@ void View::SetLayoutManager(LayoutManager* layout_manager) {
 
 // Attributes ------------------------------------------------------------------
 
-std::string View::GetClassName() const {
+const char* View::GetClassName() const {
   return kViewClassName;
 }
 
 View* View::GetAncestorWithClassName(const std::string& name) {
   for (View* view = this; view; view = view->parent_) {
-    if (view->GetClassName() == name)
+    if (!strcmp(view->GetClassName(), name.c_str()))
       return view;
   }
   return NULL;
@@ -771,7 +781,7 @@ void View::SchedulePaintInRect(const gfx::Rect& rect) {
 }
 
 void View::Paint(gfx::Canvas* canvas) {
-  TRACE_EVENT0("views", "View::Paint");
+  TRACE_EVENT1("views", "View::Paint", "class", GetClassName());
 
   ScopedCanvas scoped_canvas(canvas);
 
@@ -833,6 +843,26 @@ View* View::GetEventHandlerForPoint(const gfx::Point& point) {
     ConvertPointToTarget(this, child, &point_in_child_coords);
     if (child->HitTestPoint(point_in_child_coords))
       return child->GetEventHandlerForPoint(point_in_child_coords);
+  }
+  return this;
+}
+
+View* View::GetTooltipHandlerForPoint(const gfx::Point& point) {
+  if (!HitTestPoint(point))
+    return NULL;
+
+  // Walk the child Views recursively looking for the View that most
+  // tightly encloses the specified point.
+  for (int i = child_count() - 1; i >= 0; --i) {
+    View* child = child_at(i);
+    if (!child->visible())
+      continue;
+
+    gfx::Point point_in_child_coords(point);
+    ConvertPointToTarget(this, child, &point_in_child_coords);
+    View* handler = child->GetTooltipHandlerForPoint(point_in_child_coords);
+    if (handler)
+      return handler;
   }
   return this;
 }
@@ -1131,6 +1161,11 @@ void View::ShowContextMenu(const gfx::Point& p, bool is_mouse_gesture) {
   context_menu_controller_->ShowContextMenuForView(this, p);
 }
 
+// static
+bool View::ShouldShowContextMenuOnMousePress() {
+  return kContextMenuOnMousePress;
+}
+
 // Drag and drop ---------------------------------------------------------------
 
 bool View::GetDropFormats(
@@ -1240,7 +1275,7 @@ void View::OnVisibleBoundsChanged() {
 
 // Tree operations -------------------------------------------------------------
 
-void View::ViewHierarchyChanged(bool is_add, View* parent, View* child) {
+void View::ViewHierarchyChanged(const ViewHierarchyChangedDetails& details) {
 }
 
 void View::VisibilityChanged(View* starting_from, bool is_visible) {
@@ -1267,14 +1302,14 @@ void View::NativeViewHierarchyChanged(bool attached,
 // Painting --------------------------------------------------------------------
 
 void View::PaintChildren(gfx::Canvas* canvas) {
-  TRACE_EVENT0("views", "View::PaintChildren");
+  TRACE_EVENT1("views", "View::PaintChildren", "class", GetClassName());
   for (int i = 0, count = child_count(); i < count; ++i)
     if (!child_at(i)->layer())
       child_at(i)->Paint(canvas);
 }
 
 void View::OnPaint(gfx::Canvas* canvas) {
-  TRACE_EVENT0("views", "View::OnPaint");
+  TRACE_EVENT1("views", "View::OnPaint", "class", GetClassName());
   OnPaintBackground(canvas);
   OnPaintFocusBorder(canvas);
   OnPaintBorder(canvas);
@@ -1345,6 +1380,19 @@ gfx::Vector2d View::CalculateOffsetToAncestorWithLayer(
       parent_->CalculateOffsetToAncestorWithLayer(layer_parent);
 }
 
+void View::UpdateParentLayer() {
+  if (!layer())
+    return;
+
+  ui::Layer* parent_layer = NULL;
+  gfx::Vector2d offset(GetMirroredX(), y());
+
+  if (parent_)
+    offset += parent_->CalculateOffsetToAncestorWithLayer(&parent_layer);
+
+  ReparentLayer(offset, parent_layer);
+}
+
 void View::MoveLayerToParent(ui::Layer* parent_layer,
                              const gfx::Point& point) {
   gfx::Point local_point(point);
@@ -1410,20 +1458,20 @@ void View::ReorderLayers() {
   while (v && !v->layer())
     v = v->parent();
 
-  // Forward to widget in case we're in a NativeWidgetAura.
   if (!v) {
-    if (GetWidget())
-      GetWidget()->ReorderLayers();
+    Widget* widget = GetWidget();
+    if (widget) {
+      ui::Layer* layer = widget->GetLayer();
+      if (layer)
+        widget->GetRootView()->ReorderChildLayers(layer);
+    }
   } else {
-    for (Views::const_iterator i(v->children_.begin());
-         i != v->children_.end();
-         ++i)
-      (*i)->ReorderChildLayers(v->layer());
+    v->ReorderChildLayers(v->layer());
   }
 }
 
 void View::ReorderChildLayers(ui::Layer* parent_layer) {
-  if (layer()) {
+  if (layer() && layer() != parent_layer) {
     DCHECK_EQ(parent_layer, layer()->parent());
     parent_layer->StackAtTop(layer());
   } else {
@@ -1535,7 +1583,8 @@ std::string View::DoPrintViewGraph(bool first, View* view_with_children) {
   // Node characteristics.
   char p[kMaxPointerStringLength];
 
-  size_t base_name_index = GetClassName().find_last_of('/');
+  const std::string class_name(GetClassName());
+  size_t base_name_index = class_name.find_last_of('/');
   if (base_name_index == std::string::npos)
     base_name_index = 0;
   else
@@ -1549,7 +1598,7 @@ std::string View::DoPrintViewGraph(bool first, View* view_with_children) {
   result.append(p + 2);
   result.append(" [label=\"");
 
-  result.append(GetClassName().substr(base_name_index).c_str());
+  result.append(class_name.substr(base_name_index).c_str());
 
   base::snprintf(bounds_buffer,
                  arraysize(bounds_buffer),
@@ -1683,7 +1732,8 @@ void View::PaintCommon(gfx::Canvas* canvas) {
 void View::DoRemoveChildView(View* view,
                              bool update_focus_cycle,
                              bool update_tool_tip,
-                             bool delete_removed_view) {
+                             bool delete_removed_view,
+                             View* new_parent) {
   DCHECK(view);
   const Views::iterator i(std::find(children_.begin(), children_.end(), view));
   scoped_ptr<View> view_to_be_deleted;
@@ -1700,7 +1750,7 @@ void View::DoRemoveChildView(View* view,
 
     if (GetWidget())
       UnregisterChildrenForVisibleBoundsNotification(view);
-    view->PropagateRemoveNotifications(this);
+    view->PropagateRemoveNotifications(this, new_parent);
     view->parent_ = NULL;
     view->UpdateLayerVisibility();
 
@@ -1717,18 +1767,20 @@ void View::DoRemoveChildView(View* view,
     layout_manager_->ViewRemoved(this, view);
 }
 
-void View::PropagateRemoveNotifications(View* parent) {
+void View::PropagateRemoveNotifications(View* old_parent, View* new_parent) {
   for (int i = 0, count = child_count(); i < count; ++i)
-    child_at(i)->PropagateRemoveNotifications(parent);
+    child_at(i)->PropagateRemoveNotifications(old_parent, new_parent);
 
+  ViewHierarchyChangedDetails details(false, old_parent, this, new_parent);
   for (View* v = this; v; v = v->parent_)
-    v->ViewHierarchyChangedImpl(true, false, parent, this);
+    v->ViewHierarchyChangedImpl(true, details);
 }
 
-void View::PropagateAddNotifications(View* parent, View* child) {
+void View::PropagateAddNotifications(
+    const ViewHierarchyChangedDetails& details) {
   for (int i = 0, count = child_count(); i < count; ++i)
-    child_at(i)->PropagateAddNotifications(parent, child);
-  ViewHierarchyChangedImpl(true, true, parent, child);
+    child_at(i)->PropagateAddNotifications(details);
+  ViewHierarchyChangedImpl(true, details);
 }
 
 void View::PropagateNativeViewHierarchyChanged(bool attached,
@@ -1741,12 +1793,11 @@ void View::PropagateNativeViewHierarchyChanged(bool attached,
   NativeViewHierarchyChanged(attached, native_view, root_view);
 }
 
-void View::ViewHierarchyChangedImpl(bool register_accelerators,
-                                    bool is_add,
-                                    View* parent,
-                                    View* child) {
+void View::ViewHierarchyChangedImpl(
+    bool register_accelerators,
+    const ViewHierarchyChangedDetails& details) {
   if (register_accelerators) {
-    if (is_add) {
+    if (details.is_add) {
       // If you get this registration, you are part of a subtree that has been
       // added to the view hierarchy.
       if (GetFocusManager()) {
@@ -1757,17 +1808,17 @@ void View::ViewHierarchyChangedImpl(bool register_accelerators,
         accelerator_registration_delayed_ = true;
       }
     } else {
-      if (child == this)
+      if (details.child == this)
         UnregisterAccelerators(true);
     }
   }
 
-  if (is_add && layer() && !layer()->parent()) {
+  if (details.is_add && layer() && !layer()->parent()) {
     UpdateParentLayer();
     Widget* widget = GetWidget();
     if (widget)
       widget->UpdateRootLayers();
-  } else if (!is_add && child == this) {
+  } else if (!details.is_add && details.child == this) {
     // Make sure the layers beloning to the subtree rooted at |child| get
     // removed from layers that do not belong in the same subtree.
     OrphanLayers();
@@ -1778,8 +1829,8 @@ void View::ViewHierarchyChangedImpl(bool register_accelerators,
     }
   }
 
-  ViewHierarchyChanged(is_add, parent, child);
-  parent->needs_layout_ = true;
+  ViewHierarchyChanged(details);
+  details.parent->needs_layout_ = true;
 }
 
 void View::PropagateNativeThemeChanged(const ui::NativeTheme* theme) {
@@ -1988,24 +2039,6 @@ void View::UpdateParentLayers() {
   }
 }
 
-void View::UpdateParentLayer() {
-  if (!layer())
-    return;
-
-  ui::Layer* parent_layer = NULL;
-  gfx::Vector2d offset(GetMirroredX(), y());
-
-  // TODO(sad): The NULL check here for parent_ essentially is to check if this
-  // is the RootView. Instead of doing this, this function should be made
-  // virtual and overridden from the RootView.
-  if (parent_)
-    offset += parent_->CalculateOffsetToAncestorWithLayer(&parent_layer);
-  else if (!parent_ && GetWidget())
-    offset += GetWidget()->CalculateOffsetToAncestorWithLayer(&parent_layer);
-
-  ReparentLayer(offset, parent_layer);
-}
-
 void View::OrphanLayers() {
   if (layer()) {
     if (layer()->parent())
@@ -2061,16 +2094,29 @@ bool View::ProcessMousePressed(const ui::MouseEvent& event) {
        GetDragOperations(event.location()) : 0;
   ContextMenuController* context_menu_controller = event.IsRightMouseButton() ?
       context_menu_controller_ : 0;
+  View::DragInfo* drag_info = GetDragInfo();
 
   const bool enabled = enabled_;
   const bool result = OnMousePressed(event);
-  // WARNING: we may have been deleted, don't use any View variables.
 
   if (!enabled)
     return result;
 
+  if (event.IsOnlyRightMouseButton() && context_menu_controller &&
+      kContextMenuOnMousePress) {
+    // Assume that if there is a context menu controller we won't be deleted
+    // from mouse pressed.
+    gfx::Point location(event.location());
+    if (HitTestPoint(location)) {
+      ConvertPointToScreen(this, &location);
+      ShowContextMenu(location, true);
+      return true;
+    }
+  }
+
+  // WARNING: we may have been deleted, don't use any View variables.
   if (drag_operations != ui::DragDropTypes::DRAG_NONE) {
-    GetDragInfo()->PossibleDrag(event.location());
+    drag_info->PossibleDrag(event.location());
     return true;
   }
   return !!context_menu_controller || result;
@@ -2082,13 +2128,12 @@ bool View::ProcessMouseDragged(const ui::MouseEvent& event) {
   ContextMenuController* context_menu_controller = context_menu_controller_;
   const bool possible_drag = GetDragInfo()->possible_drag;
   if (possible_drag &&
-      ExceededDragThreshold(GetDragInfo()->start_pt - event.location())) {
-    if (!drag_controller_ ||
-        drag_controller_->CanStartDragForView(
-            this, GetDragInfo()->start_pt, event.location())) {
-      DoDrag(event, GetDragInfo()->start_pt,
-          ui::DragDropTypes::DRAG_EVENT_SOURCE_MOUSE);
-    }
+      ExceededDragThreshold(GetDragInfo()->start_pt - event.location()) &&
+      (!drag_controller_ ||
+       drag_controller_->CanStartDragForView(
+           this, GetDragInfo()->start_pt, event.location()))) {
+    DoDrag(event, GetDragInfo()->start_pt,
+           ui::DragDropTypes::DRAG_EVENT_SOURCE_MOUSE);
   } else {
     if (OnMouseDragged(event))
       return true;
@@ -2099,7 +2144,8 @@ bool View::ProcessMouseDragged(const ui::MouseEvent& event) {
 }
 
 void View::ProcessMouseReleased(const ui::MouseEvent& event) {
-  if (context_menu_controller_ && event.IsOnlyRightMouseButton()) {
+  if (!kContextMenuOnMousePress && context_menu_controller_ &&
+      event.IsOnlyRightMouseButton()) {
     // Assume that if there is a context menu controller we won't be deleted
     // from mouse released.
     gfx::Point location(event.location());

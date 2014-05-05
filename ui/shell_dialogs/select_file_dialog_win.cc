@@ -16,7 +16,7 @@
 #include "base/files/file_path.h"
 #include "base/i18n/case_conversion.h"
 #include "base/message_loop.h"
-#include "base/message_loop_proxy.h"
+#include "base/message_loop/message_loop_proxy.h"
 #include "base/strings/string_split.h"
 #include "base/threading/thread.h"
 #include "base/utf_string_conversions.h"
@@ -86,7 +86,7 @@ bool CallGetSaveFileName(OPENFILENAME* ofn) {
 bool IsDirectory(const base::FilePath& path) {
   base::PlatformFileInfo file_info;
   return file_util::GetFileInfo(path, &file_info) ?
-      file_info.is_directory : file_util::EndsWithSeparator(path);
+      file_info.is_directory : path.EndsWithSeparator();
 }
 
 // Get the file type description from the registry. This will be "Text Document"
@@ -449,7 +449,7 @@ class SelectFileDialogImpl : public ui::SelectFileDialog,
           file_type_index(file_type_index),
           default_extension(default_extension),
           run_state(run_state),
-          ui_proxy(MessageLoopForUI::current()->message_loop_proxy()),
+          ui_proxy(base::MessageLoopForUI::current()->message_loop_proxy()),
           owner(owner),
           params(params) {
       if (file_types)
@@ -573,6 +573,12 @@ void SelectFileDialogImpl::SelectFileImpl(
           default_path,
           GetFilterForFileTypes(*file_types),
           base::Bind(&ui::SelectFileDialog::Listener::MultiFilesSelected,
+                     base::Unretained(listener_)));
+      return;
+    } else if (type == SELECT_FOLDER) {
+      aura::HandleSelectFolder(
+          UTF16ToWide(title),
+          base::Bind(&ui::SelectFileDialog::Listener::FileSelected,
                      base::Unretained(listener_)));
       return;
     }
@@ -807,7 +813,7 @@ bool SelectFileDialogImpl::RunOpenMultiFileDialog(
   ofn.lStructSize = sizeof(ofn);
   ofn.hwndOwner = owner;
 
-  scoped_array<wchar_t> filename(new wchar_t[UNICODE_STRING_MAX_CHARS]);
+  scoped_ptr<wchar_t[]> filename(new wchar_t[UNICODE_STRING_MAX_CHARS]);
   filename[0] = 0;
 
   ofn.lpstrFile = filename.get();

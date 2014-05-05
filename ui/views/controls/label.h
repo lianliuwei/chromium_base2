@@ -117,6 +117,12 @@ class VIEWS_EXPORT Label : public View {
     return directionality_mode_;
   }
 
+  // Get or set the distance in pixels between baselines of multi-line text.
+  // Default is 0, indicating the distance between lines should be the standard
+  // one for the label's text, font, and platform.
+  int line_height() const { return line_height_; }
+  void SetLineHeight(int height);
+
   // Get or set if the label text can wrap on multiple lines; default is false.
   bool is_multi_line() const { return is_multi_line_; }
   void SetMultiLine(bool multi_line);
@@ -126,7 +132,7 @@ class VIEWS_EXPORT Label : public View {
   void SetAllowCharacterBreak(bool allow_character_break);
 
   // Sets whether the label text should be elided in the middle or end (if
-  // necessary). The default is to not elide at all.
+  // necessary). The default is to elide at the end.
   // NOTE: Eliding in the middle is not supported for multi-line strings.
   void SetElideBehavior(ElideBehavior elide_behavior);
 
@@ -161,7 +167,8 @@ class VIEWS_EXPORT Label : public View {
   // This method is used to layout multi-line labels. It is equivalent to
   // GetPreferredSize().height() if the receiver is not multi-line.
   virtual int GetHeightForWidth(int w) OVERRIDE;
-  virtual std::string GetClassName() const OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
+  virtual View* GetTooltipHandlerForPoint(const gfx::Point& point) OVERRIDE;
   virtual bool HitTestRect(const gfx::Rect& rect) const OVERRIDE;
   virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
   // Gets the tooltip text for labels that are wider than their bounds, except
@@ -226,6 +233,8 @@ class VIEWS_EXPORT Label : public View {
   // |text_size_valid_| as false.
   void ResetCachedSize();
 
+  bool ShouldShowDefaultTooltip() const;
+
   string16 text_;
   gfx::Font font_;
   SkColor requested_enabled_color_;
@@ -242,6 +251,7 @@ class VIEWS_EXPORT Label : public View {
   bool auto_color_readability_;
   mutable gfx::Size text_size_;
   mutable bool text_size_valid_;
+  int line_height_;
   bool is_multi_line_;
   bool allow_character_break_;
   ElideBehavior elide_behavior_;

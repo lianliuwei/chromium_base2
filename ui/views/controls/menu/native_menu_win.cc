@@ -27,6 +27,7 @@
 #include "ui/native_theme/native_theme_win.h"
 #include "ui/views/controls/menu/menu_2.h"
 #include "ui/views/controls/menu/menu_config.h"
+#include "ui/views/controls/menu/menu_insertion_delegate_win.h"
 #include "ui/views/controls/menu/menu_listener.h"
 
 using ui::NativeTheme;
@@ -398,7 +399,7 @@ NativeMenuWin::NativeMenuWin(ui::MenuModel* model, HWND system_menu_for)
       menu_action_(MENU_ACTION_NONE),
       menu_to_select_(NULL),
       position_to_select_(-1),
-      ALLOW_THIS_IN_INITIALIZER_LIST(menu_to_select_factory_(this)),
+      menu_to_select_factory_(this),
       parent_(NULL),
       destroyed_flag_(NULL) {
 }
@@ -454,7 +455,7 @@ void NativeMenuWin::RunMenuAt(const gfx::Point& point, int alignment) {
     // state. Instead post a task, then notify. This mirrors what WM_MENUCOMMAND
     // does.
     menu_to_select_factory_.InvalidateWeakPtrs();
-    MessageLoop::current()->PostTask(
+    base::MessageLoop::current()->PostTask(
         FROM_HERE,
         base::Bind(&NativeMenuWin::DelayedSelect,
                    menu_to_select_factory_.GetWeakPtr()));
@@ -469,7 +470,7 @@ void NativeMenuWin::CancelMenu() {
   EndMenu();
 }
 
-void NativeMenuWin::Rebuild(InsertionDelegate* delegate) {
+void NativeMenuWin::Rebuild(MenuInsertionDelegateWin* delegate) {
   ResetNativeMenu();
   items_.clear();
 

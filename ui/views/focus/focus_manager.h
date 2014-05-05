@@ -136,10 +136,21 @@ class VIEWS_EXPORT FocusManager {
     kReasonDirectFocusChange
   };
 
+  // TODO: use Direction in place of bool reverse throughout.
+  enum Direction {
+    kForward,
+    kBackward
+  };
+
+  enum FocusCycleWrappingBehavior {
+    kWrap,
+    kNoWrap
+  };
+
   FocusManager(Widget* widget, FocusManagerDelegate* delegate);
   virtual ~FocusManager();
 
-  // Processes the passed key event for accelerators and tab traversal.
+  // Processes the passed key event for accelerators and keyboard traversal.
   // Returns false if the event has been consumed and should not be processed
   // further.
   bool OnKeyEvent(const ui::KeyEvent& event);
@@ -185,6 +196,15 @@ class VIEWS_EXPORT FocusManager {
   // when the widget becomes active. Returns true when the previous view was
   // successfully refocused - otherwise false.
   bool RestoreFocusedView();
+
+  // Sets the |view| to be restored when calling RestoreFocusView. This is used
+  // to set where the focus should go on restoring a Window created without
+  // focus being set.
+  void SetStoredFocusView(View* view);
+
+  // Returns the View that either currently has focus, or if no view has focus
+  // the view that last had focus.
+  View* GetStoredFocusView();
 
   // Clears the stored focused view.
   void ClearStoredFocusedView();
@@ -262,10 +282,30 @@ class VIEWS_EXPORT FocusManager {
   // Clears the native view having the focus.
   virtual void ClearNativeFocus();
 
+  // Focuses the next keyboard-accessible pane, taken from the list of
+  // views returned by WidgetDelegate::GetAccessiblePanes(). If there are
+  // no panes, the widget's root view is treated as a single pane.
+  // A keyboard-accessible pane should subclass from AccessiblePaneView in
+  // order to trap keyboard focus within that pane. If |wrap| is kWrap,
+  // it keeps cycling within this widget, otherwise it returns false after
+  // reaching the last pane so that focus can cycle to another widget.
+  bool RotatePaneFocus(Direction direction, FocusCycleWrappingBehavior wrap);
+
   // Convenience method that returns true if the passed |key_event| should
   // trigger tab traversal (if it is a TAB key press with or without SHIFT
   // pressed).
   static bool IsTabTraversalKeyEvent(const ui::KeyEvent& key_event);
+
+  // Sets whether arrow key traversal is enabled. When enabled, right/down key
+  // behaves like tab and left/up key behaves like shift-tab. Note when this
+  // is enabled, the arrow key movement within grouped views are disabled.
+  static void set_arrow_key_traversal_enabled(bool enabled) {
+    arrow_key_traversal_enabled_ = enabled;
+  }
+  // Returns whether arrow key traversal is enabled.
+  static bool arrow_key_traversal_enabled() {
+    return arrow_key_traversal_enabled_;
+  }
 
  private:
   // Returns the next focusable view.
@@ -279,8 +319,15 @@ class VIEWS_EXPORT FocusManager {
                           View* starting_view,
                           bool reverse);
 
+  // Process arrow key traversal. Returns true if the event has been consumed
+  // and should not be processed further.
+  bool ProcessArrowKeyTraversal(const ui::KeyEvent& event);
+
   // Keeps track of whether shortcut handling is currently suspended.
   static bool shortcut_handling_suspended_;
+
+  // Whether arrow key traversal is enabled.
+  static bool arrow_key_traversal_enabled_;
 
   // The top-level Widget this FocusManager is associated with.
   Widget* widget_;
