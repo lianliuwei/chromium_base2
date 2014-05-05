@@ -193,8 +193,8 @@
         'controls/single_split_view.cc',
         'controls/single_split_view.h',
         'controls/single_split_view_listener.h',
-        'controls/slide_out_view.cc',
-        'controls/slide_out_view.h',
+#        'controls/slide_out_view.cc',
+#        'controls/slide_out_view.h',
         'controls/slider.cc',
         'controls/slider.h',
         'controls/styled_label.cc',
@@ -853,6 +853,22 @@
     {
       'target_name': 'views_examples_exe',
       'type': 'executable',
+      'dependencies': [
+        '../../base/base.gyp:base',
+        '../../base/base.gyp:base_i18n',
+        '../../skia/skia.gyp:skia',
+        '../../third_party/icu/icu.gyp:icui18n',
+        '../../third_party/icu/icu.gyp:icuuc',
+        '../ui.gyp:ui',
+        'views_examples_lib',
+        'views',
+      ],
+      'msvs_settings': {
+        'VCLinkerTool': {
+          #   1 == /SUBSYSTEM:CONSOLE
+          'SubSystem': '2',
+        },
+      }, 
       'sources': [
         'examples/examples_main.cc',
       ],
