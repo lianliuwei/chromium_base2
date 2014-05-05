@@ -459,8 +459,8 @@ enum IPv6SupportStatus {
 bool HaveOnlyLoopbackAddresses();
 
 // Returns AddressFamily of the address.
-NET_EXPORT_PRIVATE AddressFamily GetAddressFamily(
-    const IPAddressNumber& address);
+// NET_EXPORT_PRIVATE AddressFamily GetAddressFamily(
+//     const IPAddressNumber& address);
 
 // Parses an IP address literal (either IPv4 or IPv6) to its numeric value.
 // Returns true on success and fills |ip_number| with the numeric value.
