@@ -10,6 +10,7 @@
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "ui/compositor/compositor_export.h"
+#include "ui/gfx/rect.h"
 
 namespace ui {
 
@@ -51,6 +52,8 @@ class COMPOSITOR_EXPORT Compositor {
   // |force_clear| is true, this will cause the compositor to clear before
   // compositing.
   void Draw(bool force_clear) {}
+
+  void ScheduleRedrawRect(const gfx::Rect& damage_rect) {}
 
 
   DISALLOW_COPY_AND_ASSIGN(Compositor);
