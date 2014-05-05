@@ -217,7 +217,7 @@ NET_EXPORT bool IsCanonicalizedHostCompliant(const std::string& host,
 
 // Call these functions to get the html snippet for a directory listing.
 // The return values of both functions are in UTF-8.
-//NET_EXPORT std::string GetDirectoryListingHeader(const base::string16& title);
+NET_EXPORT std::string GetDirectoryListingHeader(const base::string16& title);
 
 // Given the name of a file in a directory (ftp or local) and
 // other information (is_dir, size, modification time), it returns
@@ -286,6 +286,27 @@ NET_EXPORT base::FilePath GenerateFileName(
     const std::string& suggested_name,
     const std::string& mime_type,
     const std::string& default_name);
+
+// Valid basenames:
+// * are not empty
+// * are not Windows reserved names (CON, NUL.zip, etc.)
+// * are just basenames
+// * do not have trailing separators
+// * do not equal kCurrentDirectory
+// * do not reference the parent directory
+// * are valid path components, which:
+// - * are not the empty string
+// - * do not contain illegal characters
+// - * do not end with Windows shell-integrated extensions (even on posix)
+// - * do not begin with '.' (which would hide them in most file managers)
+// - * do not end with ' ' or '.'
+NET_EXPORT bool IsSafePortableBasename(const base::FilePath& path);
+
+// Basenames of valid relative paths are IsSafePortableBasename(), and internal
+// path components of valid relative paths are valid path components as
+// described above IsSafePortableBasename(). Valid relative paths are not
+// absolute paths.
+NET_EXPORT bool IsSafePortableRelativePath(const base::FilePath& path);
 
 // Ensures that the filename and extension is safe to use in the filesystem.
 //
@@ -436,6 +457,10 @@ enum IPv6SupportStatus {
 // i.e. if only 127.0.0.1 and ::1 are routable.
 // Also returns false if it cannot determine this.
 bool HaveOnlyLoopbackAddresses();
+
+// Returns AddressFamily of the address.
+NET_EXPORT_PRIVATE AddressFamily GetAddressFamily(
+    const IPAddressNumber& address);
 
 // Parses an IP address literal (either IPv4 or IPv6) to its numeric value.
 // Returns true on success and fills |ip_number| with the numeric value.

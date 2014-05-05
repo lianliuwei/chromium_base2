@@ -40,9 +40,9 @@
 #include "base/path_service.h"
 #include "base/stl_util.h"
 #include "base/string_number_conversions.h"
-#include "base/string_piece.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/sys_string_conversions.h"
@@ -56,18 +56,18 @@
 #include "googleurl/src/url_canon.h"
 #include "googleurl/src/url_canon_ip.h"
 #include "googleurl/src/url_parse.h"
-//#include "grit/net_resources.h"
+#include "grit/net_resources.h"
 #if defined(OS_ANDROID)
 #include "net/android/network_library.h"
 #endif
-//#include "net/base/dns_util.h"
+#include "net/base/dns_util.h"
 #include "net/base/escape.h"
-//#include "net/base/mime_util.h"
-//#include "net/base/net_module.h"
+#include "net/base/mime_util.h"
+#include "net/base/net_module.h"
 #if defined(OS_WIN)
-//#include "net/base/winsock_init.h"
+#include "net/base/winsock_init.h"
 #endif
-//#include "net/http/http_content_disposition.h"
+#include "net/http/http_content_disposition.h"
 #include "third_party/icu/public/common/unicode/uidna.h"
 #include "third_party/icu/public/common/unicode/uniset.h"
 #include "third_party/icu/public/common/unicode/uscript.h"
@@ -162,16 +162,6 @@ static const int kAllowedFtpPorts[] = {
   21,   // ftp data
   22,   // ssh
 };
-
-#if defined(OS_WIN)
-std::string::size_type CountTrailingChars(
-    const std::string& input,
-    const std::string::value_type trailing_chars[]) {
-  const size_t last_good_char = input.find_last_not_of(trailing_chars);
-  return (last_good_char == std::string::npos) ?
-      input.length() : (input.length() - last_good_char - 1);
-}
-#endif
 
 // Does some simple normalization of scripts so we can allow certain scripts
 // to exist together.
@@ -710,25 +700,30 @@ void AppendFormattedComponent(const std::string& spec,
   }
 }
 
-void SanitizeGeneratedFileName(std::string& filename) {
-  if (!filename.empty()) {
-    // Remove "." from the beginning and end of the file name to avoid tricks
-    // with hidden files, "..", and "."
-    TrimString(filename, ".", &filename);
-#if defined(OS_WIN)
+void SanitizeGeneratedFileName(base::FilePath::StringType* filename,
+                               bool replace_trailing) {
+  const base::FilePath::CharType kReplace[] = FILE_PATH_LITERAL("-");
+  if (filename->empty())
+    return;
+  if (replace_trailing) {
     // Handle CreateFile() stripping trailing dots and spaces on filenames
     // http://support.microsoft.com/kb/115827
-    std::string::size_type pos = filename.find_last_not_of(" .");
-    if (pos == std::string::npos)
-      filename.resize(0);
-    else
-      filename.resize(++pos);
-#endif
-    // Replace any path information by changing path separators with
-    // underscores.
-    ReplaceSubstringsAfterOffset(&filename, 0, "/", "_");
-    ReplaceSubstringsAfterOffset(&filename, 0, "\\", "_");
+    size_t length = filename->size();
+    size_t pos = filename->find_last_not_of(FILE_PATH_LITERAL(" ."));
+    filename->resize((pos == std::string::npos) ? 0 : (pos + 1));
+    TrimWhitespace(*filename, TRIM_TRAILING, filename);
+    if (filename->empty())
+      return;
+    size_t trimmed = length - filename->size();
+    if (trimmed)
+      filename->insert(filename->end(), trimmed, kReplace[0]);
   }
+  TrimString(*filename, FILE_PATH_LITERAL("."), filename);
+  if (filename->empty())
+    return;
+  // Replace any path information by changing path separators.
+  ReplaceSubstringsAfterOffset(filename, 0, FILE_PATH_LITERAL("/"), kReplace);
+  ReplaceSubstringsAfterOffset(filename, 0, FILE_PATH_LITERAL("\\"), kReplace);
 }
 
 // Returns the filename determined from the last component of the path portion
@@ -773,72 +768,67 @@ std::string GetFileNameFromURL(const GURL& url,
   return decoded_filename;
 }
 
-#if defined(OS_WIN)
 // Returns whether the specified extension is automatically integrated into the
 // windows shell.
-bool IsShellIntegratedExtension(const base::string16& extension) {
-  base::string16 extension_lower = StringToLowerASCII(extension);
+bool IsShellIntegratedExtension(const base::FilePath::StringType& extension) {
+  base::FilePath::StringType extension_lower = StringToLowerASCII(extension);
 
-  static const wchar_t* const integrated_extensions[] = {
-    // See <http://msdn.microsoft.com/en-us/library/ms811694.aspx>.
-    L"local",
-    // Right-clicking on shortcuts can be magical.
-    L"lnk",
-  };
-
-  for (int i = 0; i < arraysize(integrated_extensions); ++i) {
-    if (extension_lower == integrated_extensions[i])
-      return true;
-  }
-
-  // See <http://www.juniper.net/security/auto/vulnerabilities/vuln2612.html>.
-  // That vulnerability report is not exactly on point, but files become magical
-  // if their end in a CLSID.  Here we block extensions that look like CLSIDs.
-  if (!extension_lower.empty() && extension_lower[0] == L'{' &&
-      extension_lower[extension_lower.length() - 1] == L'}')
+  // http://msdn.microsoft.com/en-us/library/ms811694.aspx
+  // Right-clicking on shortcuts can be magical.
+  if ((extension_lower == FILE_PATH_LITERAL("local")) ||
+      (extension_lower == FILE_PATH_LITERAL("lnk")))
     return true;
 
+  // http://www.juniper.net/security/auto/vulnerabilities/vuln2612.html
+  // Files become magical if they end in a CLSID, so block such extensions.
+  if (!extension_lower.empty() &&
+      (extension_lower[0] == FILE_PATH_LITERAL('{')) &&
+      (extension_lower[extension_lower.length() - 1] == FILE_PATH_LITERAL('}')))
+    return true;
   return false;
 }
 
 // Returns whether the specified file name is a reserved name on windows.
 // This includes names like "com2.zip" (which correspond to devices) and
 // desktop.ini and thumbs.db which have special meaning to the windows shell.
-bool IsReservedName(const base::string16& filename) {
+bool IsReservedName(const base::FilePath::StringType& filename) {
   // This list is taken from the MSDN article "Naming a file"
   // http://msdn2.microsoft.com/en-us/library/aa365247(VS.85).aspx
   // I also added clock$ because GetSaveFileName seems to consider it as a
   // reserved name too.
-  static const wchar_t* const known_devices[] = {
-    L"con", L"prn", L"aux", L"nul", L"com1", L"com2", L"com3", L"com4", L"com5",
-    L"com6", L"com7", L"com8", L"com9", L"lpt1", L"lpt2", L"lpt3", L"lpt4",
-    L"lpt5", L"lpt6", L"lpt7", L"lpt8", L"lpt9", L"clock$"
+  static const char* const known_devices[] = {
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5",
+    "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4",
+    "lpt5", "lpt6", "lpt7", "lpt8", "lpt9", "clock$"
   };
-  base::string16 filename_lower = StringToLowerASCII(filename);
+#if defined(OS_WIN)
+  std::string filename_lower = StringToLowerASCII(WideToUTF8(filename));
+#elif defined(OS_POSIX)
+  std::string filename_lower = StringToLowerASCII(filename);
+#endif
 
-  for (int i = 0; i < arraysize(known_devices); ++i) {
+  for (size_t i = 0; i < arraysize(known_devices); ++i) {
     // Exact match.
     if (filename_lower == known_devices[i])
       return true;
     // Starts with "DEVICE.".
-    if (filename_lower.find(base::string16(known_devices[i]) + L".") == 0)
+    if (filename_lower.find(std::string(known_devices[i]) + ".") == 0)
       return true;
   }
 
-  static const wchar_t* const magic_names[] = {
+  static const char* const magic_names[] = {
     // These file names are used by the "Customize folder" feature of the shell.
-    L"desktop.ini",
-    L"thumbs.db",
+    "desktop.ini",
+    "thumbs.db",
   };
 
-  for (int i = 0; i < arraysize(magic_names); ++i) {
+  for (size_t i = 0; i < arraysize(magic_names); ++i) {
     if (filename_lower == magic_names[i])
       return true;
   }
 
   return false;
 }
-#endif  // OS_WIN
 
 // Examines the current extension in |file_name| and modifies it if necessary in
 // order to ensure the filename is safe.  If |file_name| doesn't contain an
@@ -870,20 +860,18 @@ void EnsureSafeExtension(const std::string& mime_type,
     // TODO(asanka): Remove this ScopedAllowIO once all callers have switched
     // over to IO safe threads.
     base::ThreadRestrictions::ScopedAllowIO allow_io;
-    // os_exchange_data_privider_win.cc always call with mine_type = ""
-    // so this don't need.
-    //net::GetPreferredExtensionForMimeType(mime_type, &preferred_mime_extension);
-    //net::GetExtensionsForMimeType(mime_type, &all_mime_extensions);
-    //// If the existing extension is in the list of valid extensions for the
-    //// given type, use it. This avoids doing things like pointlessly renaming
-    //// "foo.jpg" to "foo.jpeg".
-    //if (std::find(all_mime_extensions.begin(),
-    //              all_mime_extensions.end(),
-    //              extension) != all_mime_extensions.end()) {
-    //  // leave |extension| alone
-    //} else if (!preferred_mime_extension.empty()) {
-    //  extension = preferred_mime_extension;
-    //}
+    net::GetPreferredExtensionForMimeType(mime_type, &preferred_mime_extension);
+    net::GetExtensionsForMimeType(mime_type, &all_mime_extensions);
+    // If the existing extension is in the list of valid extensions for the
+    // given type, use it. This avoids doing things like pointlessly renaming
+    // "foo.jpg" to "foo.jpeg".
+    if (std::find(all_mime_extensions.begin(),
+                  all_mime_extensions.end(),
+                  extension) != all_mime_extensions.end()) {
+      // leave |extension| alone
+    } else if (!preferred_mime_extension.empty()) {
+      extension = preferred_mime_extension;
+    }
   }
 
 #if defined(OS_WIN)
@@ -898,6 +886,16 @@ void EnsureSafeExtension(const std::string& mime_type,
 #endif
 
   *file_name = file_name->ReplaceExtension(extension);
+}
+
+bool FilePathToString16(const base::FilePath& path, base::string16* converted) {
+#if defined(OS_WIN)
+  return WideToUTF16(path.value().c_str(), path.value().size(), converted);
+#elif defined(OS_POSIX)
+  std::string component8 = path.AsUTF8Unsafe();
+  return !component8.empty() &&
+         UTF8ToUTF16(component8.c_str(), component8.size(), converted);
+#endif
 }
 
 }  // namespace
@@ -1008,23 +1006,23 @@ std::string CanonicalizeHost(const std::string& host,
   return canon_host;
 }
 
-//std::string GetDirectoryListingHeader(const base::string16& title) {
-//  static const base::StringPiece header(
-//      NetModule::GetResource(IDR_DIR_HEADER_HTML));
-//  // This can be null in unit tests.
-//  DLOG_IF(WARNING, header.empty()) <<
-//      "Missing resource: directory listing header";
-//
-//  std::string result;
-//  if (!header.empty())
-//    result.assign(header.data(), header.size());
-//
-//  result.append("<script>start(");
-//  base::JsonDoubleQuote(title, true, &result);
-//  result.append(");</script>\n");
-//
-//  return result;
-//}
+std::string GetDirectoryListingHeader(const base::string16& title) {
+  static const base::StringPiece header(
+      NetModule::GetResource(IDR_DIR_HEADER_HTML));
+  // This can be null in unit tests.
+  DLOG_IF(WARNING, header.empty()) <<
+      "Missing resource: directory listing header";
+
+  std::string result;
+  if (!header.empty())
+    result.assign(header.data(), header.size());
+
+  result.append("<script>start(");
+  base::JsonDoubleQuote(title, true, &result);
+  result.append(");</script>\n");
+
+  return result;
+}
 
 inline bool IsHostCharAlpha(char c) {
   // We can just check lowercase because uppercase characters have already been
@@ -1123,6 +1121,41 @@ base::string16 StripWWWFromHost(const GURL& url) {
   return StripWWW(ASCIIToUTF16(url.host()));
 }
 
+bool IsSafePortablePathComponent(const base::FilePath& component) {
+  base::string16 component16;
+  base::FilePath::StringType sanitized = component.value();
+  SanitizeGeneratedFileName(&sanitized, true);
+  base::FilePath::StringType extension = component.Extension();
+  if (!extension.empty())
+    extension.erase(extension.begin());  // Erase preceding '.'.
+  return !component.empty() &&
+         (component == component.BaseName()) &&
+         (component == component.StripTrailingSeparators()) &&
+         FilePathToString16(component, &component16) &&
+         file_util::IsFilenameLegal(component16) &&
+         !IsShellIntegratedExtension(extension) &&
+         (sanitized == component.value());
+}
+
+bool IsSafePortableBasename(const base::FilePath& filename) {
+  return IsSafePortablePathComponent(filename) &&
+         !IsReservedName(filename.value());
+}
+
+bool IsSafePortableRelativePath(const base::FilePath& path) {
+  if (path.empty() || path.IsAbsolute() || path.EndsWithSeparator())
+    return false;
+  std::vector<base::FilePath::StringType> components;
+  path.GetComponents(&components);
+  if (components.empty())
+    return false;
+  for (size_t i = 0; i < components.size() - 1; ++i) {
+    if (!IsSafePortablePathComponent(base::FilePath(components[i])))
+      return false;
+  }
+  return IsSafePortableBasename(path.BaseName());
+}
+
 void GenerateSafeFileName(const std::string& mime_type,
                           bool ignore_extension,
                           base::FilePath* file_path) {
@@ -1156,17 +1189,16 @@ base::string16 GetSuggestedFilename(const GURL& url,
 
   // We don't translate this fallback string, "download". If localization is
   // needed, the caller should provide localized fallback in |default_name|.
-  static const char* kFinalFallbackName = "download";
+  static const base::FilePath::CharType kFinalFallbackName[] =
+    FILE_PATH_LITERAL("download");
   std::string filename;  // In UTF-8
   bool overwrite_extension = false;
 
-  // NOTE: os_exchang_data_privider_win.cc content_disposition always ""
-  // so commit it.
-  //// Try to extract a filename from content-disposition first.
-  //if (!content_disposition.empty()) {
-  //  HttpContentDisposition header(content_disposition, referrer_charset);
-  //  filename = header.filename();
-  //}
+  // Try to extract a filename from content-disposition first.
+  if (!content_disposition.empty()) {
+    HttpContentDisposition header(content_disposition, referrer_charset);
+    filename = header.filename();
+  }
 
   // Then try to use the suggested name.
   if (filename.empty() && !suggested_name.empty())
@@ -1181,49 +1213,44 @@ base::string16 GetSuggestedFilename(const GURL& url,
   // Finally try the URL hostname, but only if there's no default specified in
   // |default_name|.  Some schemes (e.g.: file:, about:, data:) do not have a
   // host name.
-  if (filename.empty() && default_name.empty() &&
-      url.is_valid() && !url.host().empty()) {
+  if (filename.empty() &&
+      default_name.empty() &&
+      url.is_valid() &&
+      !url.host().empty()) {
     // TODO(jungshik) : Decode a 'punycoded' IDN hostname. (bug 1264451)
     filename = url.host();
   }
 
+  bool replace_trailing = false;
+  base::FilePath::StringType result_str, default_name_str;
 #if defined(OS_WIN)
-  std::string::size_type trimmed_trailing_character_count =
-      CountTrailingChars(filename, " .");
-#endif
-  SanitizeGeneratedFileName(filename);
-  // Sanitization can cause the filename to disappear (e.g.: if the filename
-  // consisted entirely of spaces and '.'s), in which case we use the default.
-  if (filename.empty()) {
-#if defined(OS_WIN)
-    trimmed_trailing_character_count = 0;
-#endif
-    overwrite_extension = false;
-    if (default_name.empty())
-      filename = kFinalFallbackName;
-  }
-
-#if defined(OS_WIN)
-  base::string16 path = UTF8ToUTF16(filename.empty() ? default_name : filename);
-  // On Windows we want to preserve or replace all characters including
-  // whitespace to prevent file extension obfuscation on trusted websites
-  // e.g. Gmail might think evil.exe. is safe, so we don't want it to become
-  // evil.exe when we download it
-  base::string16::size_type path_length_before_trim = path.length();
-  TrimWhitespace(path, TRIM_TRAILING, &path);
-  trimmed_trailing_character_count += path_length_before_trim - path.length();
-  file_util::ReplaceIllegalCharactersInPath(&path, '-');
-  path.append(trimmed_trailing_character_count, '-');
-  base::FilePath result(path);
-  GenerateSafeFileName(mime_type, overwrite_extension, &result);
-  return result.value();
+  replace_trailing = true;
+  result_str = UTF8ToUTF16(filename);
+  default_name_str = UTF8ToUTF16(default_name);
 #else
-  std::string path = filename.empty() ? default_name : filename;
-  file_util::ReplaceIllegalCharactersInPath(&path, '-');
-  base::FilePath result(path);
-  GenerateSafeFileName(mime_type, overwrite_extension, &result);
-  return UTF8ToUTF16(result.value());
+  result_str = filename;
+  default_name_str = default_name;
 #endif
+  SanitizeGeneratedFileName(&result_str, replace_trailing);
+  if (result_str.find_last_not_of(FILE_PATH_LITERAL("-_")) ==
+      base::FilePath::StringType::npos) {
+    result_str = !default_name_str.empty() ? default_name_str :
+      base::FilePath::StringType(kFinalFallbackName);
+    overwrite_extension = false;
+  }
+  file_util::ReplaceIllegalCharactersInPath(&result_str, '-');
+  base::FilePath result(result_str);
+  GenerateSafeFileName(mime_type, overwrite_extension, &result);
+
+  base::string16 result16;
+  if (!FilePathToString16(result, &result16)) {
+    result = base::FilePath(default_name_str);
+    if (!FilePathToString16(result, &result16)) {
+      result = base::FilePath(kFinalFallbackName);
+      FilePathToString16(result, &result16);
+    }
+  }
+  return result16;
 }
 
 base::FilePath GenerateFileName(const GURL& url,
@@ -1437,7 +1464,7 @@ std::string NetAddressToString(const struct sockaddr* sa,
   if (!GetIPAddressFromSockAddr(sa, sock_addr_len, &address,
                                 &address_len, NULL)) {
     NOTREACHED();
-    return "";
+    return std::string();
   }
   return IPAddressToString(address, address_len);
 }
@@ -1450,7 +1477,7 @@ std::string NetAddressToStringWithPort(const struct sockaddr* sa,
   if (!GetIPAddressFromSockAddr(sa, sock_addr_len, &address,
                                 &address_len, &port)) {
     NOTREACHED();
-    return "";
+    return std::string();
   }
   return IPAddressToStringWithPort(address, address_len, port);
 }
@@ -1464,20 +1491,20 @@ std::string IPAddressToStringWithPort(const IPAddressNumber& addr,
   return IPAddressToStringWithPort(&addr.front(), addr.size(), port);
 }
 
-//std::string GetHostName() {
-//#if defined(OS_WIN)
-//  EnsureWinsockInit();
-//#endif
-//
-//  // Host names are limited to 255 bytes.
-//  char buffer[256];
-//  int result = gethostname(buffer, sizeof(buffer));
-//  if (result != 0) {
-//    DVLOG(1) << "gethostname() failed with " << result;
-//    buffer[0] = '\0';
-//  }
-//  return std::string(buffer);
-//}
+std::string GetHostName() {
+#if defined(OS_WIN)
+  EnsureWinsockInit();
+#endif
+
+  // Host names are limited to 255 bytes.
+  char buffer[256];
+  int result = gethostname(buffer, sizeof(buffer));
+  if (result != 0) {
+    DVLOG(1) << "gethostname() failed with " << result;
+    buffer[0] = '\0';
+  }
+  return std::string(buffer);
+}
 
 void GetIdentityFromURL(const GURL& url,
                         base::string16* username,
@@ -1488,9 +1515,9 @@ void GetIdentityFromURL(const GURL& url,
   *password = UnescapeAndDecodeUTF8URLComponent(url.password(), flags, NULL);
 }
 
-//std::string GetHostOrSpecFromURL(const GURL& url) {
-//  return url.has_host() ? TrimEndingDot(url.host()) : url.spec();
-//}
+std::string GetHostOrSpecFromURL(const GURL& url) {
+  return url.has_host() ? TrimEndingDot(url.host()) : url.spec();
+}
 
 void AppendFormattedHost(const GURL& url,
                          const std::string& languages,
@@ -1770,176 +1797,176 @@ ScopedPortException::~ScopedPortException() {
 
 namespace {
 
-//const char* kFinalStatusNames[] = {
-//  "Cannot create sockets",
-//  "Can create sockets",
-//  "Can't get addresses",
-//  "Global ipv6 address missing",
-//  "Global ipv6 address present",
-//  "Interface array too short",
-//  "Probing not supported",  // IPV6_SUPPORT_MAX
-//};
-//COMPILE_ASSERT(arraysize(kFinalStatusNames) == IPV6_SUPPORT_MAX + 1,
-//               IPv6SupportStatus_name_count_mismatch);
-//
-//// TODO(jar): The following is a simple estimate of IPv6 support.  We may need
-//// to do a test resolution, and a test connection, to REALLY verify support.
-//IPv6SupportResult TestIPv6SupportInternal() {
-//#if defined(OS_ANDROID)
-//  // TODO: We should fully implement IPv6 probe once 'getifaddrs' API available;
-//  // Another approach is implementing the similar feature by
-//  // java.net.NetworkInterface through JNI.
-//  NOTIMPLEMENTED();
-//  return IPv6SupportResult(true, IPV6_SUPPORT_MAX, 0);
-//#elif defined(OS_POSIX)
-//  int test_socket = socket(AF_INET6, SOCK_STREAM, 0);
-//  if (test_socket == -1)
-//    return IPv6SupportResult(false, IPV6_CANNOT_CREATE_SOCKETS, errno);
-//  close(test_socket);
-//
-//  // Check to see if any interface has a IPv6 address.
-//  struct ifaddrs* interface_addr = NULL;
-//  int rv = getifaddrs(&interface_addr);
-//  if (rv != 0) {
-//    // Don't yet block IPv6.
-//    return IPv6SupportResult(true, IPV6_GETIFADDRS_FAILED, errno);
-//  }
-//
-//  bool found_ipv6 = false;
-//  for (struct ifaddrs* interface = interface_addr;
-//       interface != NULL;
-//       interface = interface->ifa_next) {
-//    if (!(IFF_UP & interface->ifa_flags))
-//      continue;
-//    if (IFF_LOOPBACK & interface->ifa_flags)
-//      continue;
-//    struct sockaddr* addr = interface->ifa_addr;
-//    if (!addr)
-//      continue;
-//    if (addr->sa_family != AF_INET6)
-//      continue;
-//    // Safe cast since this is AF_INET6.
-//    struct sockaddr_in6* addr_in6 =
-//        reinterpret_cast<struct sockaddr_in6*>(addr);
-//    struct in6_addr* sin6_addr = &addr_in6->sin6_addr;
-//    if (IN6_IS_ADDR_LOOPBACK(sin6_addr) || IN6_IS_ADDR_LINKLOCAL(sin6_addr))
-//      continue;
-//    found_ipv6 = true;
-//    break;
-//  }
-//  freeifaddrs(interface_addr);
-//  if (!found_ipv6)
-//    return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, 0);
-//
-//  return IPv6SupportResult(true, IPV6_GLOBAL_ADDRESS_PRESENT, 0);
-//#elif defined(OS_WIN)
-//  EnsureWinsockInit();
-//  SOCKET test_socket = socket(AF_INET6, SOCK_STREAM, 0);
-//  if (test_socket == INVALID_SOCKET) {
-//    return IPv6SupportResult(false,
-//                             IPV6_CANNOT_CREATE_SOCKETS,
-//                             WSAGetLastError());
-//  }
-//  closesocket(test_socket);
-//
-//  // Check to see if any interface has a IPv6 address.
-//  // The GetAdaptersAddresses MSDN page recommends using a size of 15000 to
-//  // avoid reallocation.
-//  ULONG adapters_size = 15000;
-//  scoped_ptr_malloc<IP_ADAPTER_ADDRESSES> adapters;
-//  ULONG error;
-//  int num_tries = 0;
-//  do {
-//    adapters.reset(
-//        reinterpret_cast<PIP_ADAPTER_ADDRESSES>(malloc(adapters_size)));
-//    // Return only unicast addresses.
-//    error = GetAdaptersAddresses(AF_UNSPEC,
-//                                 GAA_FLAG_SKIP_ANYCAST |
-//                                 GAA_FLAG_SKIP_MULTICAST |
-//                                 GAA_FLAG_SKIP_DNS_SERVER |
-//                                 GAA_FLAG_SKIP_FRIENDLY_NAME,
-//                                 NULL, adapters.get(), &adapters_size);
-//    num_tries++;
-//  } while (error == ERROR_BUFFER_OVERFLOW && num_tries <= 3);
-//  if (error == ERROR_NO_DATA)
-//    return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, error);
-//  if (error != ERROR_SUCCESS) {
-//    // Don't yet block IPv6.
-//    return IPv6SupportResult(true, IPV6_GETIFADDRS_FAILED, error);
-//  }
-//
-//  PIP_ADAPTER_ADDRESSES adapter;
-//  for (adapter = adapters.get(); adapter; adapter = adapter->Next) {
-//    if (adapter->OperStatus != IfOperStatusUp)
-//      continue;
-//    if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
-//      continue;
-//    PIP_ADAPTER_UNICAST_ADDRESS unicast_address;
-//    for (unicast_address = adapter->FirstUnicastAddress;
-//         unicast_address;
-//         unicast_address = unicast_address->Next) {
-//      if (unicast_address->Address.lpSockaddr->sa_family != AF_INET6)
-//        continue;
-//      // Safe cast since this is AF_INET6.
-//      struct sockaddr_in6* addr_in6 = reinterpret_cast<struct sockaddr_in6*>(
-//          unicast_address->Address.lpSockaddr);
-//      struct in6_addr* sin6_addr = &addr_in6->sin6_addr;
-//      if (IN6_IS_ADDR_LOOPBACK(sin6_addr) || IN6_IS_ADDR_LINKLOCAL(sin6_addr))
-//        continue;
-//      const uint8 kTeredoPrefix[] = { 0x20, 0x01, 0, 0 };
-//      if (!memcmp(sin6_addr->s6_addr, kTeredoPrefix, arraysize(kTeredoPrefix)))
-//        continue;
-//      return IPv6SupportResult(true, IPV6_GLOBAL_ADDRESS_PRESENT, 0);
-//    }
-//  }
-//
-//  return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, 0);
-//#else
-//  NOTIMPLEMENTED();
-//  return IPv6SupportResult(true, IPV6_SUPPORT_MAX, 0);
-//#endif  // defined(various platforms)
-//}
+const char* kFinalStatusNames[] = {
+  "Cannot create sockets",
+  "Can create sockets",
+  "Can't get addresses",
+  "Global ipv6 address missing",
+  "Global ipv6 address present",
+  "Interface array too short",
+  "Probing not supported",  // IPV6_SUPPORT_MAX
+};
+COMPILE_ASSERT(arraysize(kFinalStatusNames) == IPV6_SUPPORT_MAX + 1,
+               IPv6SupportStatus_name_count_mismatch);
+
+// TODO(jar): The following is a simple estimate of IPv6 support.  We may need
+// to do a test resolution, and a test connection, to REALLY verify support.
+IPv6SupportResult TestIPv6SupportInternal() {
+#if defined(OS_ANDROID)
+  // TODO: We should fully implement IPv6 probe once 'getifaddrs' API available;
+  // Another approach is implementing the similar feature by
+  // java.net.NetworkInterface through JNI.
+  NOTIMPLEMENTED();
+  return IPv6SupportResult(true, IPV6_SUPPORT_MAX, 0);
+#elif defined(OS_POSIX)
+  int test_socket = socket(AF_INET6, SOCK_STREAM, 0);
+  if (test_socket == -1)
+    return IPv6SupportResult(false, IPV6_CANNOT_CREATE_SOCKETS, errno);
+  close(test_socket);
+
+  // Check to see if any interface has a IPv6 address.
+  struct ifaddrs* interface_addr = NULL;
+  int rv = getifaddrs(&interface_addr);
+  if (rv != 0) {
+    // Don't yet block IPv6.
+    return IPv6SupportResult(true, IPV6_GETIFADDRS_FAILED, errno);
+  }
+
+  bool found_ipv6 = false;
+  for (struct ifaddrs* interface = interface_addr;
+       interface != NULL;
+       interface = interface->ifa_next) {
+    if (!(IFF_UP & interface->ifa_flags))
+      continue;
+    if (IFF_LOOPBACK & interface->ifa_flags)
+      continue;
+    struct sockaddr* addr = interface->ifa_addr;
+    if (!addr)
+      continue;
+    if (addr->sa_family != AF_INET6)
+      continue;
+    // Safe cast since this is AF_INET6.
+    struct sockaddr_in6* addr_in6 =
+        reinterpret_cast<struct sockaddr_in6*>(addr);
+    struct in6_addr* sin6_addr = &addr_in6->sin6_addr;
+    if (IN6_IS_ADDR_LOOPBACK(sin6_addr) || IN6_IS_ADDR_LINKLOCAL(sin6_addr))
+      continue;
+    found_ipv6 = true;
+    break;
+  }
+  freeifaddrs(interface_addr);
+  if (!found_ipv6)
+    return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, 0);
+
+  return IPv6SupportResult(true, IPV6_GLOBAL_ADDRESS_PRESENT, 0);
+#elif defined(OS_WIN)
+  EnsureWinsockInit();
+  SOCKET test_socket = socket(AF_INET6, SOCK_STREAM, 0);
+  if (test_socket == INVALID_SOCKET) {
+    return IPv6SupportResult(false,
+                             IPV6_CANNOT_CREATE_SOCKETS,
+                             WSAGetLastError());
+  }
+  closesocket(test_socket);
+
+  // Check to see if any interface has a IPv6 address.
+  // The GetAdaptersAddresses MSDN page recommends using a size of 15000 to
+  // avoid reallocation.
+  ULONG adapters_size = 15000;
+  scoped_ptr_malloc<IP_ADAPTER_ADDRESSES> adapters;
+  ULONG error;
+  int num_tries = 0;
+  do {
+    adapters.reset(
+        reinterpret_cast<PIP_ADAPTER_ADDRESSES>(malloc(adapters_size)));
+    // Return only unicast addresses.
+    error = GetAdaptersAddresses(AF_UNSPEC,
+                                 GAA_FLAG_SKIP_ANYCAST |
+                                 GAA_FLAG_SKIP_MULTICAST |
+                                 GAA_FLAG_SKIP_DNS_SERVER |
+                                 GAA_FLAG_SKIP_FRIENDLY_NAME,
+                                 NULL, adapters.get(), &adapters_size);
+    num_tries++;
+  } while (error == ERROR_BUFFER_OVERFLOW && num_tries <= 3);
+  if (error == ERROR_NO_DATA)
+    return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, error);
+  if (error != ERROR_SUCCESS) {
+    // Don't yet block IPv6.
+    return IPv6SupportResult(true, IPV6_GETIFADDRS_FAILED, error);
+  }
+
+  PIP_ADAPTER_ADDRESSES adapter;
+  for (adapter = adapters.get(); adapter; adapter = adapter->Next) {
+    if (adapter->OperStatus != IfOperStatusUp)
+      continue;
+    if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+      continue;
+    PIP_ADAPTER_UNICAST_ADDRESS unicast_address;
+    for (unicast_address = adapter->FirstUnicastAddress;
+         unicast_address;
+         unicast_address = unicast_address->Next) {
+      if (unicast_address->Address.lpSockaddr->sa_family != AF_INET6)
+        continue;
+      // Safe cast since this is AF_INET6.
+      struct sockaddr_in6* addr_in6 = reinterpret_cast<struct sockaddr_in6*>(
+          unicast_address->Address.lpSockaddr);
+      struct in6_addr* sin6_addr = &addr_in6->sin6_addr;
+      if (IN6_IS_ADDR_LOOPBACK(sin6_addr) || IN6_IS_ADDR_LINKLOCAL(sin6_addr))
+        continue;
+      const uint8 kTeredoPrefix[] = { 0x20, 0x01, 0, 0 };
+      if (!memcmp(sin6_addr->s6_addr, kTeredoPrefix, arraysize(kTeredoPrefix)))
+        continue;
+      return IPv6SupportResult(true, IPV6_GLOBAL_ADDRESS_PRESENT, 0);
+    }
+  }
+
+  return IPv6SupportResult(false, IPV6_GLOBAL_ADDRESS_MISSING, 0);
+#else
+  NOTIMPLEMENTED();
+  return IPv6SupportResult(true, IPV6_SUPPORT_MAX, 0);
+#endif  // defined(various platforms)
+}
 
 }  // namespace
 
-//IPv6SupportResult::IPv6SupportResult(bool ipv6_supported,
-//                                     IPv6SupportStatus ipv6_support_status,
-//                                     int os_error)
-//                                     : ipv6_supported(ipv6_supported),
-//                                       ipv6_support_status(ipv6_support_status),
-//                                       os_error(os_error) {
-//}
-//
-//base::Value* IPv6SupportResult::ToNetLogValue(
-//    NetLog::LogLevel /* log_level */) const {
-//  base::DictionaryValue* dict = new DictionaryValue();
-//  dict->SetBoolean("ipv6_supported", ipv6_supported);
-//  dict->SetString("ipv6_support_status",
-//                  kFinalStatusNames[ipv6_support_status]);
-//  if (os_error)
-//    dict->SetInteger("os_error", os_error);
-//  return dict;
-//}
-//
-//IPv6SupportResult TestIPv6Support() {
-//  IPv6SupportResult result = TestIPv6SupportInternal();
-//
-//  // Record UMA.
-//  if (result.ipv6_support_status != IPV6_SUPPORT_MAX) {
-//    static bool run_once = false;
-//    if (!run_once) {
-//      run_once = true;
-//      UMA_HISTOGRAM_ENUMERATION("Net.IPv6Status",
-//                                result.ipv6_support_status,
-//                                IPV6_SUPPORT_MAX);
-//    } else {
-//      UMA_HISTOGRAM_ENUMERATION("Net.IPv6Status_retest",
-//                                result.ipv6_support_status,
-//                                IPV6_SUPPORT_MAX);
-//    }
-//  }
-//  return result;
-//}
+IPv6SupportResult::IPv6SupportResult(bool ipv6_supported,
+                                     IPv6SupportStatus ipv6_support_status,
+                                     int os_error)
+                                     : ipv6_supported(ipv6_supported),
+                                       ipv6_support_status(ipv6_support_status),
+                                       os_error(os_error) {
+}
+
+base::Value* IPv6SupportResult::ToNetLogValue(
+    NetLog::LogLevel /* log_level */) const {
+  base::DictionaryValue* dict = new DictionaryValue();
+  dict->SetBoolean("ipv6_supported", ipv6_supported);
+  dict->SetString("ipv6_support_status",
+                  kFinalStatusNames[ipv6_support_status]);
+  if (os_error)
+    dict->SetInteger("os_error", os_error);
+  return dict;
+}
+
+IPv6SupportResult TestIPv6Support() {
+  IPv6SupportResult result = TestIPv6SupportInternal();
+
+  // Record UMA.
+  if (result.ipv6_support_status != IPV6_SUPPORT_MAX) {
+    static bool run_once = false;
+    if (!run_once) {
+      run_once = true;
+      UMA_HISTOGRAM_ENUMERATION("Net.IPv6Status",
+                                result.ipv6_support_status,
+                                IPV6_SUPPORT_MAX);
+    } else {
+      UMA_HISTOGRAM_ENUMERATION("Net.IPv6Status_retest",
+                                result.ipv6_support_status,
+                                IPV6_SUPPORT_MAX);
+    }
+  }
+  return result;
+}
 
 bool HaveOnlyLoopbackAddresses() {
 #if defined(OS_ANDROID)
@@ -1987,6 +2014,17 @@ bool HaveOnlyLoopbackAddresses() {
   NOTIMPLEMENTED();
   return false;
 #endif  // defined(various platforms)
+}
+
+AddressFamily GetAddressFamily(const IPAddressNumber& address) {
+  switch (address.size()) {
+    case kIPv4AddressSize:
+      return ADDRESS_FAMILY_IPV4;
+    case kIPv6AddressSize:
+      return ADDRESS_FAMILY_IPV6;
+    default:
+      return ADDRESS_FAMILY_UNSPECIFIED;
+  }
 }
 
 bool ParseIPLiteralToNumber(const std::string& ip_literal,
