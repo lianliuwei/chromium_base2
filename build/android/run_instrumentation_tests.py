@@ -7,6 +7,7 @@
 """Runs both the Python and Java instrumentation tests."""
 
 import optparse
+import os
 import sys
 
 from pylib import buildbot_report
@@ -49,8 +50,8 @@ def DispatchInstrumentationTests(options):
   report_results.LogFull(
       results=all_results,
       test_type='Instrumentation',
-      test_package=options.test_apk,
-      annotation=options.annotation,
+      test_package=os.path.basename(options.test_apk),
+      annotation=options.annotations,
       build_type=options.build_type,
       flakiness_server=options.flakiness_dashboard_server)
 

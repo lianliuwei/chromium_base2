@@ -314,11 +314,6 @@ Histogram::Histogram(const string& name,
 }
 
 Histogram::~Histogram() {
-  if (StatisticsRecorder::dump_on_exit()) {
-    string output;
-    WriteAsciiImpl(true, "\n", &output);
-    DLOG(INFO) << output;
-  }
 }
 
 bool Histogram::PrintEmptyBucket(size_t index) const {
@@ -340,12 +335,7 @@ double Histogram::GetBucketSize(Count current, size_t i) const {
 }
 
 const string Histogram::GetAsciiBucketRange(size_t i) const {
-  string result;
-  if (kHexRangePrintingFlag & flags())
-    StringAppendF(&result, "%#x", ranges(i));
-  else
-    StringAppendF(&result, "%d", ranges(i));
-  return result;
+  return GetSimpleAsciiBucketRange(ranges(i));
 }
 
 //------------------------------------------------------------------------------
@@ -490,27 +480,6 @@ void Histogram::WriteAsciiBucketContext(const int64 past,
   }
 }
 
-void Histogram::WriteAsciiBucketValue(Count current,
-                                      double scaled_sum,
-                                      string* output) const {
-  StringAppendF(output, " (%d = %3.1f%%)", current, current/scaled_sum);
-}
-
-void Histogram::WriteAsciiBucketGraph(double current_size,
-                                      double max_size,
-                                      string* output) const {
-  const int k_line_length = 72;  // Maximal horizontal width of graph.
-  int x_count = static_cast<int>(k_line_length * (current_size / max_size)
-                                 + 0.5);
-  int x_remainder = k_line_length - x_count;
-
-  while (0 < x_count--)
-    output->append("-");
-  output->append("O");
-  while (0 < x_remainder--)
-    output->append(" ");
-}
-
 void Histogram::GetParameters(DictionaryValue* params) const {
   params->SetString("type", HistogramTypeToString(GetHistogramType()));
   params->SetInteger("min", declared_min());
@@ -518,9 +487,12 @@ void Histogram::GetParameters(DictionaryValue* params) const {
   params->SetInteger("bucket_count", static_cast<int>(bucket_count()));
 }
 
-void Histogram::GetCountAndBucketData(Count* count, ListValue* buckets) const {
+void Histogram::GetCountAndBucketData(Count* count,
+                                      int64* sum,
+                                      ListValue* buckets) const {
   scoped_ptr<SampleVector> snapshot = SnapshotSampleVector();
   *count = snapshot->TotalCount();
+  *sum = snapshot->sum();
   size_t index = 0;
   for (size_t i = 0; i < bucket_count(); ++i) {
     Sample count = snapshot->GetCountAtIndex(i);

@@ -27,6 +27,16 @@
 namespace base {
 namespace mac {
 
+// Replicate specific 10.7 SDK declarations for building with prior SDKs.
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+
+enum {
+  NSApplicationPresentationFullScreen = 1 << 10
+};
+
+#endif  // MAC_OS_X_VERSION_10_7
+
 namespace {
 
 // The current count of outstanding requests for full screen mode from browser
@@ -58,6 +68,19 @@ void SetUIMode() {
   } else if (g_full_screen_requests[kFullScreenModeHideAll] > 0) {
     desired_options = NSApplicationPresentationHideDock |
                       NSApplicationPresentationHideMenuBar;
+  }
+
+  // Mac OS X bug: if the window is fullscreened (Lion-style) and
+  // NSApplicationPresentationDefault is requested, the result is that the menu
+  // bar doesn't auto-hide. rdar://13576498 http://www.openradar.me/13576498
+  //
+  // As a workaround, in that case, explicitly set the presentation options to
+  // the ones that are set by the system as it fullscreens a window.
+  if (desired_options == NSApplicationPresentationDefault &&
+      current_options & NSApplicationPresentationFullScreen) {
+    desired_options |= NSApplicationPresentationFullScreen |
+                       NSApplicationPresentationAutoHideMenuBar |
+                       NSApplicationPresentationAutoHideDock;
   }
 
   if (current_options != desired_options)
@@ -157,6 +180,9 @@ void RequestFullScreen(FullScreenMode mode) {
     return;
 
   DCHECK_GE(g_full_screen_requests[mode], 0);
+  if (mode < 0)
+    return;
+
   g_full_screen_requests[mode] = std::max(g_full_screen_requests[mode] + 1, 1);
   SetUIMode();
 }
@@ -167,7 +193,10 @@ void ReleaseFullScreen(FullScreenMode mode) {
   if (mode >= kNumFullScreenModes)
     return;
 
-  DCHECK_GT(g_full_screen_requests[mode], 0);
+  DCHECK_GE(g_full_screen_requests[mode], 0);
+  if (mode < 0)
+    return;
+
   g_full_screen_requests[mode] = std::max(g_full_screen_requests[mode] - 1, 0);
   SetUIMode();
 }

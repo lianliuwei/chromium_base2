@@ -398,13 +398,9 @@ typedef scoped_ptr_malloc<DIR, ScopedDIRClose> ScopedDIR;
   static const char kFDDir[] = "/proc/self/fd";
 #endif
 
-void CloseSuperfluousFds(const base::InjectiveMultimap& saved_mapping) {
-  // DANGER: no calls to malloc are allowed from now on:
-  // http://crbug.com/36678
-
-  // Get the maximum number of FDs possible.
-  struct rlimit nofile;
+size_t GetMaxFds() {
   rlim_t max_fds;
+  struct rlimit nofile;
   if (getrlimit(RLIMIT_NOFILE, &nofile)) {
     // getrlimit failed. Take a best guess.
     max_fds = kSystemDefaultMaxFds;
@@ -416,11 +412,20 @@ void CloseSuperfluousFds(const base::InjectiveMultimap& saved_mapping) {
   if (max_fds > INT_MAX)
     max_fds = INT_MAX;
 
-  DirReaderPosix fd_dir(kFDDir);
+  return static_cast<size_t>(max_fds);
+}
 
+void CloseSuperfluousFds(const base::InjectiveMultimap& saved_mapping) {
+  // DANGER: no calls to malloc are allowed from now on:
+  // http://crbug.com/36678
+
+  // Get the maximum number of FDs possible.
+  size_t max_fds = GetMaxFds();
+
+  DirReaderPosix fd_dir(kFDDir);
   if (!fd_dir.IsValid()) {
     // Fallback case: Try every possible fd.
-    for (rlim_t i = 0; i < max_fds; ++i) {
+    for (size_t i = 0; i < max_fds; ++i) {
       const int fd = static_cast<int>(i);
       if (fd == STDIN_FILENO || fd == STDOUT_FILENO || fd == STDERR_FILENO)
         continue;
@@ -604,15 +609,6 @@ bool LaunchProcess(const std::vector<std::string>& argv,
     fd_shuffle_size = options.fds_to_remap->size();
   }
 
-#if defined(OS_MACOSX)
-  if (options.synchronize) {
-    // When synchronizing, the "read" end of the synchronization pipe needs
-    // to make it to the child process. This is handled by mapping it back to
-    // itself.
-    ++fd_shuffle_size;
-  }
-#endif  // defined(OS_MACOSX)
-
   InjectiveMultimap fd_shuffle1;
   InjectiveMultimap fd_shuffle2;
   fd_shuffle1.reserve(fd_shuffle_size);
@@ -622,34 +618,6 @@ bool LaunchProcess(const std::vector<std::string>& argv,
   scoped_ptr<char*[]> new_environ;
   if (options.environ)
     new_environ.reset(AlterEnvironment(*options.environ, GetEnvironment()));
-
-#if defined(OS_MACOSX)
-  int synchronization_pipe_fds[2];
-  file_util::ScopedFD synchronization_read_fd;
-  file_util::ScopedFD synchronization_write_fd;
-
-  if (options.synchronize) {
-    // wait means "don't return from LaunchProcess until the child exits", and
-    // synchronize means "return from LaunchProcess but don't let the child
-    // run until LaunchSynchronize is called". These two options are highly
-    // incompatible.
-    DCHECK(!options.wait);
-
-    // Create the pipe used for synchronization.
-    if (HANDLE_EINTR(pipe(synchronization_pipe_fds)) != 0) {
-      DPLOG(ERROR) << "pipe";
-      return false;
-    }
-
-    // The parent process will only use synchronization_write_fd as the write
-    // side of the pipe. It can close the read side as soon as the child
-    // process has forked off. The child process will only use
-    // synchronization_read_fd as the read side of the pipe. In that process,
-    // the write side can be closed as soon as it has forked.
-    synchronization_read_fd.reset(&synchronization_pipe_fds[0]);
-    synchronization_write_fd.reset(&synchronization_pipe_fds[1]);
-  }
-#endif  // OS_MACOSX
 
   pid_t pid;
 #if defined(OS_LINUX)
@@ -672,10 +640,6 @@ bool LaunchProcess(const std::vector<std::string>& argv,
     // call any previously-registered (in the parent) exit handlers, which
     // might do things like block waiting for threads that don't even exist
     // in the child.
-
-    if (options.debug) {
-      RAW_LOG(INFO, "Right after fork");
-    }
 
     // If a child process uses the readline library, the process block forever.
     // In BSD like OSes including OS X it is safe to assign /dev/null as stdin.
@@ -702,18 +666,10 @@ bool LaunchProcess(const std::vector<std::string>& argv,
       }
     }
 
-    if (options.debug) {
-      RAW_LOG(INFO, "Right before base::type_profiler::Controller::Stop()");
-    }
-
     // Stop type-profiler.
     // The profiler should be stopped between fork and exec since it inserts
     // locks at new/delete expressions.  See http://crbug.com/36678.
     base::type_profiler::Controller::Stop();
-
-    if (options.debug) {
-      RAW_LOG(INFO, "Right after base::type_profiler::Controller::Stop()");
-    }
 
     if (options.maximize_rlimits) {
       // Some resource limits need to be maximal in this child.
@@ -738,17 +694,6 @@ bool LaunchProcess(const std::vector<std::string>& argv,
 #endif  // defined(OS_MACOSX)
 
     ResetChildSignalHandlersToDefaults();
-
-    if (options.debug) {
-      RAW_LOG(INFO, "Right after signal/exception handler restoration.");
-    }
-
-#if defined(OS_MACOSX)
-    if (options.synchronize) {
-      // The "write" side of the synchronization pipe belongs to the parent.
-      synchronization_write_fd.reset();  // closes synchronization_pipe_fds[1]
-    }
-#endif  // defined(OS_MACOSX)
 
 #if 0
     // When debugging it can be helpful to check that we really aren't making
@@ -785,20 +730,6 @@ bool LaunchProcess(const std::vector<std::string>& argv,
       }
     }
 
-    if (options.debug) {
-      RAW_LOG(INFO, "Right after fd_shuffle push_backs.");
-    }
-
-#if defined(OS_MACOSX)
-    if (options.synchronize) {
-      // Remap the read side of the synchronization pipe back onto itself,
-      // ensuring that it won't be closed by CloseSuperfluousFds.
-      int keep_fd = *synchronization_read_fd.get();
-      fd_shuffle1.push_back(InjectionArc(keep_fd, keep_fd, false));
-      fd_shuffle2.push_back(InjectionArc(keep_fd, keep_fd, false));
-    }
-#endif  // defined(OS_MACOSX)
-
     if (options.environ)
       SetEnvironment(new_environ.get());
 
@@ -806,37 +737,7 @@ bool LaunchProcess(const std::vector<std::string>& argv,
     if (!ShuffleFileDescriptors(&fd_shuffle1))
       _exit(127);
 
-    if (options.debug) {
-      RAW_LOG(INFO, "Right after ShuffleFileDescriptors");
-    }
-
     CloseSuperfluousFds(fd_shuffle2);
-
-    if (options.debug) {
-      RAW_LOG(INFO, "Right after CloseSuperfluousFds");
-    }
-
-#if defined(OS_MACOSX)
-    if (options.synchronize) {
-      // Do a blocking read to wait until the parent says it's OK to proceed.
-      // The byte that's read here is written by LaunchSynchronize.
-      char read_char;
-      int read_result =
-          HANDLE_EINTR(read(*synchronization_read_fd.get(), &read_char, 1));
-      if (read_result != 1) {
-        RAW_LOG(ERROR, "LaunchProcess: synchronization read: error");
-        _exit(127);
-      }
-
-      // The pipe is no longer useful. Don't let it live on in the new process
-      // after exec.
-      synchronization_read_fd.reset();  // closes synchronization_pipe_fds[0]
-    }
-#endif  // defined(OS_MACOSX)
-
-    if (options.debug) {
-      RAW_LOG(INFO, "Right before execvp");
-    }
 
     for (size_t i = 0; i < argv.size(); i++)
       argv_cstr[i] = const_cast<char*>(argv[i].c_str());
@@ -858,14 +759,6 @@ bool LaunchProcess(const std::vector<std::string>& argv,
 
     if (process_handle)
       *process_handle = pid;
-
-#if defined(OS_MACOSX)
-    if (options.synchronize) {
-      // The "read" side of the synchronization pipe belongs to the child.
-      synchronization_read_fd.reset();  // closes synchronization_pipe_fds[0]
-      *options.synchronize = new int(*synchronization_write_fd.release());
-    }
-#endif  // defined(OS_MACOSX)
   }
 
   return true;
@@ -877,21 +770,6 @@ bool LaunchProcess(const CommandLine& cmdline,
                    ProcessHandle* process_handle) {
   return LaunchProcess(cmdline.argv(), options, process_handle);
 }
-
-#if defined(OS_MACOSX)
-void LaunchSynchronize(LaunchSynchronizationHandle handle) {
-  int synchronization_fd = *handle;
-  file_util::ScopedFD synchronization_fd_closer(&synchronization_fd);
-  delete handle;
-
-  // Write a '\0' character to the pipe.
-  if (HANDLE_EINTR(write(synchronization_fd, "", 1)) != 1) {
-    DPLOG(ERROR) << "write";
-  }
-}
-#endif  // defined(OS_MACOSX)
-
-ProcessMetrics::~ProcessMetrics() { }
 
 void RaiseProcessToHighPriority() {
   // On POSIX, we don't actually do anything here.  We could try to nice() or
@@ -1064,14 +942,6 @@ bool WaitForSingleProcess(ProcessHandle handle, base::TimeDelta wait) {
   } else {
     return false;
   }
-}
-
-int64 TimeValToMicroseconds(const struct timeval& tv) {
-  static const int kMicrosecondsPerSecond = 1000000;
-  int64 ret = tv.tv_sec;  // Avoid (int * int) integer overflow.
-  ret *= kMicrosecondsPerSecond;
-  ret += tv.tv_usec;
-  return ret;
 }
 
 // Return value used by GetAppOutputInternal to encapsulate the various exit

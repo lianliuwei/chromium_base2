@@ -65,7 +65,7 @@ TEST_F(LoggingTest, BasicLogging) {
   // As of g++-4.5, the first argument to EXPECT_EQ cannot be a
   // constant expression.
   const bool kIsDebugMode = (DEBUG_MODE != 0);
-  EXPECT_EQ(kIsDebugMode, DLOG_IS_ON(INFO));
+  EXPECT_TRUE(kIsDebugMode == DLOG_IS_ON(INFO));
   EXPECT_TRUE(VLOG_IS_ON(0));
 
   LOG(INFO) << mock_log_source.Log();
@@ -120,7 +120,7 @@ TEST_F(LoggingTest, LogIsOn) {
   EXPECT_FALSE(LOG_IS_ON(ERROR));
   EXPECT_TRUE(LOG_IS_ON(ERROR_REPORT));
   EXPECT_TRUE(LOG_IS_ON(FATAL));
-  EXPECT_EQ(kDfatalIsFatal, LOG_IS_ON(DFATAL));
+  EXPECT_TRUE(kDfatalIsFatal == LOG_IS_ON(DFATAL));
 
   // LOG_IS_ON(ERROR_REPORT) should always be true.
   SetMinLogLevel(LOG_FATAL);
@@ -129,7 +129,7 @@ TEST_F(LoggingTest, LogIsOn) {
   EXPECT_FALSE(LOG_IS_ON(ERROR));
   EXPECT_TRUE(LOG_IS_ON(ERROR_REPORT));
   EXPECT_TRUE(LOG_IS_ON(FATAL));
-  EXPECT_EQ(kDfatalIsFatal, LOG_IS_ON(DFATAL));
+  EXPECT_TRUE(kDfatalIsFatal == LOG_IS_ON(DFATAL));
 
   // So should LOG_IS_ON(FATAL).
   SetMinLogLevel(LOG_FATAL + 1);
@@ -138,7 +138,7 @@ TEST_F(LoggingTest, LogIsOn) {
   EXPECT_FALSE(LOG_IS_ON(ERROR));
   EXPECT_TRUE(LOG_IS_ON(ERROR_REPORT));
   EXPECT_TRUE(LOG_IS_ON(FATAL));
-  EXPECT_EQ(kDfatalIsFatal, LOG_IS_ON(DFATAL));
+  EXPECT_TRUE(kDfatalIsFatal == LOG_IS_ON(DFATAL));
 }
 
 TEST_F(LoggingTest, LoggingIsLazy) {
@@ -205,7 +205,7 @@ TEST_F(LoggingTest, DcheckStreamsAreLazy) {
 #if !defined(LOGGING_IS_OFFICIAL_BUILD) && defined(NDEBUG) && \
     !defined(DCHECK_ALWAYS_ON)
   // Unofficial release build without dcheck enabled.
-  g_dcheck_state = DISABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS;
+  set_dcheck_state(DISABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS);
   DCHECK(mock_log_source.Log()) << mock_log_source.Log();
   DPCHECK(mock_log_source.Log()) << mock_log_source.Log();
   DCHECK_EQ(0, 0) << mock_log_source.Log();
@@ -221,13 +221,13 @@ TEST_F(LoggingTest, Dcheck) {
   EXPECT_FALSE(DLOG_IS_ON(DCHECK));
 #elif defined(NDEBUG) && !defined(DCHECK_ALWAYS_ON)
   // Unofficial release build.
-  g_dcheck_state = ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS;
+  set_dcheck_state(ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS);
   SetLogReportHandler(&LogSink);
   EXPECT_TRUE(DCHECK_IS_ON());
   EXPECT_FALSE(DLOG_IS_ON(DCHECK));
 #elif defined(NDEBUG) && defined(DCHECK_ALWAYS_ON)
   // Unofficial release build with real DCHECKS.
-  g_dcheck_state = ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS;
+  set_dcheck_state(ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS);
   SetLogAssertHandler(&LogSink);
   EXPECT_TRUE(DCHECK_IS_ON());
   EXPECT_FALSE(DLOG_IS_ON(DCHECK));

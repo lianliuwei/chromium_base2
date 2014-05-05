@@ -66,7 +66,6 @@ Thread::Thread(const char* name)
 
 Thread::~Thread() {
   Stop();
-  ThreadIdNameManager::GetInstance()->RemoveName(thread_id_);
 }
 
 bool Thread::Start() {
@@ -146,6 +145,13 @@ void Thread::StopSoon() {
 
 bool Thread::IsRunning() const {
   return running_;
+}
+
+void Thread::SetPriority(ThreadPriority priority) {
+  // The thread must be started (and id known) for this to be
+  // compatible with all platforms.
+  DCHECK_NE(thread_id_, kInvalidThreadId);
+  PlatformThread::SetThreadPriority(thread_, priority);
 }
 
 void Thread::Run(MessageLoop* message_loop) {

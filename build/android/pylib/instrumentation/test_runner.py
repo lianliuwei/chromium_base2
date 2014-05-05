@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-"""Runs the Java tests. See more information on run_instrumentation_tests.py."""
+"""Class for running instrumentation tests on a single device."""
 
 import logging
 import os
@@ -27,28 +27,33 @@ import test_result
 _PERF_TEST_ANNOTATION = 'PerfTest'
 
 
+def _GetDataFilesForTestSuite(test_suite_basename):
+  """Returns a list of data files/dirs needed by the test suite.
+
+  Args:
+    test_suite_basename: The test suite basename for which to return file paths.
+
+  Returns:
+    A list of test file and directory paths.
+  """
+  test_files = []
+  if test_suite_basename in ['ChromeTest', 'ContentShellTest']:
+    test_files += [
+        'net/data/ssl/certificates/',
+    ]
+  return test_files
+
+
 class TestRunner(base_test_runner.BaseTestRunner):
   """Responsible for running a series of tests connected to a single device."""
 
   _DEVICE_DATA_DIR = 'chrome/test/data'
-  _EMMA_JAR = os.path.join(os.environ.get('ANDROID_BUILD_TOP', ''),
-                           'external/emma/lib/emma.jar')
-  _COVERAGE_MERGED_FILENAME = 'unittest_coverage.es'
-  _COVERAGE_WEB_ROOT_DIR = os.environ.get('EMMA_WEB_ROOTDIR')
-  _COVERAGE_FILENAME = 'coverage.ec'
-  _COVERAGE_RESULT_PATH = ('/data/data/com.google.android.apps.chrome/files/' +
-                           _COVERAGE_FILENAME)
-  _COVERAGE_META_INFO_PATH = os.path.join(os.environ.get('ANDROID_BUILD_TOP',
-                                                         ''),
-                                          'out/target/common/obj/APPS',
-                                          'Chrome_intermediates/coverage.em')
   _HOSTMACHINE_PERF_OUTPUT_FILE = '/tmp/chrome-profile'
   _DEVICE_PERF_OUTPUT_SEARCH_PREFIX = (constants.DEVICE_PERF_OUTPUT_DIR +
                                        '/chrome-profile*')
   _DEVICE_HAS_TEST_FILES = {}
 
-  def __init__(self, options, device, shard_index, coverage, test_pkg,
-               ports_to_forward, is_uiautomator_test=False):
+  def __init__(self, options, device, shard_index, test_pkg, ports_to_forward):
     """Create a new TestRunner.
 
     Args:
@@ -63,13 +68,9 @@ class TestRunner(base_test_runner.BaseTestRunner):
       -  disable_assertions: Whether to disable java assertions on the device.
       device: Attached android device.
       shard_index: Shard index.
-      coverage: Collects coverage information if opted.
       test_pkg: A TestPackage object.
       ports_to_forward: A list of port numbers for which to set up forwarders.
                         Can be optionally requested by a test case.
-      is_uiautomator_test: Whether this is a uiautomator test.
-    Raises:
-      Exception: if coverage metadata is not available.
     """
     super(TestRunner, self).__init__(device, options.tool, options.build_type)
     self._lighttp_port = constants.LIGHTTPD_RANDOM_PORT_FIRST + shard_index
@@ -80,38 +81,29 @@ class TestRunner(base_test_runner.BaseTestRunner):
     self.screenshot_failures = options.screenshot_failures
     self.wait_for_debugger = options.wait_for_debugger
     self.disable_assertions = options.disable_assertions
-    self.coverage = coverage
     self.test_pkg = test_pkg
     self.ports_to_forward = ports_to_forward
-    self.is_uiautomator_test = is_uiautomator_test
-    if self.is_uiautomator_test:
-      self.package_name = options.package_name
-    else:
-      self.install_apk = options.install_apk
-
+    self.install_apk = options.install_apk
     self.forwarder = None
 
-    if self.coverage:
-      if os.path.exists(TestRunner._COVERAGE_MERGED_FILENAME):
-        os.remove(TestRunner._COVERAGE_MERGED_FILENAME)
-      if not os.path.exists(TestRunner._COVERAGE_META_INFO_PATH):
-        raise Exception('FATAL ERROR in ' + sys.argv[0] +
-                        ' : Coverage meta info [' +
-                        TestRunner._COVERAGE_META_INFO_PATH +
-                        '] does not exist.')
-      if (not TestRunner._COVERAGE_WEB_ROOT_DIR or
-          not os.path.exists(TestRunner._COVERAGE_WEB_ROOT_DIR)):
-        raise Exception('FATAL ERROR in ' + sys.argv[0] +
-                        ' : Path specified in $EMMA_WEB_ROOTDIR [' +
-                        TestRunner._COVERAGE_WEB_ROOT_DIR +
-                        '] does not exist.')
-
-  def CopyTestFilesOnce(self):
-    """Pushes the test data files to the device. Installs the apk if opted."""
+  #override
+  def PushDependencies(self):
+    # TODO(frankf): Implement a general approach for copying/installing
+    # once across test runners.
     if TestRunner._DEVICE_HAS_TEST_FILES.get(self.device, False):
       logging.warning('Already copied test files to device %s, skipping.',
                       self.device)
       return
+
+    test_data = _GetDataFilesForTestSuite(self.test_pkg.GetApkName())
+    if test_data:
+      # Make sure SD card is ready.
+      self.adb.WaitForSdCardReady(20)
+      for data in test_data:
+        self.CopyTestData([data], self.adb.GetExternalStorage())
+
+    # TODO(frankf): Specify test data in this file as opposed to passing
+    # as command-line.
     for dest_host_pair in self.test_data:
       dst_src = dest_host_pair.split(':',1)
       dst_layer = dst_src[0]
@@ -121,71 +113,13 @@ class TestRunner(base_test_runner.BaseTestRunner):
         self.adb.PushIfNeeded(host_test_files_path,
                               self.adb.GetExternalStorage() + '/' +
                               TestRunner._DEVICE_DATA_DIR + '/' + dst_layer)
-    if self.is_uiautomator_test:
+    if self.install_apk:
       self.test_pkg.Install(self.adb)
-    elif self.install_apk:
-      self.test_pkg.Install(self.adb)
-
     self.tool.CopyFiles()
     TestRunner._DEVICE_HAS_TEST_FILES[self.device] = True
 
-  def SaveCoverageData(self, test):
-    """Saves the Emma coverage data before it's overwritten by the next test.
-
-    Args:
-      test: the test whose coverage data is collected.
-    """
-    if not self.coverage:
-      return
-    if not self.adb.Adb().Pull(TestRunner._COVERAGE_RESULT_PATH,
-                               constants.CHROME_DIR):
-      logging.error('ERROR: Unable to find file ' +
-                    TestRunner._COVERAGE_RESULT_PATH +
-                    ' on the device for test ' + test)
-    pulled_coverage_file = os.path.join(constants.CHROME_DIR,
-                                        TestRunner._COVERAGE_FILENAME)
-    if os.path.exists(TestRunner._COVERAGE_MERGED_FILENAME):
-      cmd = ['java', '-classpath', TestRunner._EMMA_JAR, 'emma', 'merge',
-             '-in', pulled_coverage_file,
-             '-in', TestRunner._COVERAGE_MERGED_FILENAME,
-             '-out', TestRunner._COVERAGE_MERGED_FILENAME]
-      cmd_helper.RunCmd(cmd)
-    else:
-      shutil.copy(pulled_coverage_file,
-                  TestRunner._COVERAGE_MERGED_FILENAME)
-    os.remove(pulled_coverage_file)
-
-  def GenerateCoverageReportIfNeeded(self):
-    """Uses the Emma to generate a coverage report and a html page."""
-    if not self.coverage:
-      return
-    cmd = ['java', '-classpath', TestRunner._EMMA_JAR,
-           'emma', 'report', '-r', 'html',
-           '-in', TestRunner._COVERAGE_MERGED_FILENAME,
-           '-in', TestRunner._COVERAGE_META_INFO_PATH]
-    cmd_helper.RunCmd(cmd)
-    new_dir = os.path.join(TestRunner._COVERAGE_WEB_ROOT_DIR,
-                           time.strftime('Coverage_for_%Y_%m_%d_%a_%H:%M'))
-    shutil.copytree('coverage', new_dir)
-
-    latest_dir = os.path.join(TestRunner._COVERAGE_WEB_ROOT_DIR,
-                              'Latest_Coverage_Run')
-    if os.path.exists(latest_dir):
-      shutil.rmtree(latest_dir)
-    os.mkdir(latest_dir)
-    webserver_new_index = os.path.join(new_dir, 'index.html')
-    webserver_new_files = os.path.join(new_dir, '_files')
-    webserver_latest_index = os.path.join(latest_dir, 'index.html')
-    webserver_latest_files = os.path.join(latest_dir, '_files')
-    # Setup new softlinks to last result.
-    os.symlink(webserver_new_index, webserver_latest_index)
-    os.symlink(webserver_new_files, webserver_latest_files)
-    cmd_helper.RunCmd(['chmod', '755', '-R', latest_dir, new_dir])
-
   def _GetInstrumentationArgs(self):
     ret = {}
-    if self.coverage:
-      ret['coverage'] = 'true'
     if self.wait_for_debugger:
       ret['debug'] = 'true'
     return ret
@@ -206,7 +140,6 @@ class TestRunner(base_test_runner.BaseTestRunner):
       if self.adb.SetJavaAssertsEnabled(enable=not self.disable_assertions):
         self.adb.Reboot(full_reboot=False)
 
-    self.CopyTestFilesOnce()
     # We give different default value to launch HTTP server based on shard index
     # because it may have race condition when multiple processes are trying to
     # launch lighttpd with same port at same time.
@@ -225,7 +158,6 @@ class TestRunner(base_test_runner.BaseTestRunner):
     """Cleans up the test harness and saves outstanding data from test run."""
     if self.forwarder:
       self.forwarder.Close()
-    self.GenerateCoverageReportIfNeeded()
     super(TestRunner, self).TearDown()
 
   def TestSetup(self, test):
@@ -267,9 +199,8 @@ class TestRunner(base_test_runner.BaseTestRunner):
   def TestTeardown(self, test, raw_result):
     """Cleans up the test harness after running a particular test.
 
-    Depending on the options of this TestRunner this might handle coverage
-    tracking or performance tracking.  This method will only be called if the
-    test passed.
+    Depending on the options of this TestRunner this might handle performance
+    tracking.  This method will only be called if the test passed.
 
     Args:
       test: The name of the test that was just run.
@@ -283,7 +214,6 @@ class TestRunner(base_test_runner.BaseTestRunner):
       return
 
     self.TearDownPerfMonitoring(test)
-    self.SaveCoverageData(test)
 
   def TearDownPerfMonitoring(self, test):
     """Cleans up performance monitoring if the specified test required it.
@@ -373,7 +303,12 @@ class TestRunner(base_test_runner.BaseTestRunner):
       return 3 * 60
     return 1 * 60
 
-  #override.
+  def _RunTest(self, test, timeout):
+    return self.adb.RunInstrumentationTest(
+        test, self.test_pkg.GetPackageName(),
+        self._GetInstrumentationArgs(), timeout)
+
+  #override
   def RunTest(self, test):
     raw_result = None
     start_date_ms = None
@@ -384,21 +319,7 @@ class TestRunner(base_test_runner.BaseTestRunner):
     try:
       self.TestSetup(test)
       start_date_ms = int(time.time()) * 1000
-
-      if self.is_uiautomator_test:
-        self.adb.ClearApplicationState(self.package_name)
-        # TODO(frankf): Stop-gap solution. Should use annotations.
-        if 'FirstRun' in test:
-          self.flags.RemoveFlags(['--disable-fre'])
-        else:
-          self.flags.AddFlags(['--disable-fre'])
-        raw_result = self.adb.RunUIAutomatorTest(
-            test, self.test_pkg.GetPackageName(), timeout)
-      else:
-        raw_result = self.adb.RunInstrumentationTest(
-            test, self.test_pkg.GetPackageName(),
-            self._GetInstrumentationArgs(), timeout)
-
+      raw_result = self._RunTest(test, timeout)
       duration_ms = int(time.time()) * 1000 - start_date_ms
       status_code = raw_result.GetStatusCode()
       if status_code:

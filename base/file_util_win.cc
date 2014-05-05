@@ -28,6 +28,18 @@
 
 using base::FilePath;
 
+namespace base {
+
+FilePath MakeAbsoluteFilePath(const FilePath& input) {
+  base::ThreadRestrictions::AssertIOAllowed();
+  wchar_t file_path[MAX_PATH];
+  if (!_wfullpath(file_path, input.value().c_str(), MAX_PATH))
+    return FilePath();
+  return FilePath(file_path);
+}
+
+}  // namespace base
+
 namespace file_util {
 
 namespace {
@@ -36,45 +48,6 @@ const DWORD kFileShareAll =
     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
 }  // namespace
-
-bool AbsolutePath(FilePath* path) {
-  base::ThreadRestrictions::AssertIOAllowed();
-  wchar_t file_path_buf[MAX_PATH];
-  if (!_wfullpath(file_path_buf, path->value().c_str(), MAX_PATH))
-    return false;
-  *path = FilePath(file_path_buf);
-  return true;
-}
-
-int CountFilesCreatedAfter(const FilePath& path,
-                           const base::Time& comparison_time) {
-  base::ThreadRestrictions::AssertIOAllowed();
-
-  int file_count = 0;
-  FILETIME comparison_filetime(comparison_time.ToFileTime());
-
-  WIN32_FIND_DATA find_file_data;
-  // All files in given dir
-  std::wstring filename_spec = path.Append(L"*").value();
-  HANDLE find_handle = FindFirstFile(filename_spec.c_str(), &find_file_data);
-  if (find_handle != INVALID_HANDLE_VALUE) {
-    do {
-      // Don't count current or parent directories.
-      if ((wcscmp(find_file_data.cFileName, L"..") == 0) ||
-          (wcscmp(find_file_data.cFileName, L".") == 0))
-        continue;
-
-      long result = CompareFileTime(&find_file_data.ftCreationTime,  // NOLINT
-                                    &comparison_filetime);
-      // File was created after or on comparison time
-      if ((result == 1) || (result == 0))
-        ++file_count;
-    } while (FindNextFile(find_handle,  &find_file_data));
-    FindClose(find_handle);
-  }
-
-  return file_count;
-}
 
 bool Delete(const FilePath& path, bool recursive) {
   base::ThreadRestrictions::AssertIOAllowed();
@@ -175,7 +148,9 @@ bool MoveUnsafe(const FilePath& from_path, const FilePath& to_path) {
   return ret;
 }
 
-bool ReplaceFile(const FilePath& from_path, const FilePath& to_path) {
+bool ReplaceFileAndGetError(const FilePath& from_path,
+                            const FilePath& to_path,
+                            base::PlatformFileError* error) {
   base::ThreadRestrictions::AssertIOAllowed();
   // Try a simple move first.  It will only succeed when |to_path| doesn't
   // already exist.
@@ -189,6 +164,8 @@ bool ReplaceFile(const FilePath& from_path, const FilePath& to_path) {
                     REPLACEFILE_IGNORE_MERGE_ERRORS, NULL, NULL)) {
     return true;
   }
+  if (error)
+    *error = base::LastErrorToPlatformFileError(GetLastError());
   return false;
 }
 
@@ -753,15 +730,6 @@ FilePath FileEnumerator::Next() {
   }
 
   return FilePath();
-}
-
-bool HasFileBeenModifiedSince(const FileEnumerator::FindInfo& find_info,
-                              const base::Time& cutoff_time) {
-  base::ThreadRestrictions::AssertIOAllowed();
-  FILETIME file_time = cutoff_time.ToFileTime();
-  long result = CompareFileTime(&find_info.ftLastWriteTime,  // NOLINT
-                                &file_time);
-  return result == 1 || result == 0;
 }
 
 bool NormalizeFilePath(const FilePath& path, FilePath* real_path) {

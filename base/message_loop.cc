@@ -39,15 +39,13 @@
 #include <gdk/gdkx.h>
 #endif
 
-using base::PendingTask;
-using base::TimeDelta;
-using base::TimeTicks;
+namespace base {
 
 namespace {
 
 // A lazily created thread local storage for quick access to a thread's message
 // loop, if one exists.  This should be safe and free of static constructors.
-base::LazyInstance<base::ThreadLocalPointer<MessageLoop> > lazy_tls_ptr =
+LazyInstance<base::ThreadLocalPointer<MessageLoop> > lazy_tls_ptr =
     LAZY_INSTANCE_INITIALIZER;
 
 // Logical events for Histogram profiling. Run with -message-loop-histogrammer
@@ -76,7 +74,7 @@ const int kNumberOfDistinctMessagesDisplayed = 1100;
 // in the pair (i.e., the quoted string) when printing out a histogram.
 #define VALUE_TO_NUMBER_AND_NAME(name) {name, #name},
 
-const base::LinearHistogram::DescriptionPair event_descriptions_[] = {
+const LinearHistogram::DescriptionPair event_descriptions_[] = {
   // Provide some pretty print capability in our histogram for our internal
   // messages.
 
@@ -149,30 +147,30 @@ MessageLoop::MessageLoop(Type type)
   DCHECK(!current()) << "should only have one message loop per thread";
   lazy_tls_ptr.Pointer()->Set(this);
 
-  message_loop_proxy_ = new base::MessageLoopProxyImpl();
+  message_loop_proxy_ = new MessageLoopProxyImpl();
   thread_task_runner_handle_.reset(
-      new base::ThreadTaskRunnerHandle(message_loop_proxy_));
+      new ThreadTaskRunnerHandle(message_loop_proxy_));
 
 // TODO(rvargas): Get rid of the OS guards.
 #if defined(OS_WIN)
-#define MESSAGE_PUMP_UI new base::MessagePumpForUI()
-#define MESSAGE_PUMP_IO new base::MessagePumpForIO()
+#define MESSAGE_PUMP_UI new MessagePumpForUI()
+#define MESSAGE_PUMP_IO new MessagePumpForIO()
 #elif defined(OS_IOS)
-#define MESSAGE_PUMP_UI base::MessagePumpMac::Create()
-#define MESSAGE_PUMP_IO new base::MessagePumpIOSForIO()
+#define MESSAGE_PUMP_UI MessagePumpMac::Create()
+#define MESSAGE_PUMP_IO new MessagePumpIOSForIO()
 #elif defined(OS_MACOSX)
-#define MESSAGE_PUMP_UI base::MessagePumpMac::Create()
-#define MESSAGE_PUMP_IO new base::MessagePumpLibevent()
+#define MESSAGE_PUMP_UI MessagePumpMac::Create()
+#define MESSAGE_PUMP_IO new MessagePumpLibevent()
 #elif defined(OS_NACL)
 // Currently NaCl doesn't have a UI MessageLoop.
 // TODO(abarth): Figure out if we need this.
 #define MESSAGE_PUMP_UI NULL
 // ipc_channel_nacl.cc uses a worker thread to do socket reads currently, and
 // doesn't require extra support for watching file descriptors.
-#define MESSAGE_PUMP_IO new base::MessagePumpDefault();
+#define MESSAGE_PUMP_IO new MessagePumpDefault();
 #elif defined(OS_POSIX)  // POSIX but not MACOSX.
-#define MESSAGE_PUMP_UI new base::MessagePumpForUI()
-#define MESSAGE_PUMP_IO new base::MessagePumpLibevent()
+#define MESSAGE_PUMP_UI new MessagePumpForUI()
+#define MESSAGE_PUMP_IO new MessagePumpLibevent()
 #else
 #error Not implemented
 #endif
@@ -186,7 +184,7 @@ MessageLoop::MessageLoop(Type type)
     pump_ = MESSAGE_PUMP_IO;
   } else {
     DCHECK_EQ(TYPE_DEFAULT, type_);
-    pump_ = new base::MessagePumpDefault();
+    pump_ = new MessagePumpDefault();
   }
 }
 
@@ -219,7 +217,7 @@ MessageLoop::~MessageLoop() {
   thread_task_runner_handle_.reset();
 
   // Tell the message_loop_proxy that we are dying.
-  static_cast<base::MessageLoopProxyImpl*>(message_loop_proxy_.get())->
+  static_cast<MessageLoopProxyImpl*>(message_loop_proxy_.get())->
       WillDestroyCurrentMessageLoop();
   message_loop_proxy_ = NULL;
 
@@ -231,8 +229,8 @@ MessageLoop::~MessageLoop() {
   // Doing this is not-critical, it is mainly to make sure we track
   // the high resolution timer activations properly in our unit tests.
   if (!high_resolution_timer_expiration_.is_null()) {
-    base::Time::ActivateHighResolutionTimer(false);
-    high_resolution_timer_expiration_ = base::TimeTicks();
+    Time::ActivateHighResolutionTimer(false);
+    high_resolution_timer_expiration_ = TimeTicks();
   }
 #endif
 }
@@ -272,49 +270,59 @@ void MessageLoop::RemoveDestructionObserver(
 }
 
 void MessageLoop::PostTask(
-    const tracked_objects::Location& from_here, const base::Closure& task) {
+    const tracked_objects::Location& from_here,
+    const Closure& task) {
   DCHECK(!task.is_null()) << from_here.ToString();
   PendingTask pending_task(
       from_here, task, CalculateDelayedRuntime(TimeDelta()), true);
-  AddToIncomingQueue(&pending_task);
+  AddToIncomingQueue(&pending_task, false);
+}
+
+bool MessageLoop::TryPostTask(
+    const tracked_objects::Location& from_here,
+    const Closure& task) {
+  DCHECK(!task.is_null()) << from_here.ToString();
+  PendingTask pending_task(
+      from_here, task, CalculateDelayedRuntime(TimeDelta()), true);
+  return AddToIncomingQueue(&pending_task, true);
 }
 
 void MessageLoop::PostDelayedTask(
     const tracked_objects::Location& from_here,
-    const base::Closure& task,
+    const Closure& task,
     TimeDelta delay) {
   DCHECK(!task.is_null()) << from_here.ToString();
   PendingTask pending_task(
       from_here, task, CalculateDelayedRuntime(delay), true);
-  AddToIncomingQueue(&pending_task);
+  AddToIncomingQueue(&pending_task, false);
 }
 
 void MessageLoop::PostNonNestableTask(
     const tracked_objects::Location& from_here,
-    const base::Closure& task) {
+    const Closure& task) {
   DCHECK(!task.is_null()) << from_here.ToString();
   PendingTask pending_task(
       from_here, task, CalculateDelayedRuntime(TimeDelta()), false);
-  AddToIncomingQueue(&pending_task);
+  AddToIncomingQueue(&pending_task, false);
 }
 
 void MessageLoop::PostNonNestableDelayedTask(
     const tracked_objects::Location& from_here,
-    const base::Closure& task,
+    const Closure& task,
     TimeDelta delay) {
   DCHECK(!task.is_null()) << from_here.ToString();
   PendingTask pending_task(
       from_here, task, CalculateDelayedRuntime(delay), false);
-  AddToIncomingQueue(&pending_task);
+  AddToIncomingQueue(&pending_task, false);
 }
 
 void MessageLoop::Run() {
-  base::RunLoop run_loop;
+  RunLoop run_loop;
   run_loop.Run();
 }
 
 void MessageLoop::RunUntilIdle() {
-  base::RunLoop run_loop;
+  RunLoop run_loop;
   run_loop.RunUntilIdle();
 }
 
@@ -345,8 +353,8 @@ static void QuitCurrentWhenIdle() {
 }
 
 // static
-base::Closure MessageLoop::QuitWhenIdleClosure() {
-  return base::Bind(&QuitCurrentWhenIdle);
+Closure MessageLoop::QuitWhenIdleClosure() {
+  return Bind(&QuitCurrentWhenIdle);
 }
 
 void MessageLoop::SetNestableTasksAllowed(bool allowed) {
@@ -379,7 +387,7 @@ void MessageLoop::RemoveTaskObserver(TaskObserver* task_observer) {
 
 void MessageLoop::AssertIdle() const {
   // We only check |incoming_queue_|, since we don't want to lock |work_queue_|.
-  base::AutoLock lock(incoming_queue_lock_);
+  AutoLock lock(incoming_queue_lock_);
   DCHECK(incoming_queue_.empty());
 }
 
@@ -424,7 +432,7 @@ void MessageLoop::RunInternal() {
 
 #if !defined(OS_MACOSX) && !defined(OS_ANDROID)
   if (run_loop_->dispatcher_ && type() == TYPE_UI) {
-    static_cast<base::MessagePumpForUI*>(pump_.get())->
+    static_cast<MessagePumpForUI*>(pump_.get())->
         RunWithDispatcher(this, run_loop_->dispatcher_);
     return;
   }
@@ -464,7 +472,7 @@ void MessageLoop::RunTask(const PendingTask& pending_task) {
   // Look at a memory dump of the stack.
   const void* program_counter =
       pending_task.posted_from.program_counter();
-  base::debug::Alias(&program_counter);
+  debug::Alias(&program_counter);
 
   HistogramEvent(kTaskRunEvent);
 
@@ -512,7 +520,7 @@ void MessageLoop::ReloadWorkQueue() {
 
   // Acquire all we can from the inter-thread queue with one lock acquisition.
   {
-    base::AutoLock lock(incoming_queue_lock_);
+    AutoLock lock(incoming_queue_lock_);
     if (incoming_queue_.empty())
       return;
     incoming_queue_.Swap(&work_queue_);  // Constant time
@@ -562,9 +570,9 @@ TimeTicks MessageLoop::CalculateDelayedRuntime(TimeDelta delay) {
       // res timers for any timer which is within 2x of the granularity.
       // This is a tradeoff between accuracy and power management.
       bool needs_high_res_timers = delay.InMilliseconds() <
-          (2 * base::Time::kMinLowResolutionThresholdMs);
+          (2 * Time::kMinLowResolutionThresholdMs);
       if (needs_high_res_timers) {
-        if (base::Time::ActivateHighResolutionTimer(true)) {
+        if (Time::ActivateHighResolutionTimer(true)) {
           high_resolution_timer_expiration_ = TimeTicks::Now() +
               TimeDelta::FromMilliseconds(kHighResolutionTimerModeLeaseTimeMs);
         }
@@ -578,7 +586,7 @@ TimeTicks MessageLoop::CalculateDelayedRuntime(TimeDelta delay) {
 #if defined(OS_WIN)
   if (!high_resolution_timer_expiration_.is_null()) {
     if (TimeTicks::Now() > high_resolution_timer_expiration_) {
-      base::Time::ActivateHighResolutionTimer(false);
+      Time::ActivateHighResolutionTimer(false);
       high_resolution_timer_expiration_ = TimeTicks();
     }
   }
@@ -588,15 +596,23 @@ TimeTicks MessageLoop::CalculateDelayedRuntime(TimeDelta delay) {
 }
 
 // Possibly called on a background thread!
-void MessageLoop::AddToIncomingQueue(PendingTask* pending_task) {
+bool MessageLoop::AddToIncomingQueue(PendingTask* pending_task,
+                                     bool use_try_lock) {
   // Warning: Don't try to short-circuit, and handle this thread's tasks more
   // directly, as it could starve handling of foreign threads.  Put every task
   // into this queue.
 
-  scoped_refptr<base::MessagePump> pump;
+  scoped_refptr<MessagePump> pump;
   {
-    base::AutoLock locked(incoming_queue_lock_);
-
+    if (use_try_lock) {
+      if (!incoming_queue_lock_.Try()) {
+        pending_task->task.Reset();
+        return false;
+      }
+    } else {
+      incoming_queue_lock_.Acquire();
+    }
+    AutoLock locked(incoming_queue_lock_, AutoLock::AlreadyAcquired());
     // Initialize the sequence number. The sequence number is used for delayed
     // tasks (to faciliate FIFO sorting when two tasks have the same
     // delayed_run_time value) and for identifying the task in about:tracing.
@@ -609,7 +625,7 @@ void MessageLoop::AddToIncomingQueue(PendingTask* pending_task) {
     incoming_queue_.push(*pending_task);
     pending_task->task.Reset();
     if (!was_empty)
-      return;  // Someone else should have started the sub-pump.
+      return true;  // Someone else should have started the sub-pump.
 
     pump = pump_;
   }
@@ -619,6 +635,7 @@ void MessageLoop::AddToIncomingQueue(PendingTask* pending_task) {
   // ScheduleWork outside of incoming_queue_lock_.
 
   pump->ScheduleWork();
+  return true;
 }
 
 //------------------------------------------------------------------------------
@@ -628,9 +645,9 @@ void MessageLoop::AddToIncomingQueue(PendingTask* pending_task) {
 void MessageLoop::StartHistogrammer() {
 #if !defined(OS_NACL)  // NaCl build has no metrics code.
   if (enable_histogrammer_ && !message_histogram_
-      && base::StatisticsRecorder::IsActive()) {
+      && StatisticsRecorder::IsActive()) {
     DCHECK(!thread_name_.empty());
-    message_histogram_ = base::LinearHistogram::FactoryGetWithRangeDescription(
+    message_histogram_ = LinearHistogram::FactoryGetWithRangeDescription(
         "MsgLoop:" + thread_name_,
         kLeastNonZeroMessageId, kMaxMessageId,
         kNumberOfDistinctMessagesDisplayed,
@@ -722,14 +739,14 @@ bool MessageLoop::DoIdleWork() {
 void MessageLoop::DeleteSoonInternal(const tracked_objects::Location& from_here,
                                      void(*deleter)(const void*),
                                      const void* object) {
-  PostNonNestableTask(from_here, base::Bind(deleter, object));
+  PostNonNestableTask(from_here, Bind(deleter, object));
 }
 
 void MessageLoop::ReleaseSoonInternal(
     const tracked_objects::Location& from_here,
     void(*releaser)(const void*),
     const void* object) {
-  PostNonNestableTask(from_here, base::Bind(releaser, object));
+  PostNonNestableTask(from_here, Bind(releaser, object));
 }
 
 //------------------------------------------------------------------------------
@@ -744,13 +761,13 @@ void MessageLoopForUI::DidProcessMessage(const MSG& message) {
 #if defined(OS_ANDROID)
 void MessageLoopForUI::Start() {
   // No Histogram support for UI message loop as it is managed by Java side
-  static_cast<base::MessagePumpForUI*>(pump_.get())->Start(this);
+  static_cast<MessagePumpForUI*>(pump_.get())->Start(this);
 }
 #endif
 
 #if defined(OS_IOS)
 void MessageLoopForUI::Attach() {
-  static_cast<base::MessagePumpUIApplication*>(pump_.get())->Attach(this);
+  static_cast<MessagePumpUIApplication*>(pump_.get())->Attach(this);
 }
 #endif
 
@@ -813,3 +830,5 @@ bool MessageLoopForIO::WatchFileDescriptor(int fd,
 }
 
 #endif
+
+}  // namespace base
