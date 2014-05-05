@@ -10,16 +10,20 @@
 
 #include "base/basictypes.h"
 #include "base/cpu.h"
+#include "third_party/skia/include/core/SkSize.h"
 #include "third_party/skia/include/core/SkTypes.h"
 
-#if defined(ARCH_CPU_X86_FAMILY)
-// TODO(hclam): SSE2 is disabled on Linux 32-bits because GCC requires -msse2.
-//              We should refactor the code in .cc and enable this.
-#if defined(ARCH_CPU_X86_64) || defined(OS_MACOSX) || defined(COMPILER_MSVC)
+// We can build SSE2 optimized versions for all x86 CPUs
+// except when building for the IOS emulator.
+#if defined(ARCH_CPU_X86_FAMILY) && !defined(OS_IOS)
 #define SIMD_SSE2 1
-#endif
+#define SIMD_PADDING 8  // 8 * int16
 #endif
 
+#if defined (ARCH_CPU_MIPS_FAMILY) && \
+    defined(__mips_dsp) && (__mips_dsp_rev >= 2)
+#define SIMD_MIPS_DSPR2 1
+#endif
 // avoid confusion with Mac OS X's math library (Carbon)
 #if defined(__APPLE__)
 #undef FloatToFixed
@@ -100,22 +104,35 @@ class ConvolutionFilter1D {
                                      int* filter_length) const {
     const FilterInstance& filter = filters_[value_offset];
     *filter_offset = filter.offset;
-    *filter_length = filter.length;
-    if (filter.length == 0) {
+    *filter_length = filter.trimmed_length;
+    if (filter.trimmed_length == 0) {
       return NULL;
     }
     return &filter_values_[filter.data_location];
   }
 
+  // Retrieves the filter for the offset 0, presumed to be the one and only.
+  // The offset and length of the filter values are put into the corresponding
+  // out arguments (see AddFilter). Note that |filter_legth| and
+  // |specified_filter_length| may be different if leading/trailing zeros of the
+  // original floating point form were clipped.
+  // There will be |filter_length| values in the return array.
+  // Returns NULL if the filter is 0-length (for instance when all floating
+  // point values passed to AddFilter were clipped to 0).
+  SK_API const Fixed* GetSingleFilter(int* specified_filter_length,
+                                      int* filter_offset,
+                                      int* filter_length) const;
 
-  inline void PaddingForSIMD(int padding_count) {
+  inline void PaddingForSIMD() {
     // Padding |padding_count| of more dummy coefficients after the coefficients
     // of last filter to prevent SIMD instructions which load 8 or 16 bytes
     // together to access invalid memory areas. We are not trying to align the
     // coefficients right now due to the opaqueness of <vector> implementation.
     // This has to be done after all |AddFilter| calls.
-    for (int i = 0; i < padding_count; ++i)
+#ifdef SIMD_PADDING
+    for (int i = 0; i < SIMD_PADDING; ++i)
       filter_values_.push_back(static_cast<Fixed>(0));
+#endif
   }
 
  private:
@@ -127,6 +144,11 @@ class ConvolutionFilter1D {
     int offset;
 
     // Number of values in this filter instance.
+    int trimmed_length;
+
+    // Filter length as specified. Note that this may be different from
+    // 'trimmed_length' if leading/trailing zeros of the original floating
+    // point form were clipped differently on each tail.
     int length;
   };
 
@@ -167,7 +189,47 @@ SK_API void BGRAConvolve2D(const unsigned char* source_data,
                            const ConvolutionFilter1D& yfilter,
                            int output_byte_row_stride,
                            unsigned char* output,
-                           bool use_sse2);
+                           bool use_simd_if_possible);
+
+// Does a 1D convolution of the given source image along the X dimension on
+// a single channel of the bitmap.
+//
+// The function uses the same convolution kernel for each pixel. That kernel
+// must be added to |filter| at offset 0. This is a most straightforward
+// implementation of convolution, intended chiefly for development purposes.
+SK_API void SingleChannelConvolveX1D(const unsigned char* source_data,
+                                     int source_byte_row_stride,
+                                     int input_channel_index,
+                                     int input_channel_count,
+                                     const ConvolutionFilter1D& filter,
+                                     const SkISize& image_size,
+                                     unsigned char* output,
+                                     int output_byte_row_stride,
+                                     int output_channel_index,
+                                     int output_channel_count,
+                                     bool absolute_values);
+
+// Does a 1D convolution of the given source image along the Y dimension on
+// a single channel of the bitmap.
+SK_API void SingleChannelConvolveY1D(const unsigned char* source_data,
+                                     int source_byte_row_stride,
+                                     int input_channel_index,
+                                     int input_channel_count,
+                                     const ConvolutionFilter1D& filter,
+                                     const SkISize& image_size,
+                                     unsigned char* output,
+                                     int output_byte_row_stride,
+                                     int output_channel_index,
+                                     int output_channel_count,
+                                     bool absolute_values);
+
+// Set up the |filter| instance with a gaussian kernel. |kernel_sigma| is the
+// parameter of gaussian. If |derivative| is true, the kernel will be that of
+// the first derivative. Intended for use with the two routines above.
+SK_API void SetUpGaussianConvolutionKernel(ConvolutionFilter1D* filter,
+                                           float kernel_sigma,
+                                           bool derivative);
+
 }  // namespace skia
 
 #endif  // SKIA_EXT_CONVOLVER_H_

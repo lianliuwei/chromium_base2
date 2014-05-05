@@ -14,12 +14,6 @@
           }, {
             'skia_support_gpu': 1,
           }],
-
-          ['inside_chromium_build==0', {
-            'webkit_src_dir': '<(DEPTH)/../../..',
-          },{
-            'webkit_src_dir': '<(DEPTH)/third_party/WebKit',
-          }],
         ],
 
         'optimize': 'max',
@@ -37,12 +31,17 @@
       'sources': [
         # this should likely be moved into src/utils in skia
         '../third_party/skia/src/core/SkFlate.cpp',
+        # We don't want to add this to Skia's core.gypi since it is
+        # Android only. Include it here and remove it for everyone
+        # but Android later.
+        '../third_party/skia/src/core/SkPaintOptionsAndroid.cpp',
 
-        '../third_party/skia/src/images/bmpdecoderhelper.cpp',
-        '../third_party/skia/src/images/bmpdecoderhelper.h',
+        #'../third_party/skia/src/images/bmpdecoderhelper.cpp',
+        #'../third_party/skia/src/images/bmpdecoderhelper.h',
         #'../third_party/skia/src/images/SkFDStream.cpp',
-        '../third_party/skia/src/images/SkImageDecoder.cpp',
-        '../third_party/skia/src/images/SkImageDecoder_Factory.cpp',
+        #'../third_party/skia/src/images/SkImageDecoder.cpp',
+        #'../third_party/skia/src/images/SkImageDecoder_FactoryDefault.cpp',
+        #'../third_party/skia/src/images/SkImageDecoder_FactoryRegistrar.cpp',
         #'../third_party/skia/src/images/SkImageDecoder_fpdfemb.cpp',
         #'../third_party/skia/src/images/SkImageDecoder_libbmp.cpp',
         #'../third_party/skia/src/images/SkImageDecoder_libgif.cpp',
@@ -76,6 +75,8 @@
         '../third_party/skia/src/pdf/SkPDFGraphicState.h',
         '../third_party/skia/src/pdf/SkPDFImage.cpp',
         '../third_party/skia/src/pdf/SkPDFImage.h',
+        '../third_party/skia/src/pdf/SkPDFImageStream.cpp',
+        '../third_party/skia/src/pdf/SkPDFImageStream.h',
         '../third_party/skia/src/pdf/SkPDFPage.cpp',
         '../third_party/skia/src/pdf/SkPDFPage.h',
         '../third_party/skia/src/pdf/SkPDFShader.cpp',
@@ -91,12 +92,12 @@
         #'../third_party/skia/src/ports/SkPurgeableMemoryBlock_mac.cpp',
         '../third_party/skia/src/ports/SkPurgeableMemoryBlock_none.cpp',
 
-        '../third_party/skia/src/ports/FontHostConfiguration_android.cpp',
+        '../third_party/skia/src/ports/SkFontConfigInterface_android.cpp',
         #'../third_party/skia/src/ports/SkFontHost_FONTPATH.cpp',
         '../third_party/skia/src/ports/SkFontHost_FreeType.cpp',
         '../third_party/skia/src/ports/SkFontHost_FreeType_common.cpp',
         '../third_party/skia/src/ports/SkFontHost_FreeType_common.h',
-        '../third_party/skia/src/ports/SkFontHost_android.cpp',
+        '../third_party/skia/src/ports/SkFontConfigParser_android.cpp',
         #'../third_party/skia/src/ports/SkFontHost_ascender.cpp',
         #'../third_party/skia/src/ports/SkFontHost_linux.cpp',
         '../third_party/skia/src/ports/SkFontHost_mac.cpp',
@@ -143,8 +144,8 @@
 
         '../third_party/skia/include/ports/SkTypeface_win.h',
 
-        '../third_party/skia/include/images/SkImageDecoder.h',
-        '../third_party/skia/include/images/SkImageEncoder.h',
+        #'../third_party/skia/include/images/SkImageDecoder.h',
+        #'../third_party/skia/include/images/SkImageEncoder.h',
         '../third_party/skia/include/images/SkImageRef.h',
         '../third_party/skia/include/images/SkImageRef_GlobalPool.h',
         '../third_party/skia/include/images/SkMovie.h',
@@ -181,6 +182,8 @@
         'ext/platform_device_linux.cc',
         'ext/platform_device_mac.cc',
         'ext/platform_device_win.cc',
+        'ext/recursive_gaussian_convolution.cc',
+        'ext/recursive_gaussian_convolution.h',
         'ext/refptr.h',
         'ext/SkMemory_new_handler.cpp',
         'ext/skia_trace_shim.h',
@@ -207,6 +210,7 @@
         '../third_party/skia/include/effects',
         '../third_party/skia/include/images',
         '../third_party/skia/include/lazy',
+        '../third_party/skia/include/pathops',
         '../third_party/skia/include/pdf',
         '../third_party/skia/include/pipe',
         '../third_party/skia/include/ports',
@@ -240,6 +244,8 @@
         # Disable this check because it is too strict for some Chromium-specific
         # subclasses of SkPixelRef. See bug: crbug.com/171776.
         'SK_DISABLE_PIXELREF_LOCKCOUNT_BALANCE_CHECK',
+
+        'IGNORE_ROT_AA_RECT_OPT',
       ],
       'sources!': [
         '../third_party/skia/include/core/SkTypes.h',
@@ -319,6 +325,9 @@
           'sources/': [
             ['exclude', '_android\\.(cc|cpp)$'],
           ],
+          'sources!': [
+            '../third_party/skia/src/core/SkPaintOptionsAndroid.cpp',
+          ],
           'defines': [
             'SK_DEFAULT_FONT_CACHE_LIMIT=(20*1024*1024)',
           ],
@@ -328,7 +337,7 @@
             ['exclude', '_ios\\.(cc|cpp|mm?)$'],
           ],
           'dependencies': [
-            '<(webkit_src_dir)/Source/WebKit/chromium/skia_webkit.gyp:skia_webkit',
+            '<(DEPTH)/third_party/WebKit/Source/WebKit/chromium/skia_webkit.gyp:skia_webkit',
           ],
         }],
         [ 'OS != "mac"', {
@@ -340,12 +349,7 @@
         [ 'OS != "win"', {
           'sources/': [ ['exclude', '_win\\.(cc|cpp)$'] ],
         }],
-        [ 'armv7 == 1', {
-          'defines': [
-            '__ARM_ARCH__=7',
-          ],
-        }],
-        [ 'armv7 == 1 and arm_neon == 1', {
+        [ 'target_arch == "arm" and arm_version >= 7 and arm_neon == 1', {
           'defines': [
             '__ARM_HAVE_NEON',
           ],
@@ -367,6 +371,7 @@
             '-Wno-unused-function',
           ],
           'sources': [
+            '../third_party/skia/src/fonts/SkFontMgr_fontconfig.cpp',
             '../third_party/skia/src/ports/SkFontHost_fontconfig.cpp',
             '../third_party/skia/src/ports/SkFontConfigInterface_direct.cpp',
           ],
@@ -389,6 +394,9 @@
           'sources/': [ ['exclude', '_gtk\\.(cc|cpp)$'] ],
         }],
         [ 'OS == "android"', {
+          'sources': [
+            '../third_party/skia/src/ports/SkFontHost_fontconfig.cpp',
+          ],
           'sources/': [
             ['exclude', '_linux\\.(cc|cpp)$'],
           ],
@@ -397,7 +405,7 @@
               'defines': [
                 'HAVE_PTHREADS',
                 'OS_ANDROID',
-                'SK_BUILD_FOR_ANDROID_NDK',
+                'SK_BUILD_FOR_ANDROID',
                 # Android devices are typically more memory constrained, so
                 # use a smaller glyph cache.
                 'SK_DEFAULT_FONT_CACHE_LIMIT=(8*1024*1024)',
@@ -555,6 +563,7 @@
           '../third_party/skia/include/pdf',
           '../third_party/skia/include/gpu',
           '../third_party/skia/include/gpu/gl',
+          '../third_party/skia/include/pathops',
           '../third_party/skia/include/pipe',
           '../third_party/skia/include/ports',
           '../third_party/skia/include/utils',
@@ -575,7 +584,7 @@
             ],
             'defines': [
               # Don't use non-NDK available stuff.
-              'SK_BUILD_FOR_ANDROID_NDK',
+              'SK_BUILD_FOR_ANDROID',
             ],
             'conditions': [
               [ '_toolset == "target" and android_webview_build == 0', {
@@ -637,6 +646,7 @@
         '../third_party/skia/include/effects',
         '../third_party/skia/include/images',
         '../third_party/skia/include/lazy',
+        '../third_party/skia/include/pathops',
         '../third_party/skia/include/utils',
         '../third_party/skia/src/core',
       ],
@@ -649,7 +659,7 @@
         }],
         [ 'OS == "android"', {
           'defines': [
-            'SK_BUILD_FOR_ANDROID_NDK',
+            'SK_BUILD_FOR_ANDROID',
           ],
         }],
         [ 'target_arch != "arm" and target_arch != "mipsel"', {
@@ -658,6 +668,7 @@
             '../third_party/skia/src/opts/SkBlitRect_opts_SSE2.cpp',
             '../third_party/skia/src/opts/SkBlitRow_opts_SSE2.cpp',
             '../third_party/skia/src/opts/SkUtils_opts_SSE2.cpp',
+            'ext/convolver_SSE2.cc',
           ],
           'conditions': [
             # x86 Android doesn't support SSSE3 instructions.
@@ -670,12 +681,7 @@
         }],
         [ 'target_arch == "arm"', {
           'conditions': [
-            [ 'armv7 == 1', {
-              'defines': [
-                '__ARM_ARCH__=7',
-              ],
-            }],
-            [ 'armv7 == 1 and arm_neon == 1', {
+            [ 'arm_version >= 7 and arm_neon == 1', {
               'defines': [
                 '__ARM_HAVE_NEON',
               ],
@@ -704,12 +710,12 @@
             '../third_party/skia/src/opts/SkBitmapProcState_opts_arm.cpp',
           ],
         }],
-        [ 'armv7 == 1 and arm_neon == 0', {
+        [ 'target_arch == "arm" and (arm_version < 7 or arm_neon == 0)', {
           'sources': [
             '../third_party/skia/src/opts/memset.arm.S',
         ],
         }],
-        [ 'armv7 == 1 and arm_neon == 1', {
+        [ 'target_arch == "arm" and arm_version >= 7 and arm_neon == 1', {
           'sources': [
             '../third_party/skia/src/opts/memset16_neon.S',
             '../third_party/skia/src/opts/memset32_neon.S',
@@ -720,13 +726,13 @@
             '../third_party/skia/src/opts/SkBlitRow_opts_arm_neon.cpp',
           ],
         }],
-        [ 'target_arch == "arm" and armv7 == 0', {
+        [ 'target_arch == "arm" and arm_version < 6', {
           'sources': [
             '../third_party/skia/src/opts/SkBlitRow_opts_none.cpp',
             '../third_party/skia/src/opts/SkUtils_opts_none.cpp',
           ],
         }],
-        [ 'target_arch == "arm" and armv7 == 1', {
+        [ 'target_arch == "arm" and arm_version >= 6', {
           'sources': [
             '../third_party/skia/src/opts/SkBlitRow_opts_arm.cpp',
             '../third_party/skia/src/opts/SkBlitRow_opts_arm.h',
@@ -741,6 +747,7 @@
             '../third_party/skia/src/opts/SkBitmapProcState_opts_none.cpp',
             '../third_party/skia/src/opts/SkBlitRow_opts_none.cpp',
             '../third_party/skia/src/opts/SkUtils_opts_none.cpp',
+            'ext/convolver_mips_dspr2.cc',
           ],
         }],
       ],
@@ -760,6 +767,7 @@
         'config',
         '../third_party/skia/include/config',
         '../third_party/skia/include/core',
+        '../third_party/skia/include/pathops',
         '../third_party/skia/src/core',
       ],
       'conditions': [
@@ -783,7 +791,7 @@
             ],
           },
         }],
-        [ 'target_arch != "arm"', {
+        [ 'target_arch != "arm" and target_arch != "mipsel"', {
           'sources': [
             '../third_party/skia/src/opts/SkBitmapProcState_opts_SSSE3.cpp',
           ],
@@ -824,6 +832,7 @@
             '../third_party/skia/include/effects',
             '../third_party/skia/include/images',
             '../third_party/skia/include/lazy',
+            '../third_party/skia/include/pathops',
             '../third_party/skia/include/utils',
             '../third_party/skia/src/core',
           ],

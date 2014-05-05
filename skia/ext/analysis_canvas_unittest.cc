@@ -20,56 +20,15 @@ void transparentFill(skia::AnalysisCanvas& canvas) {
 } // namespace
 namespace skia {
 
-class TestPixelRef : public SkPixelRef {
- public:
-  // Pure virtual implementation.
-  SkFlattenable::Factory getFactory() { return NULL; }
-  void* onLockPixels(SkColorTable**) { return NULL; }
-  void onUnlockPixels() {}
-};
-
-class TestLazyPixelRef : public LazyPixelRef {
- public:
-  // Pure virtual implementation.
-  SkFlattenable::Factory getFactory() { return NULL; }
-  void* onLockPixels(SkColorTable**) { return NULL; }
-  void onUnlockPixels() {}
-  bool PrepareToDecode(const PrepareParams& params) { return true; }
-  void Decode() {}
-};
-
-class TestShader : public SkShader {
- public:
-  TestShader(SkBitmap* bitmap)
-    : bitmap_(bitmap) {
-  }
-
-  SkShader::BitmapType asABitmap(SkBitmap* bitmap,
-                                 SkMatrix*, TileMode xy[2]) const {
-    if (bitmap)
-      *bitmap = *bitmap_;
-    return SkShader::kDefault_BitmapType;
-  }
-
-  // Pure virtual implementation.
-  void shadeSpan(int x, int y, SkPMColor[], int count) {}
-  SkFlattenable::Factory getFactory() { return NULL; }
-
- private:
-
-  SkBitmap* bitmap_;
-};
-
 TEST(AnalysisCanvasTest, EmptyCanvas) {
   SkBitmap emptyBitmap;
   emptyBitmap.setConfig(SkBitmap::kNo_Config, 255, 255);
   skia::AnalysisDevice device(emptyBitmap);
   skia::AnalysisCanvas canvas(&device);
-  
+
   SkColor color;
-  EXPECT_FALSE(canvas.getColorIfSolid(&color));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
+  EXPECT_TRUE(canvas.getColorIfSolid(&color));
+  EXPECT_EQ(color, SkColorSetARGB(0, 0, 0, 0));
 }
 
 TEST(AnalysisCanvasTest, ClearCanvas) {
@@ -83,17 +42,15 @@ TEST(AnalysisCanvasTest, ClearCanvas) {
   canvas.clear(color);
 
   SkColor outputColor;
-  EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_TRUE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
+  EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
+  EXPECT_EQ(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
 
   // Solid color
   color = SkColorSetARGB(255, 65, 43, 21);
   canvas.clear(color);
 
   EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_FALSE(canvas.isCheap());
+  EXPECT_NE(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
   EXPECT_EQ(outputColor, color);
 
   // Translucent color
@@ -101,17 +58,15 @@ TEST(AnalysisCanvasTest, ClearCanvas) {
   canvas.clear(color);
 
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_FALSE(canvas.isCheap());
 
   // Test helper methods
   solidColorFill(canvas);
   EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
+  EXPECT_NE(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
 
   transparentFill(canvas);
-  EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_TRUE(canvas.isTransparent());
+  EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
+  EXPECT_EQ(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
 }
 
 TEST(AnalysisCanvasTest, ComplexActions) {
@@ -130,8 +85,6 @@ TEST(AnalysisCanvasTest, ComplexActions) {
   SkColor outputColor;
   //TODO(vmpstr): This should return true. (crbug.com/180597)
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
 
   // Draw points test.
   SkPoint points[4] = {
@@ -145,16 +98,12 @@ TEST(AnalysisCanvasTest, ComplexActions) {
   canvas.drawPoints(SkCanvas::kLines_PointMode, 4, points, paint);
 
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_FALSE(canvas.isCheap());
 
   // Draw oval test.
   solidColorFill(canvas);
   canvas.drawOval(SkRect::MakeWH(255, 255), paint);
 
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_FALSE(canvas.isCheap());
 
   // Draw bitmap test.
   solidColorFill(canvas);
@@ -163,8 +112,6 @@ TEST(AnalysisCanvasTest, ComplexActions) {
   canvas.drawBitmap(secondBitmap, 0, 0);
 
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_FALSE(canvas.isCheap());
 }
 
 TEST(AnalysisCanvasTest, SimpleDrawRect) {
@@ -181,8 +128,7 @@ TEST(AnalysisCanvasTest, SimpleDrawRect) {
 
   SkColor outputColor;
   EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
+  EXPECT_NE(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
   EXPECT_EQ(color, outputColor);
 
   color = SkColorSetARGB(255, 22, 33, 44);
@@ -191,16 +137,13 @@ TEST(AnalysisCanvasTest, SimpleDrawRect) {
   canvas.drawRect(SkRect::MakeWH(382, 382), paint);
 
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
 
   color = SkColorSetARGB(255, 33, 44, 55);
   paint.setColor(color);
   canvas.drawRect(SkRect::MakeWH(383, 383), paint);
 
   EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
+  EXPECT_NE(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
   EXPECT_EQ(color, outputColor);
 
   color = SkColorSetARGB(0, 0, 0, 0);
@@ -208,8 +151,7 @@ TEST(AnalysisCanvasTest, SimpleDrawRect) {
   canvas.drawRect(SkRect::MakeWH(383, 383), paint);
 
   EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
+  EXPECT_NE(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
   EXPECT_EQ(outputColor, SkColorSetARGB(255, 33, 44, 55));
 
   color = SkColorSetARGB(128, 128, 128, 128);
@@ -217,21 +159,16 @@ TEST(AnalysisCanvasTest, SimpleDrawRect) {
   canvas.drawRect(SkRect::MakeWH(383, 383), paint);
 
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
 
   paint.setXfermodeMode(SkXfermode::kClear_Mode);
   canvas.drawRect(SkRect::MakeWH(382, 382), paint);
 
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
 
   canvas.drawRect(SkRect::MakeWH(383, 383), paint);
 
-  EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_TRUE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
+  EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
+  EXPECT_EQ(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
 
   canvas.translate(128, 128);
   color = SkColorSetARGB(255, 11, 22, 33);
@@ -240,16 +177,13 @@ TEST(AnalysisCanvasTest, SimpleDrawRect) {
   canvas.drawRect(SkRect::MakeWH(255, 255), paint);
 
   EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
+  EXPECT_NE(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
   EXPECT_EQ(color, outputColor);
 
   canvas.rotate(50);
   canvas.drawRect(SkRect::MakeWH(255, 255), paint);
 
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
-  EXPECT_TRUE(canvas.isCheap());
 }
 
 TEST(AnalysisCanvasTest, ClipPath) {
@@ -300,153 +234,172 @@ TEST(AnalysisCanvasTest, SaveLayerRestore) {
   // This should force non-transparency
   canvas.saveLayer(&bounds, &paint, SkCanvas::kMatrix_SaveFlag);
   EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
+  EXPECT_NE(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
 
   transparentFill(canvas);
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
 
   solidColorFill(canvas);
   EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
+  EXPECT_NE(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
 
   paint.setXfermodeMode(SkXfermode::kDst_Mode);
 
   // This should force non-solid color
   canvas.saveLayer(&bounds, &paint, SkCanvas::kMatrix_SaveFlag);
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
 
   transparentFill(canvas);
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
 
   solidColorFill(canvas);
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
   
   canvas.restore();
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
 
   transparentFill(canvas);
   EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
 
   solidColorFill(canvas);
   EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
+  EXPECT_NE(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
 
   canvas.restore();
   EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
+  EXPECT_NE(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
 
   transparentFill(canvas);
-  EXPECT_FALSE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_TRUE(canvas.isTransparent());
+  EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
+  EXPECT_EQ(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
 
   solidColorFill(canvas);
   EXPECT_TRUE(canvas.getColorIfSolid(&outputColor));
-  EXPECT_FALSE(canvas.isTransparent());
+  EXPECT_NE(static_cast<SkColor>(SK_ColorTRANSPARENT), outputColor);
 }
 
-TEST(AnalysisCanvasTest, LazyPixelRefs) {
-  // Set up two lazy and two non-lazy pixel refs and the corresponding bitmaps.
-  TestLazyPixelRef firstLazyPixelRef;
-  firstLazyPixelRef.setURI("lazy");
-  TestLazyPixelRef secondLazyPixelRef;
-  secondLazyPixelRef.setURI("lazy");
+TEST(AnalysisCanvasTest, HasText) {
+  int width = 200;
+  int height = 100;
 
-  TestPixelRef firstNonLazyPixelRef;
-  TestPixelRef secondNonLazyPixelRef;
-  secondNonLazyPixelRef.setURI("notsolazy");
+  SkBitmap bitmap;
+  bitmap.setConfig(SkBitmap::kNo_Config, width, height);
 
-  SkBitmap firstLazyBitmap;
-  firstLazyBitmap.setConfig(SkBitmap::kNo_Config, 255, 255);
-  firstLazyBitmap.setPixelRef(&firstLazyPixelRef);
-  SkBitmap secondLazyBitmap;
-  secondLazyBitmap.setConfig(SkBitmap::kNo_Config, 255, 255);
-  secondLazyBitmap.setPixelRef(&secondLazyPixelRef);
+  const char* text = "A";
+  size_t byteLength = 1;
 
-  SkBitmap firstNonLazyBitmap;
-  firstNonLazyBitmap.setConfig(SkBitmap::kNo_Config, 255, 255);
-  SkBitmap secondNonLazyBitmap;
-  secondNonLazyBitmap.setConfig(SkBitmap::kNo_Config, 255, 255);
-  secondNonLazyBitmap.setPixelRef(&secondNonLazyPixelRef);
+  SkPoint point = SkPoint::Make(SkIntToScalar(25), SkIntToScalar(25));
+  SkPath path;
+  path.moveTo(point);
+  path.lineTo(SkIntToScalar(75), SkIntToScalar(75));
 
-  // The testcase starts here.
-  SkBitmap emptyBitmap;
-  emptyBitmap.setConfig(SkBitmap::kNo_Config, 255, 255);
-  skia::AnalysisDevice device(emptyBitmap);
-  skia::AnalysisCanvas canvas(&device);
-  
-  // This should be the first ref.
-  canvas.drawBitmap(firstLazyBitmap, 0, 0);
-  // The following will be ignored (non-lazy).
-  canvas.drawBitmap(firstNonLazyBitmap, 0, 0);
-  canvas.drawBitmap(firstNonLazyBitmap, 0, 0);
-  canvas.drawBitmap(secondNonLazyBitmap, 0, 0);
-  canvas.drawBitmap(secondNonLazyBitmap, 0, 0);
-  // This one will be ignored (already exists).
-  canvas.drawBitmap(firstLazyBitmap, 0, 0);
-  // This should be the second ref.
-  canvas.drawBitmap(secondLazyBitmap, 0, 0);
+  SkPaint paint;
+  paint.setColor(SK_ColorGRAY);
+  paint.setTextSize(SkIntToScalar(10));
 
-  std::list<skia::LazyPixelRef*> pixelRefs;
-  canvas.consumeLazyPixelRefs(&pixelRefs);
-
-  // We expect to get only lazy pixel refs and only unique results.
-  EXPECT_EQ(pixelRefs.size(), 2u);
-  if (!pixelRefs.empty()) {
-    EXPECT_EQ(pixelRefs.front(),
-              static_cast<LazyPixelRef*>(&firstLazyPixelRef));
-    EXPECT_EQ(pixelRefs.back(),
-              static_cast<LazyPixelRef*>(&secondLazyPixelRef));
+  {
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    // Test after initialization.
+    EXPECT_FALSE(canvas.hasText());
+    // Test drawing anything other than text.
+    canvas.drawRect(SkRect::MakeWH(width/2, height), paint);
+    EXPECT_FALSE(canvas.hasText());
   }
-}
-
-TEST(AnalysisCanvasTest, PixelRefsFromPaint) {
-  TestLazyPixelRef lazyPixelRef;
-  lazyPixelRef.setURI("lazy");
-
-  TestPixelRef nonLazyPixelRef;
-  nonLazyPixelRef.setURI("notsolazy");
-
-  SkBitmap lazyBitmap;
-  lazyBitmap.setConfig(SkBitmap::kNo_Config, 255, 255);
-  lazyBitmap.setPixelRef(&lazyPixelRef);
-
-  SkBitmap nonLazyBitmap;
-  nonLazyBitmap.setConfig(SkBitmap::kNo_Config, 255, 255);
-  nonLazyBitmap.setPixelRef(&nonLazyPixelRef);
-
-  TestShader lazyShader(&lazyBitmap);
-  TestShader nonLazyShader(&nonLazyBitmap);
-
-  SkPaint lazyPaint;
-  lazyPaint.setShader(&lazyShader);
-  SkPaint nonLazyPaint;
-  nonLazyPaint.setShader(&nonLazyShader);
-
-  SkBitmap emptyBitmap;
-  emptyBitmap.setConfig(SkBitmap::kNo_Config, 255, 255);
-  skia::AnalysisDevice device(emptyBitmap);
-  skia::AnalysisCanvas canvas(&device);
-
-  canvas.drawRect(SkRect::MakeWH(255, 255), lazyPaint);
-  canvas.drawRect(SkRect::MakeWH(255, 255), lazyPaint);
-  canvas.drawRect(SkRect::MakeWH(255, 255), lazyPaint);
-  canvas.drawRect(SkRect::MakeWH(255, 255), nonLazyPaint);
-  canvas.drawRect(SkRect::MakeWH(255, 255), nonLazyPaint);
-  canvas.drawRect(SkRect::MakeWH(255, 255), nonLazyPaint);
-
-  std::list<skia::LazyPixelRef*> pixelRefs;
-  canvas.consumeLazyPixelRefs(&pixelRefs);
-
-  // We expect to get only lazy pixel refs and only unique results.
-  EXPECT_EQ(pixelRefs.size(), 1u);
-  if (!pixelRefs.empty()) {
-    EXPECT_EQ(pixelRefs.front(), static_cast<LazyPixelRef*>(&lazyPixelRef));
+  {
+    // Test SkCanvas::drawText.
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    canvas.drawText(text, byteLength, point.fX, point.fY, paint);
+    EXPECT_TRUE(canvas.hasText());
+  }
+  {
+    // Test SkCanvas::drawPosText.
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    canvas.drawPosText(text, byteLength, &point, paint);
+    EXPECT_TRUE(canvas.hasText());
+  }
+  {
+    // Test SkCanvas::drawPosTextH.
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    canvas.drawPosTextH(text, byteLength, &point.fX, point.fY, paint);
+    EXPECT_TRUE(canvas.hasText());
+  }
+  {
+    // Test SkCanvas::drawTextOnPathHV.
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    canvas.drawTextOnPathHV(text, byteLength, path, point.fX, point.fY, paint);
+    EXPECT_TRUE(canvas.hasText());
+  }
+  {
+    // Test SkCanvas::drawTextOnPath.
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    canvas.drawTextOnPath(text, byteLength, path, NULL, paint);
+    EXPECT_TRUE(canvas.hasText());
+  }
+  {
+    // Text under opaque rect.
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    canvas.drawText(text, byteLength, point.fX, point.fY, paint);
+    EXPECT_TRUE(canvas.hasText());
+    canvas.drawRect(SkRect::MakeWH(width, height), paint);
+    EXPECT_FALSE(canvas.hasText());
+  }
+  {
+    // Text under translucent rect.
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    canvas.drawText(text, byteLength, point.fX, point.fY, paint);
+    EXPECT_TRUE(canvas.hasText());
+    SkPaint translucentPaint;
+    translucentPaint.setColor(0x88FFFFFF);
+    canvas.drawRect(SkRect::MakeWH(width, height), translucentPaint);
+    EXPECT_TRUE(canvas.hasText());
+  }
+  {
+    // Text under rect in clear mode.
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    canvas.drawText(text, byteLength, point.fX, point.fY, paint);
+    EXPECT_TRUE(canvas.hasText());
+    SkPaint clearModePaint;
+    clearModePaint.setXfermodeMode(SkXfermode::kClear_Mode);
+    canvas.drawRect(SkRect::MakeWH(width, height), clearModePaint);
+    EXPECT_FALSE(canvas.hasText());
+  }
+  {
+    // Clear.
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    canvas.drawText(text, byteLength, point.fX, point.fY, paint);
+    EXPECT_TRUE(canvas.hasText());
+    canvas.clear(SK_ColorGRAY);
+    EXPECT_FALSE(canvas.hasText());
+  }
+  {
+    // Text inside clip region.
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    canvas.clipRect(SkRect::MakeWH(100, 100));
+    canvas.drawText(text, byteLength, point.fX, point.fY, paint);
+    EXPECT_TRUE(canvas.hasText());
+  }
+  {
+    // Text outside clip region.
+    skia::AnalysisDevice device(bitmap);
+    skia::AnalysisCanvas canvas(&device);
+    canvas.clipRect(SkRect::MakeXYWH(100, 0, 100, 100));
+    canvas.drawText(text, byteLength, point.fX, point.fY, paint);
+    // Analysis device does not do any clipping.
+    // So even when text is outside the clip region,
+    // it is marked as having the text.
+    // TODO(alokp): We may be able to do some trivial rejection.
+    EXPECT_TRUE(canvas.hasText());
   }
 }
 
