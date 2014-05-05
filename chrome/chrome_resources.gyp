@@ -25,12 +25,12 @@
         {
           'includes': ['chrome_repack_locales.gypi']
         },
-       {
-         'includes': ['chrome_repack_pseudo_locales.gypi']
-       },
-       {
-         'includes': ['chrome_repack_chrome_100_percent.gypi']
-       },
+        {
+          'includes': ['chrome_repack_pseudo_locales.gypi']
+        },
+        {
+          'includes': ['chrome_repack_chrome_100_percent.gypi']
+        },
       ],
       'conditions': [
 
@@ -57,18 +57,18 @@
                 '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_100_percent.pak'
               ],
             },
-           {
-             'destination': '<(PRODUCT_DIR)/locales',
-             'files': [
-               '<!@pymod_do_main(repack_locales -o -p <(OS) -g <(grit_out_dir) -s <(SHARED_INTERMEDIATE_DIR) -x <(SHARED_INTERMEDIATE_DIR) <(locales))'
-             ],
-           },
-           {
-             'destination': '<(PRODUCT_DIR)/pseudo_locales',
-             'files': [
-               '<!@pymod_do_main(repack_locales -o -p <(OS) -g <(grit_out_dir) -s <(SHARED_INTERMEDIATE_DIR) -x <(SHARED_INTERMEDIATE_DIR) <(pseudo_locales))'
-             ],
-           },
+            {
+              'destination': '<(PRODUCT_DIR)/locales',
+              'files': [
+                '<!@pymod_do_main(repack_locales -o -p <(OS) -g <(grit_out_dir) -s <(SHARED_INTERMEDIATE_DIR) -x <(SHARED_INTERMEDIATE_DIR) <(locales))'
+              ],
+            },
+            {
+              'destination': '<(PRODUCT_DIR)/pseudo_locales',
+              'files': [
+                '<!@pymod_do_main(repack_locales -o -p <(OS) -g <(grit_out_dir) -s <(SHARED_INTERMEDIATE_DIR) -x <(SHARED_INTERMEDIATE_DIR) <(pseudo_locales))'
+              ],
+            },
           ],
         }], # end OS != "mac" and OS != "ios"
       ], # conditions
