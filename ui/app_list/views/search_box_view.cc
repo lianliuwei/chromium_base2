@@ -23,7 +23,6 @@ const int kPadding = 14;
 const int kIconDimension = 32;
 const int kPreferredWidth = 360;
 const int kPreferredHeight = 48;
-const int kEditHeight = 19;
 const int kMenuButtonDimension = 29;
 
 const SkColor kHintTextColor = SkColorSetRGB(0xA0, 0xA0, 0xA0);
@@ -79,6 +78,18 @@ void SearchBoxView::SetModel(SearchBoxModel* model) {
   }
 }
 
+bool SearchBoxView::HasSearch() const {
+  return !search_box_->text().empty();
+}
+
+void SearchBoxView::ClearSearch() {
+  search_box_->SetText(string16());
+  // Updates model and fires query changed manually because SetText() above
+  // does not generate ContentsChanged() notification.
+  UpdateModel();
+  NotifyQueryChanged();
+}
+
 gfx::Size SearchBoxView::GetPreferredSize() {
   return gfx::Size(kPreferredWidth, kPreferredHeight);
 }
@@ -107,7 +118,8 @@ void SearchBoxView::Layout() {
   edit_frame.set_x(icon_frame.right());
   edit_frame.set_width(
       rect.width() - icon_frame.width() - kPadding - menu_button_frame.width());
-  edit_frame.ClampToCenteredSize(gfx::Size(edit_frame.width(), kEditHeight));
+  edit_frame.ClampToCenteredSize(
+      gfx::Size(edit_frame.width(), search_box_->GetPreferredSize().height()));
   search_box_->SetBoundsRect(edit_frame);
 }
 
@@ -139,18 +151,6 @@ void SearchBoxView::ContentsChanged(views::Textfield* sender,
 
 bool SearchBoxView::HandleKeyEvent(views::Textfield* sender,
                                    const ui::KeyEvent& key_event) {
-  bool has_query = !search_box_->text().empty();
-
-  // Escape with non-empty query text clears the search box.
-  if (has_query && key_event.key_code() == ui::VKEY_ESCAPE) {
-    search_box_->SetText(string16());
-    // Updates model and fires query changed manually because SetText above
-    // does not generate ContentsChanged notification.
-    UpdateModel();
-    NotifyQueryChanged();
-    return true;
-  }
-
   bool handled = false;
   if (contents_view_ && contents_view_->visible())
     handled = contents_view_->OnKeyPressed(key_event);

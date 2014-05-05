@@ -38,6 +38,8 @@
         'client/capture_delegate.h',
         'client/cursor_client.cc',
         'client/cursor_client.h',
+        'client/cursor_client_observer.h',
+        'client/cursor_client_observer.cc',
         'client/default_capture_client.cc',
         'client/default_capture_client.h',
         'client/dispatcher_client.cc',
@@ -87,6 +89,7 @@
         'root_window_host_x11.h',
         'root_window_mac.h',
         'root_window_mac.mm',
+        'root_window_transformer.h',
         'root_window_view_mac.h',
         'root_window_view_mac.mm',
         'root_window.cc',
@@ -119,8 +122,8 @@
         }],
         ['OS=="win"', {
           'dependencies': [
-            '../metro_viewer/metro_viewer.gyp:metro_viewer',
-            '../../ipc/ipc.gyp:ipc',         
+            '../metro_viewer/metro_viewer.gyp:metro_viewer_messages',
+            '../../ipc/ipc.gyp:ipc',
           ],
         }],
       ],

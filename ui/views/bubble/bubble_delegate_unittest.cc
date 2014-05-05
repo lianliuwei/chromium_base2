@@ -59,9 +59,8 @@ TEST_F(BubbleDelegateTest, CreateDelegate) {
   test::TestWidgetObserver bubble_observer(bubble_widget);
   EXPECT_FALSE(bubble_observer.widget_closed());
 
-  BubbleBorder* border =
-      bubble_delegate->GetBubbleFrameView()->bubble_border();
-  EXPECT_EQ(bubble_delegate->arrow_location(), border->arrow_location());
+  BubbleBorder* border = bubble_delegate->GetBubbleFrameView()->bubble_border();
+  EXPECT_EQ(bubble_delegate->arrow(), border->arrow());
   EXPECT_EQ(bubble_delegate->color(), border->background_color());
 
   bubble_widget->CloseNow();
@@ -163,7 +162,8 @@ TEST_F(BubbleDelegateTest, ResetAnchorWidget) {
   EXPECT_TRUE(bubble_observer.widget_closed());
 }
 
-TEST_F(BubbleDelegateTest, InitiallyFocusedView) {
+// TODO(msw): test relies on focus and belongs in interactive_ui_tests.
+TEST_F(BubbleDelegateTest, DISABLED_InitiallyFocusedView) {
   // Create the anchor and parent widgets.
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
@@ -176,14 +176,8 @@ TEST_F(BubbleDelegateTest, InitiallyFocusedView) {
   Widget* bubble_widget = BubbleDelegateView::CreateBubble(bubble_delegate);
   bubble_widget->Show();
 
-  View* expected_view = bubble_delegate->GetInitiallyFocusedView();
-  // TODO(ben|msw): The NativeWidgetWin::RestoreFocusOnActivate() workaround for
-  // http://crbug.com/125976 breaks this simple test by clearing proper focus.
-#if defined(OS_WIN) && !defined(USE_AURA)
-  expected_view = NULL;
-#endif
-
-  EXPECT_EQ(expected_view, bubble_widget->GetFocusManager()->GetFocusedView());
+  EXPECT_EQ(bubble_delegate->GetInitiallyFocusedView(),
+            bubble_widget->GetFocusManager()->GetFocusedView());
   bubble_widget->CloseNow();
 }
 

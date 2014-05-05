@@ -16,8 +16,9 @@
 #include "ui/aura/focus_manager.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/window_property.h"
+#include "ui/base/dragdrop/os_exchange_data_provider_aurax11.h"
 #include "ui/base/events/event_utils.h"
-#include "ui/base/touch/touch_factory.h"
+#include "ui/base/touch/touch_factory_x11.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/gfx/insets.h"
 #include "ui/linux_ui/linux_ui.h"
@@ -31,6 +32,7 @@
 #include "ui/views/widget/desktop_aura/desktop_capture_client.h"
 #include "ui/views/widget/desktop_aura/desktop_cursor_loader_updater_aurax11.h"
 #include "ui/views/widget/desktop_aura/desktop_dispatcher_client.h"
+#include "ui/views/widget/desktop_aura/desktop_drag_drop_client_aurax11.h"
 #include "ui/views/widget/desktop_aura/desktop_focus_rules.h"
 #include "ui/views/widget/desktop_aura/desktop_layout_manager.h"
 #include "ui/views/widget/desktop_aura/desktop_native_cursor_manager.h"
@@ -63,6 +65,7 @@ const int k_NET_WM_STATE_REMOVE = 0;
 
 const char* kAtomsToCache[] = {
   "WM_DELETE_WINDOW",
+  "WM_PROTOCOLS",
   "WM_S0",
   "_NET_WM_PID",
   "_NET_WM_PING",
@@ -71,6 +74,23 @@ const char* kAtomsToCache[] = {
   "_NET_WM_STATE_HIDDEN",
   "_NET_WM_STATE_MAXIMIZED_HORZ",
   "_NET_WM_STATE_MAXIMIZED_VERT",
+  "_NET_WM_WINDOW_OPACITY",
+  "XdndActionAsk",
+  "XdndActionCopy"
+  "XdndActionLink",
+  "XdndActionList",
+  "XdndActionMove",
+  "XdndActionPrivate",
+  "XdndAware",
+  "XdndDrop",
+  "XdndEnter",
+  "XdndFinished",
+  "XdndLeave",
+  "XdndPosition",
+  "XdndProxy",  // Proxy windows?
+  "XdndSelection",
+  "XdndStatus",
+  "XdndTypeList",
   NULL
 };
 
@@ -92,7 +112,8 @@ DesktopRootWindowHostX11::DesktopRootWindowHostX11(
       focus_when_shown_(false),
       current_cursor_(ui::kCursorNull),
       native_widget_delegate_(native_widget_delegate),
-      desktop_native_widget_aura_(desktop_native_widget_aura) {
+      desktop_native_widget_aura_(desktop_native_widget_aura),
+      drop_handler_(NULL) {
 }
 
 DesktopRootWindowHostX11::~DesktopRootWindowHostX11() {
@@ -262,6 +283,10 @@ aura::RootWindow* DesktopRootWindowHostX11::InitRootWindow(
 
   desktop_native_widget_aura_->InstallInputMethodEventFilter(root_window_);
 
+  drag_drop_client_.reset(new DesktopDragDropClientAuraX11(
+      this, root_window_, xdisplay_, xwindow_));
+  aura::client::SetDragDropClient(root_window_, drag_drop_client_.get());
+
   // TODO(erg): Unify this code once the other consumer goes away.
   x11_window_event_filter_.reset(
       new X11WindowEventFilter(root_window_, activation_client_.get()));
@@ -344,7 +369,7 @@ void DesktopRootWindowHostX11::Close() {
     // we don't destroy the window before the callback returned (as the caller
     // may delete ourselves on destroy and the ATL callback would still
     // dereference us when the callback returns).
-    MessageLoop::current()->PostTask(
+    base::MessageLoop::current()->PostTask(
         FROM_HERE,
         base::Bind(&DesktopRootWindowHostX11::CloseNow,
                    close_widget_factory_.GetWeakPtr()));
@@ -613,8 +638,20 @@ bool DesktopRootWindowHostX11::IsFullscreen() const {
 }
 
 void DesktopRootWindowHostX11::SetOpacity(unsigned char opacity) {
-  // TODO(erg):
-  NOTIMPLEMENTED();
+  // X server opacity is in terms of 32 bit unsigned int space, and counts from
+  // the opposite direction.
+  unsigned int cardinality = (255 - opacity) * 0x1010101;
+
+  if (cardinality == 0xffffffff) {
+    XDeleteProperty(xdisplay_, xwindow_,
+                    atom_cache_.GetAtom("_NET_WM_WINDOW_OPACITY"));
+  } else {
+    XChangeProperty(xdisplay_, xwindow_,
+                    atom_cache_.GetAtom("_NET_WM_WINDOW_OPACITY"),
+                    XA_CARDINAL, 32,
+                    PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&cardinality), 1);
+  }
 }
 
 void DesktopRootWindowHostX11::SetWindowIcons(
@@ -640,6 +677,10 @@ void DesktopRootWindowHostX11::OnNativeWidgetFocus() {
 void DesktopRootWindowHostX11::OnNativeWidgetBlur() {
   if (xwindow_)
     native_widget_delegate_->AsWidget()->GetInputMethod()->OnBlur();
+}
+
+void DesktopRootWindowHostX11::SetInactiveRenderingDisabled(
+    bool disable_inactive) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -729,7 +770,7 @@ void DesktopRootWindowHostX11::SetBounds(const gfx::Rect& bounds) {
   if (size_changed)
     root_window_host_delegate_->OnHostResized(bounds.size());
   else
-    root_window_host_delegate_->OnHostPaint();
+    root_window_host_delegate_->OnHostPaint(gfx::Rect(bounds.size()));
 }
 
 gfx::Insets DesktopRootWindowHostX11::GetInsets() const {
@@ -815,7 +856,8 @@ void DesktopRootWindowHostX11::OnCursorVisibilityChanged(bool show) {
 }
 
 void DesktopRootWindowHostX11::MoveCursorTo(const gfx::Point& location) {
-  NOTIMPLEMENTED();
+  XWarpPointer(xdisplay_, None, x_root_window_, 0, 0, 0, 0,
+               bounds_.x() + location.x(), bounds_.y() + location.y());
 }
 
 void DesktopRootWindowHostX11::SetFocusWhenShown(bool focus_when_shown) {
@@ -833,13 +875,6 @@ bool DesktopRootWindowHostX11::CopyAreaToSkCanvas(
     const gfx::Rect& source_bounds,
     const gfx::Point& dest_offset,
     SkCanvas* canvas) {
-  NOTIMPLEMENTED();
-  return false;
-}
-
-bool DesktopRootWindowHostX11::GrabSnapshot(
-      const gfx::Rect& snapshot_bounds,
-      std::vector<unsigned char>* png_representation) {
   NOTIMPLEMENTED();
   return false;
 }
@@ -885,6 +920,20 @@ void DesktopRootWindowHostX11::PrepareForShutdown() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// DesktopRootWindowHostX11, ui::DesktopSelectionProviderAuraX11 implementation:
+
+void DesktopRootWindowHostX11::SetDropHandler(
+    ui::OSExchangeDataProviderAuraX11* handler) {
+  if (handler) {
+    DCHECK(!drop_handler_);
+    drop_handler_ = handler;
+  } else {
+    DCHECK(drop_handler_);
+    drop_handler_ = NULL;
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // DesktopRootWindowHostX11, MessageLoop::Dispatcher implementation:
 
 bool DesktopRootWindowHostX11::Dispatch(const base::NativeEvent& event) {
@@ -893,10 +942,12 @@ bool DesktopRootWindowHostX11::Dispatch(const base::NativeEvent& event) {
   // May want to factor CheckXEventForConsistency(xev); into a common location
   // since it is called here.
   switch (xev->type) {
-    case Expose:
-      // TODO(erg): Can we only redraw the affected areas?
-      root_window_host_delegate_->OnHostPaint();
+    case Expose: {
+      gfx::Rect damage_rect(xev->xexpose.x, xev->xexpose.y,
+                            xev->xexpose.width, xev->xexpose.height);
+      root_window_host_delegate_->OnHostPaint(damage_rect);
       break;
+    }
     case KeyPress: {
       ui::KeyEvent keydown_event(xev, false);
       root_window_host_delegate_->OnHostKeyEvent(&keydown_event);
@@ -1010,6 +1061,15 @@ bool DesktopRootWindowHostX11::Dispatch(const base::NativeEvent& event) {
               }
               break;
             }
+          } else if (type == ui::ET_MOUSE_RELEASED) {
+            XIDeviceEvent* xievent =
+                static_cast<XIDeviceEvent*>(xev->xcookie.data);
+            int button = xievent->detail;
+            if (button == kBackMouseButton || button == kForwardMouseButton) {
+              // We've already passed the back/forward mouse down to the user
+              // action client; we want to swallow the corresponding release.
+              break;
+            }
           }
           ui::MouseEvent mouseev(xev);
           DispatchMouseEvent(&mouseev);
@@ -1046,19 +1106,34 @@ bool DesktopRootWindowHostX11::Dispatch(const base::NativeEvent& event) {
       break;
     }
     case ClientMessage: {
-      Atom message_type = static_cast<Atom>(xev->xclient.data.l[0]);
-      if (message_type == atom_cache_.GetAtom("WM_DELETE_WINDOW")) {
-        // We have received a close message from the window manager.
-        root_window_->OnRootWindowHostCloseRequested();
-      } else if (message_type == atom_cache_.GetAtom("_NET_WM_PING")) {
-        XEvent reply_event = *xev;
-        reply_event.xclient.window = x_root_window_;
+      Atom message_type = xev->xclient.message_type;
+      if (message_type == atom_cache_.GetAtom("WM_PROTOCOLS")) {
+        Atom protocol = static_cast<Atom>(xev->xclient.data.l[0]);
+        if (protocol == atom_cache_.GetAtom("WM_DELETE_WINDOW")) {
+          // We have received a close message from the window manager.
+          root_window_->OnRootWindowHostCloseRequested();
+        } else if (protocol == atom_cache_.GetAtom("_NET_WM_PING")) {
+          XEvent reply_event = *xev;
+          reply_event.xclient.window = x_root_window_;
 
-        XSendEvent(xdisplay_,
-                   reply_event.xclient.window,
-                   False,
-                   SubstructureRedirectMask | SubstructureNotifyMask,
-                   &reply_event);
+          XSendEvent(xdisplay_,
+                     reply_event.xclient.window,
+                     False,
+                     SubstructureRedirectMask | SubstructureNotifyMask,
+                     &reply_event);
+        }
+      } else if (message_type == atom_cache_.GetAtom("XdndEnter")) {
+        drag_drop_client_->OnXdndEnter(xev->xclient);
+      } else if (message_type == atom_cache_.GetAtom("XdndLeave")) {
+        drag_drop_client_->OnXdndLeave(xev->xclient);
+      } else if (message_type == atom_cache_.GetAtom("XdndPosition")) {
+        drag_drop_client_->OnXdndPosition(xev->xclient);
+      } else if (message_type == atom_cache_.GetAtom("XdndStatus")) {
+        drag_drop_client_->OnXdndStatus(xev->xclient);
+      } else if (message_type == atom_cache_.GetAtom("XdndFinished")) {
+        drag_drop_client_->OnXdndFinished(xev->xclient);
+      } else if (message_type == atom_cache_.GetAtom("XdndDrop")) {
+        drag_drop_client_->OnXdndDrop(xev->xclient);
       }
       break;
     }
@@ -1129,6 +1204,12 @@ bool DesktopRootWindowHostX11::Dispatch(const base::NativeEvent& event) {
         }
         widget->GetRootView()->Layout();
       }
+      break;
+    }
+    case SelectionNotify: {
+      if (drop_handler_)
+        drop_handler_->OnSelectionNotify(xev->xselection);
+      break;
     }
   }
   return true;

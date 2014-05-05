@@ -70,7 +70,7 @@ void ClientView::Layout() {
     contents_view_->SetBounds(0, 0, width(), height());
 }
 
-std::string ClientView::GetClassName() const {
+const char* ClientView::GetClassName() const {
   return kViewClassName;
 }
 
@@ -84,8 +84,9 @@ void ClientView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
   // NonClientView::Layout.
 }
 
-void ClientView::ViewHierarchyChanged(bool is_add, View* parent, View* child) {
-  if (is_add && child == this) {
+void ClientView::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
+  if (details.is_add && details.child == this) {
     DCHECK(GetWidget());
     DCHECK(contents_view_); // |contents_view_| must be valid now!
     // Insert |contents_view_| at index 0 so it is first in the focus chain.

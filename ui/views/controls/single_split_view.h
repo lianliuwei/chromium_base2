@@ -32,7 +32,7 @@ class VIEWS_EXPORT SingleSplitView : public View {
                   SingleSplitViewListener* listener);
 
   virtual void Layout() OVERRIDE;
-  virtual std::string GetClassName() const OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
 
   virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
 
@@ -57,6 +57,11 @@ class VIEWS_EXPORT SingleSplitView : public View {
   int divider_offset() const { return divider_offset_; }
 
   int GetDividerSize() const;
+
+  void set_resize_disabled(bool resize_disabled) {
+    resize_disabled_ = resize_disabled;
+  }
+  bool is_resize_disabled() const { return resize_disabled_; }
 
   // Sets whether the leading component is resized when the split views size
   // changes. The default is true. A value of false results in the trailing
@@ -124,6 +129,9 @@ class VIEWS_EXPORT SingleSplitView : public View {
   int divider_offset_;
 
   bool resize_leading_on_bounds_change_;
+
+  // Whether resizing is disabled.
+  bool resize_disabled_;
 
   // Listener to notify about user initiated handle movements. Not owned.
   SingleSplitViewListener* listener_;

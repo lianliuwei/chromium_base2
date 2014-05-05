@@ -15,6 +15,7 @@
 #include "ui/base/keycodes/keyboard_codes.h"
 #include "ui/base/range/range.h"
 #include "ui/base/ui_base_switches.h"
+#include "ui/base/ui_base_switches_util.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/insets.h"
 #include "ui/gfx/selection_model.h"
@@ -46,7 +47,7 @@ namespace views {
 // Textfield
 
 // static
-const char Textfield::kViewClassName[] = "views/Textfield";
+const char Textfield::kViewClassName[] = "Textfield";
 
 // static
 bool Textfield::IsViewsTextfieldEnabled() {
@@ -56,7 +57,13 @@ bool Textfield::IsViewsTextfieldEnabled() {
     return false;
   if (command_line->HasSwitch(switches::kEnableViewsTextfield))
     return true;
-  return false;
+  // The new dialog style cannot host native Windows textfield controls.
+  if (switches::IsNewDialogStyleEnabled())
+    return true;
+  // Avoid native Windows Textfields if the RichEdit library is not available.
+  static const HMODULE loaded_msftedit_dll = LoadLibrary(L"msftedit.dll");
+  if (!loaded_msftedit_dll)
+    return true;
 #endif
   return true;
 }
@@ -77,6 +84,7 @@ Textfield::Textfield()
       initialized_(false),
       horizontal_margins_were_set_(false),
       vertical_margins_were_set_(false),
+      vertical_alignment_(gfx::ALIGN_VCENTER),
       placeholder_text_color_(kDefaultPlaceholderTextColor),
       icon_view_(NULL),
       text_input_type_(ui::TEXT_INPUT_TYPE_TEXT) {
@@ -99,6 +107,7 @@ Textfield::Textfield(StyleFlags style)
       initialized_(false),
       horizontal_margins_were_set_(false),
       vertical_margins_were_set_(false),
+      vertical_alignment_(gfx::ALIGN_VCENTER),
       placeholder_text_color_(kDefaultPlaceholderTextColor),
       icon_view_(NULL),
       text_input_type_(ui::TEXT_INPUT_TYPE_TEXT) {
@@ -119,8 +128,8 @@ TextfieldController* Textfield::GetController() const {
 }
 
 void Textfield::SetReadOnly(bool read_only) {
+  // Update read-only without changing the focusable state (or active, etc.).
   read_only_ = read_only;
-  set_focusable(!read_only);
   if (native_wrapper_) {
     native_wrapper_->UpdateReadOnly();
     native_wrapper_->UpdateTextColor();
@@ -178,8 +187,8 @@ void Textfield::ReplaceSelection(const string16& text) {
 }
 
 base::i18n::TextDirection Textfield::GetTextDirection() const {
-  return native_wrapper_ ? native_wrapper_->GetTextDirection() :
-      base::i18n::UNKNOWN_DIRECTION;
+  return native_wrapper_ ?
+      native_wrapper_->GetTextDirection() : base::i18n::UNKNOWN_DIRECTION;
 }
 
 void Textfield::SelectAll(bool reversed) {
@@ -188,9 +197,7 @@ void Textfield::SelectAll(bool reversed) {
 }
 
 string16 Textfield::GetSelectedText() const {
-  if (native_wrapper_)
-    return native_wrapper_->GetSelectedText();
-  return string16();
+  return native_wrapper_ ? native_wrapper_->GetSelectedText() : string16();
 }
 
 void Textfield::ClearSelection() const {
@@ -199,9 +206,7 @@ void Textfield::ClearSelection() const {
 }
 
 bool Textfield::HasSelection() const {
-  if (native_wrapper_)
-    return !native_wrapper_->GetSelectedRange().is_empty();
-  return false;
+  return native_wrapper_ && !native_wrapper_->GetSelectedRange().is_empty();
 }
 
 SkColor Textfield::GetTextColor() const {
@@ -280,6 +285,12 @@ void Textfield::SetVerticalMargins(int top, int bottom) {
   PreferredSizeChanged();
 }
 
+void Textfield::SetVerticalAlignment(gfx::VerticalAlignment alignment) {
+  vertical_alignment_ = alignment;
+  if (native_wrapper_)
+    native_wrapper_->UpdateVerticalAlignment();
+}
+
 void Textfield::RemoveBorder() {
   if (!draw_border_)
     return;
@@ -292,7 +303,8 @@ void Textfield::RemoveBorder() {
 void Textfield::SetBorderColor(SkColor color) {
   border_color_ = color;
   use_default_border_color_ = false;
-  native_wrapper_->UpdateBorderColor();
+  if (native_wrapper_)
+    native_wrapper_->UpdateBorderColor();
 }
 
 void Textfield::UseDefaultBorderColor() {
@@ -300,7 +312,8 @@ void Textfield::UseDefaultBorderColor() {
     return;
 
   use_default_border_color_ = true;
-  native_wrapper_->UpdateBorderColor();
+  if (native_wrapper_)
+    native_wrapper_->UpdateBorderColor();
 }
 
 void Textfield::SetIcon(const gfx::ImageSkia& icon) {
@@ -310,7 +323,6 @@ void Textfield::SetIcon(const gfx::ImageSkia& icon) {
       delete icon_view_;
       icon_view_ = NULL;
     }
-
     return;
   }
 
@@ -338,13 +350,13 @@ bool Textfield::GetHorizontalMargins(int* left, int* right) {
     *left += icon_width;
   else
     *right += icon_width;
-
   return true;
 }
 
 bool Textfield::GetVerticalMargins(int* top, int* bottom) {
   if (!vertical_margins_were_set_)
     return false;
+
   *top = margins_.top();
   *bottom = margins_.bottom();
   return true;
@@ -363,6 +375,7 @@ void Textfield::UpdateAllProperties() {
     native_wrapper_->UpdateIsObscured();
     native_wrapper_->UpdateHorizontalMargins();
     native_wrapper_->UpdateVerticalMargins();
+    native_wrapper_->UpdateVerticalAlignment();
   }
 }
 
@@ -382,54 +395,44 @@ bool Textfield::IsIMEComposing() const {
 }
 
 ui::Range Textfield::GetSelectedRange() const {
-  DCHECK(native_wrapper_);
   return native_wrapper_->GetSelectedRange();
 }
 
 void Textfield::SelectRange(const ui::Range& range) {
-  DCHECK(native_wrapper_);
   native_wrapper_->SelectRange(range);
 }
 
 gfx::SelectionModel Textfield::GetSelectionModel() const {
-  DCHECK(native_wrapper_);
   return native_wrapper_->GetSelectionModel();
 }
 
 void Textfield::SelectSelectionModel(const gfx::SelectionModel& sel) {
-  DCHECK(native_wrapper_);
   native_wrapper_->SelectSelectionModel(sel);
 }
 
 size_t Textfield::GetCursorPosition() const {
-  DCHECK(native_wrapper_);
   return native_wrapper_->GetCursorPosition();
 }
 
 void Textfield::SetColor(SkColor value) {
-  DCHECK(native_wrapper_);
   return native_wrapper_->SetColor(value);
 }
 
 void Textfield::ApplyColor(SkColor value, const ui::Range& range) {
-  DCHECK(native_wrapper_);
   return native_wrapper_->ApplyColor(value, range);
 }
 
 void Textfield::SetStyle(gfx::TextStyle style, bool value) {
-  DCHECK(native_wrapper_);
   return native_wrapper_->SetStyle(style, value);
 }
 
 void Textfield::ApplyStyle(gfx::TextStyle style,
                            bool value,
                            const ui::Range& range) {
-  DCHECK(native_wrapper_);
   return native_wrapper_->ApplyStyle(style, value, range);
 }
 
 void Textfield::ClearEditHistory() {
-  DCHECK(native_wrapper_);
   native_wrapper_->ClearEditHistory();
 }
 
@@ -439,6 +442,10 @@ void Textfield::SetAccessibleName(const string16& name) {
 
 void Textfield::ExecuteCommand(int command_id) {
   native_wrapper_->ExecuteTextCommand(command_id);
+}
+
+bool Textfield::HasTextBeingDragged() {
+  return native_wrapper_->HasTextBeingDragged();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -543,7 +550,6 @@ void Textfield::GetAccessibleState(ui::AccessibleViewState* state) {
     state->state |= ui::AccessibilityTypes::STATE_PROTECTED;
   state->value = text_;
 
-  DCHECK(native_wrapper_);
   const ui::Range range = native_wrapper_->GetSelectedRange();
   state->selection_start = range.start();
   state->selection_end = range.end();
@@ -559,8 +565,9 @@ void Textfield::OnEnabledChanged() {
     native_wrapper_->UpdateEnabled();
 }
 
-void Textfield::ViewHierarchyChanged(bool is_add, View* parent, View* child) {
-  if (is_add && !native_wrapper_ && GetWidget() && !initialized_) {
+void Textfield::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
+  if (details.is_add && !native_wrapper_ && GetWidget() && !initialized_) {
     initialized_ = true;
 
     // The native wrapper's lifetime will be managed by the view hierarchy after
@@ -583,7 +590,7 @@ void Textfield::ViewHierarchyChanged(bool is_add, View* parent, View* child) {
   }
 }
 
-std::string Textfield::GetClassName() const {
+const char* Textfield::GetClassName() const {
   return kViewClassName;
 }
 

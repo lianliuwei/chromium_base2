@@ -97,7 +97,7 @@ class VIEWS_EXPORT RootView : public View,
   virtual const Widget* GetWidget() const OVERRIDE;
   virtual Widget* GetWidget() OVERRIDE;
   virtual bool IsDrawn() const OVERRIDE;
-  virtual std::string GetClassName() const OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
   virtual void SchedulePaintInRect(const gfx::Rect& rect) OVERRIDE;
   virtual bool OnMousePressed(const ui::MouseEvent& event) OVERRIDE;
   virtual bool OnMouseDragged(const ui::MouseEvent& event) OVERRIDE;
@@ -108,20 +108,20 @@ class VIEWS_EXPORT RootView : public View,
   virtual bool OnMouseWheel(const ui::MouseWheelEvent& event) OVERRIDE;
   virtual void SetMouseHandler(View* new_mouse_handler) OVERRIDE;
   virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
-  virtual void ReorderChildLayers(ui::Layer* parent_layer) OVERRIDE;
+  virtual void UpdateParentLayer() OVERRIDE;
 
  protected:
   // Overridden from View:
-  virtual void ViewHierarchyChanged(bool is_add, View* parent,
-                                    View* child) OVERRIDE;
+  virtual void ViewHierarchyChanged(
+      const ViewHierarchyChangedDetails& details) OVERRIDE;
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
   virtual gfx::Vector2d CalculateOffsetToAncestorWithLayer(
       ui::Layer** layer_parent) OVERRIDE;
   virtual View::DragInfo* GetDragInfo() OVERRIDE;
 
  private:
-  friend class View;
-  friend class Widget;
+  friend class ::views::View;
+  friend class ::views::Widget;
 
   // Input ---------------------------------------------------------------------
 

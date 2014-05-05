@@ -41,7 +41,11 @@ bool IndexInRange(const ui::Range& range, size_t index) {
   return index >= range.start() && index < range.end();
 }
 
-#if !defined(OS_MACOSX)
+base::string16 GetSelectedText(RenderText* render_text) {
+  return render_text->text().substr(render_text->selection().GetMin(),
+                                    render_text->selection().length());
+}
+
 // A test utility function to set the application default text direction.
 void SetRTL(bool rtl) {
   // Override the current locale/direction.
@@ -52,7 +56,6 @@ void SetRTL(bool rtl) {
 #endif
   EXPECT_EQ(rtl, base::i18n::IsRTL());
 }
-#endif
 
 }  // namespace
 
@@ -282,11 +285,8 @@ TEST_F(RenderTextTest, ObscuredText) {
   }
 
   // GetGlyphBounds() should yield the entire string bounds for text index 0.
-  int height = 0;
-  ui::Range bounds;
-  render_text->GetGlyphBounds(0U, &bounds, &height);
   EXPECT_EQ(render_text->GetStringSize().width(),
-            static_cast<int>(bounds.length()));
+            static_cast<int>(render_text->GetGlyphBounds(0U).length()));
 
   // Cursoring is independent of underlying characters when text is obscured.
   const wchar_t* const texts[] = {
@@ -995,34 +995,76 @@ TEST_F(RenderTextTest, CursorBoundsInReplacementMode) {
   EXPECT_EQ(cursor_around_b.right(), cursor_before_c.x());
 }
 
-// http://crbug.com/161902
-#if defined(OS_LINUX)
-#define MAYBE_OriginForDrawing DISABLED_OriginForDrawing
-#else
-#define MAYBE_OriginForDrawing OriginForDrawing
-#endif
-TEST_F(RenderTextTest, MAYBE_OriginForDrawing) {
+TEST_F(RenderTextTest, GetTextOffset) {
+  // The default horizontal text offset differs for LTR and RTL, and is only set
+  // when the RenderText object is created.  This test will check the default in
+  // LTR mode, and the next test will check the RTL default.
+  const bool was_rtl = base::i18n::IsRTL();
+  SetRTL(false);
   scoped_ptr<RenderText> render_text(RenderText::CreateInstance());
   render_text->SetText(ASCIIToUTF16("abcdefg"));
   render_text->SetFontList(FontList("Arial, 13px"));
 
-  // Set display area's height equals to font height.
-  const int font_height = render_text->GetStringSize().height();
-  Rect display_rect(0, 0, 100, font_height);
+  // Set display area's size equal to the font size.
+  const gfx::Size font_size(render_text->GetContentWidth(),
+                            render_text->GetStringSize().height());
+  Rect display_rect(font_size);
   render_text->SetDisplayRect(display_rect);
 
-  Vector2d offset = render_text->GetOffsetForDrawing();
+  Vector2d offset = render_text->GetTextOffset();
   EXPECT_TRUE(offset.IsZero());
 
-  // Set display area's height greater than font height.
+  // Set display area's size greater than font size.
   const int kEnlargement = 2;
-  display_rect = Rect(0, 0, 100, font_height + kEnlargement);
+  display_rect.Inset(0, 0, -kEnlargement, -kEnlargement);
   render_text->SetDisplayRect(display_rect);
 
-  // Text should be vertically centered.
-  offset = render_text->GetOffsetForDrawing();
-  EXPECT_EQ(offset.x(), 0);
-  EXPECT_EQ(offset.y(), kEnlargement / 2);
+  // Check the default horizontal and vertical alignment.
+  offset = render_text->GetTextOffset();
+  EXPECT_EQ(kEnlargement / 2, offset.y());
+  EXPECT_EQ(0, offset.x());
+
+  // Check explicitly setting the horizontal alignment.
+  render_text->SetHorizontalAlignment(ALIGN_LEFT);
+  offset = render_text->GetTextOffset();
+  EXPECT_EQ(0, offset.x());
+  render_text->SetHorizontalAlignment(ALIGN_CENTER);
+  offset = render_text->GetTextOffset();
+  EXPECT_EQ(kEnlargement / 2, offset.x());
+  render_text->SetHorizontalAlignment(ALIGN_RIGHT);
+  offset = render_text->GetTextOffset();
+  EXPECT_EQ(kEnlargement, offset.x());
+
+  // Check explicitly setting the vertical alignment.
+  render_text->SetVerticalAlignment(ALIGN_TOP);
+  offset = render_text->GetTextOffset();
+  EXPECT_EQ(0, offset.y());
+  render_text->SetVerticalAlignment(ALIGN_VCENTER);
+  offset = render_text->GetTextOffset();
+  EXPECT_EQ(kEnlargement / 2, offset.y());
+  render_text->SetVerticalAlignment(ALIGN_BOTTOM);
+  offset = render_text->GetTextOffset();
+  EXPECT_EQ(kEnlargement, offset.y());
+
+  SetRTL(was_rtl);
+}
+
+TEST_F(RenderTextTest, GetTextOffsetHorizontalDefaultInRTL) {
+  // This only checks the default horizontal alignment in RTL mode; all other
+  // GetTextOffset() attributes are checked by the test above.
+  const bool was_rtl = base::i18n::IsRTL();
+  SetRTL(true);
+  scoped_ptr<RenderText> render_text(RenderText::CreateInstance());
+  render_text->SetText(ASCIIToUTF16("abcdefg"));
+  render_text->SetFontList(FontList("Arial, 13px"));
+  const int kEnlargement = 2;
+  const gfx::Size font_size(render_text->GetContentWidth() + kEnlargement,
+                            render_text->GetStringSize().height());
+  Rect display_rect(font_size);
+  render_text->SetDisplayRect(display_rect);
+  Vector2d offset = render_text->GetTextOffset();
+  EXPECT_EQ(kEnlargement, offset.x());
+  SetRTL(was_rtl);
 }
 
 TEST_F(RenderTextTest, SameFontForParentheses) {
@@ -1106,6 +1148,46 @@ TEST_F(RenderTextTest, CaretWidth) {
   scoped_ptr<RenderText> render_text(RenderText::CreateInstance());
   render_text->SetText(ASCIIToUTF16("abcdefg"));
   EXPECT_GE(render_text->GetUpdatedCursorBounds().width(), 1);
+}
+
+// Make sure the last word is selected when the cursor is at text.length().
+TEST_F(RenderTextTest, LastWordSelected) {
+  const std::string kTestURL1 = "http://www.google.com";
+  const std::string kTestURL2 = "http://www.google.com/something/";
+
+  scoped_ptr<RenderText> render_text(RenderText::CreateInstance());
+
+  render_text->SetText(ASCIIToUTF16(kTestURL1));
+  render_text->SetCursorPosition(kTestURL1.length());
+  render_text->SelectWord();
+  EXPECT_EQ(ASCIIToUTF16("com"), GetSelectedText(render_text.get()));
+  EXPECT_FALSE(render_text->selection().is_reversed());
+
+  render_text->SetText(ASCIIToUTF16(kTestURL2));
+  render_text->SetCursorPosition(kTestURL2.length());
+  render_text->SelectWord();
+  EXPECT_EQ(ASCIIToUTF16("/"), GetSelectedText(render_text.get()));
+  EXPECT_FALSE(render_text->selection().is_reversed());
+}
+
+// When given a non-empty selection, SelectWord should expand the selection to
+// nearest word boundaries.
+TEST_F(RenderTextTest, SelectMultipleWords) {
+  const std::string kTestURL = "http://www.google.com";
+
+  scoped_ptr<RenderText> render_text(RenderText::CreateInstance());
+
+  render_text->SetText(ASCIIToUTF16(kTestURL));
+  render_text->SelectRange(ui::Range(16, 20));
+  render_text->SelectWord();
+  EXPECT_EQ(ASCIIToUTF16("google.com"), GetSelectedText(render_text.get()));
+  EXPECT_FALSE(render_text->selection().is_reversed());
+
+  // SelectWord should preserve the selection direction.
+  render_text->SelectRange(ui::Range(20, 16));
+  render_text->SelectWord();
+  EXPECT_EQ(ASCIIToUTF16("google.com"), GetSelectedText(render_text.get()));
+  EXPECT_TRUE(render_text->selection().is_reversed());
 }
 
 // TODO(asvitkine): Cursor movements tests disabled on Mac because RenderTextMac

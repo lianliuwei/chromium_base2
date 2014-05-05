@@ -53,6 +53,9 @@ class TestCursorClient : public aura::client::CursorClient {
     return mouse_events_enabled_;
   }
 
+  virtual void SetScale(float scale) OVERRIDE {
+  }
+
   virtual void SetDisplay(const gfx::Display& display) OVERRIDE {
   }
 
@@ -63,6 +66,14 @@ class TestCursorClient : public aura::client::CursorClient {
   }
 
   virtual void SetCursorResourceModule(const string16& module_name) OVERRIDE {
+  }
+
+  virtual void AddObserver(
+      aura::client::CursorClientObserver* observer) OVERRIDE {
+  }
+
+  virtual void RemoveObserver(
+      aura::client::CursorClientObserver* observer) OVERRIDE {
   }
 
  private:

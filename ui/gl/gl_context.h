@@ -11,13 +11,13 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "ui/gl/gl_share_group.h"
+#include "ui/gl/gl_state_restorer.h"
 #include "ui/gl/gpu_preference.h"
 
 namespace gfx {
 
 class GLSurface;
 class VirtualGLApi;
-class GLStateRestorer;
 
 // Encapsulates an OpenGL context, hiding platform specific management.
 class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
@@ -47,8 +47,11 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
   // Get the underlying platform specific GL context "handle".
   virtual void* GetHandle() = 0;
 
-  // Gets the GLStateRestore for the context.
-  virtual GLStateRestorer* GetGLStateRestorer();
+  // Gets the GLStateRestorer for the context.
+  GLStateRestorer* GetGLStateRestorer();
+
+  // Sets the GLStateRestorer for the context (takes ownership).
+  void SetGLStateRestorer(GLStateRestorer* state_restorer);
 
   // Set swap interval. This context must be current.
   virtual void SetSwapInterval(int interval) = 0;
@@ -60,6 +63,14 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
   // context is currently rendering on. Returns false if no extension exists
   // to get the exact amount of GPU memory.
   virtual bool GetTotalGpuMemory(size_t* bytes);
+
+  // Indicate that it is safe to force this context to switch GPUs, since
+  // transitioning can cause corruption and hangs (OS X only).
+  virtual void SetSafeToForceGpuSwitch();
+
+  // Indicate that the real context switches should unbind the FBO first
+  // (For an Android work-around only).
+  virtual void SetUnbindFboOnMakeCurrent();
 
   // Returns whether the current context supports the named extension. The
   // context must be current.
@@ -108,6 +119,7 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
 
   scoped_refptr<GLShareGroup> share_group_;
   scoped_ptr<VirtualGLApi> virtual_gl_api_;
+  scoped_ptr<GLStateRestorer> state_restorer_;
 
   DISALLOW_COPY_AND_ASSIGN(GLContext);
 };

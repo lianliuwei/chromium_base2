@@ -19,7 +19,7 @@
 namespace views {
 
 // static
-const char NativeScrollBar::kViewClassName[] = "views/NativeScrollBar";
+const char NativeScrollBar::kViewClassName[] = "NativeScrollBar";
 
 ////////////////////////////////////////////////////////////////////////////////
 // NativeScrollBar, public:
@@ -58,16 +58,16 @@ void NativeScrollBar::Layout() {
   }
 }
 
-void NativeScrollBar::ViewHierarchyChanged(bool is_add, View *parent,
-                                           View *child) {
+void NativeScrollBar::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
   Widget* widget;
-  if (is_add && !native_wrapper_ && (widget = GetWidget())) {
+  if (details.is_add && !native_wrapper_ && (widget = GetWidget())) {
     native_wrapper_ = NativeScrollBarWrapper::CreateWrapper(this);
     AddChildView(native_wrapper_->GetView());
   }
 }
 
-std::string NativeScrollBar::GetClassName() const {
+const char* NativeScrollBar::GetClassName() const {
   return kViewClassName;
 }
 

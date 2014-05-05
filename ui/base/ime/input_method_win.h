@@ -35,6 +35,8 @@ class UI_EXPORT InputMethodWin : public InputMethodBase {
   virtual std::string GetInputLocale() OVERRIDE;
   virtual base::i18n::TextDirection GetInputTextDirection() OVERRIDE;
   virtual bool IsActive() OVERRIDE;
+  virtual void SetFocusedTextInputClient(TextInputClient* client) OVERRIDE;
+  virtual TextInputClient* GetTextInputClient() const OVERRIDE;
 
   // Handles IME messages.
   LRESULT OnImeMessages(UINT message,
@@ -79,8 +81,9 @@ class UI_EXPORT InputMethodWin : public InputMethodBase {
   // For both WM_DEADCHAR and WM_SYSDEADCHAR
   LRESULT OnDeadChar(UINT message, WPARAM wparam, LPARAM lparam, BOOL* handled);
 
-  LRESULT OnDocumentFeed(RECONVERTSTRING *reconv);
-  LRESULT OnReconvertString(RECONVERTSTRING *reconv);
+  LRESULT OnDocumentFeed(RECONVERTSTRING* reconv);
+  LRESULT OnReconvertString(RECONVERTSTRING* reconv);
+  LRESULT OnQueryCharPosition(IMECHARPOSITION* char_positon);
 
   // Asks the client to confirm current composition text.
   void ConfirmCompositionText();

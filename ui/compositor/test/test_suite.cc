@@ -4,12 +4,18 @@
 
 #include "ui/compositor/test/test_suite.h"
 
+#include "base/command_line.h"
 #include "base/message_loop.h"
 #include "ui/base/ui_base_paths.h"
 #include "ui/compositor/compositor.h"
+#include "ui/compositor/compositor_switches.h"
 #include "ui/compositor/test/compositor_test_support.h"
 #include "ui/gfx/gfx_paths.h"
 #include "ui/gl/gl_implementation.h"
+
+#if defined(USE_X11)
+#include <X11/Xlib.h>
+#endif
 
 namespace ui {
 namespace test {
@@ -20,6 +26,9 @@ CompositorTestSuite::CompositorTestSuite(int argc, char** argv)
 CompositorTestSuite::~CompositorTestSuite() {}
 
 void CompositorTestSuite::Initialize() {
+#if defined(USE_X11)
+  XInitThreads();
+#endif
 #if defined(OS_LINUX)
   gfx::InitializeGLBindings(gfx::kGLImplementationOSMesaGL);
 #endif
@@ -27,9 +36,9 @@ void CompositorTestSuite::Initialize() {
 
   gfx::RegisterPathProvider();
 
-  message_loop_.reset(new MessageLoop(MessageLoop::TYPE_UI));
+  message_loop_.reset(new base::MessageLoop(base::MessageLoop::TYPE_UI));
   CompositorTestSupport::Initialize();
-  Compositor::Initialize(false);
+  Compositor::Initialize();
 }
 
 void CompositorTestSuite::Shutdown() {

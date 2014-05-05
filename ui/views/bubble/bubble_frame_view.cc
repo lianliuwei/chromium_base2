@@ -9,10 +9,12 @@
 #include "grit/ui_resources.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/gfx/path.h"
 #include "ui/gfx/screen.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/widget/widget_delegate.h"
 #include "ui/views/window/client_view.h"
 
 namespace {
@@ -52,8 +54,7 @@ BubbleFrameView::BubbleFrameView(const gfx::Insets& content_margins)
       content_margins_(content_margins),
       title_(NULL),
       close_(NULL),
-      titlebar_extra_view_(NULL),
-      can_drag_(false) {
+      titlebar_extra_view_(NULL) {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   title_ = new Label(string16(), rb.GetFont(ui::ResourceBundle::MediumFont));
   title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
@@ -88,15 +89,37 @@ gfx::Rect BubbleFrameView::GetWindowBoundsForClientBounds(
 }
 
 int BubbleFrameView::NonClientHitTest(const gfx::Point& point) {
+  if (!bounds().Contains(point))
+    return HTNOWHERE;
   if (close_->visible() && close_->GetMirroredBounds().Contains(point))
     return HTCLOSE;
-  if (can_drag_ && point.y() < GetInsets().top())
+  if (!GetWidget()->widget_delegate()->CanResize())
+    return GetWidget()->client_view()->NonClientHitTest(point);
+
+  const int size = bubble_border_->GetBorderThickness() + 4;
+  const int hit = GetHTComponentForFrame(point, size, size, size, size, true);
+  if (hit == HTNOWHERE && point.y() < title_->bounds().bottom())
     return HTCAPTION;
-  return GetWidget()->client_view()->NonClientHitTest(point);
+  return hit;
 }
 
 void BubbleFrameView::GetWindowMask(const gfx::Size& size,
-                                    gfx::Path* window_mask) {}
+                                    gfx::Path* window_mask) {
+  if (bubble_border_->shadow() != BubbleBorder::NO_SHADOW_OPAQUE_BORDER)
+    return;
+
+  // Use a window mask roughly matching the border in the image assets.
+  static const int kBorderStrokeSize = 1;
+  static const SkScalar kCornerRadius = SkIntToScalar(6);
+  gfx::Insets border_insets = bubble_border_->GetInsets();
+  const SkRect rect = { SkIntToScalar(border_insets.left() - kBorderStrokeSize),
+                        SkIntToScalar(border_insets.top() - kBorderStrokeSize),
+                        SkIntToScalar(size.width() - border_insets.right() +
+                                      kBorderStrokeSize),
+                        SkIntToScalar(size.height() - border_insets.bottom() +
+                                      kBorderStrokeSize) };
+  window_mask->addRoundRect(rect, kCornerRadius, kCornerRadius);
+}
 
 void BubbleFrameView::ResetWindowControls() {}
 
@@ -143,8 +166,13 @@ void BubbleFrameView::Layout() {
   }
 }
 
-std::string BubbleFrameView::GetClassName() const {
-  return "ui/views/BubbleFrameView";
+const char* BubbleFrameView::GetClassName() const {
+  return "BubbleFrameView";
+}
+
+void BubbleFrameView::ChildPreferredSizeChanged(View* child) {
+  if (child == titlebar_extra_view_ || child == title_)
+    Layout();
 }
 
 void BubbleFrameView::ButtonPressed(Button* sender, const ui::Event& event) {
@@ -181,7 +209,7 @@ gfx::Rect BubbleFrameView::GetUpdatedWindowBounds(const gfx::Rect& anchor_rect,
   gfx::Insets insets(GetInsets());
   client_size.Enlarge(insets.width(), insets.height());
 
-  const BubbleBorder::ArrowLocation arrow = bubble_border_->arrow_location();
+  const BubbleBorder::Arrow arrow = bubble_border_->arrow();
   if (adjust_if_offscreen && BubbleBorder::has_arrow(arrow)) {
     if (!bubble_border_->is_arrow_at_center(arrow)) {
       // Try to mirror the anchoring if the bubble does not fit on the screen.
@@ -215,9 +243,9 @@ void BubbleFrameView::MirrorArrowIfOffScreen(
   gfx::Rect monitor_rect(GetMonitorBounds(anchor_rect));
   gfx::Rect window_bounds(bubble_border_->GetBounds(anchor_rect, client_size));
   if (GetOffScreenLength(monitor_rect, window_bounds, vertical) > 0) {
-    BubbleBorder::ArrowLocation arrow = bubble_border()->arrow_location();
+    BubbleBorder::Arrow arrow = bubble_border()->arrow();
     // Mirror the arrow and get the new bounds.
-    bubble_border_->set_arrow_location(
+    bubble_border_->set_arrow(
         vertical ? BubbleBorder::vertical_mirror(arrow) :
                    BubbleBorder::horizontal_mirror(arrow));
     gfx::Rect mirror_bounds =
@@ -225,7 +253,7 @@ void BubbleFrameView::MirrorArrowIfOffScreen(
     // Restore the original arrow if mirroring doesn't show more of the bubble.
     if (GetOffScreenLength(monitor_rect, mirror_bounds, vertical) >=
         GetOffScreenLength(monitor_rect, window_bounds, vertical))
-      bubble_border_->set_arrow_location(arrow);
+      bubble_border_->set_arrow(arrow);
     else
       SchedulePaint();
   }
@@ -233,7 +261,7 @@ void BubbleFrameView::MirrorArrowIfOffScreen(
 
 void BubbleFrameView::OffsetArrowIfOffScreen(const gfx::Rect& anchor_rect,
                                              const gfx::Size& client_size) {
-  BubbleBorder::ArrowLocation arrow = bubble_border()->arrow_location();
+  BubbleBorder::Arrow arrow = bubble_border()->arrow();
   DCHECK(BubbleBorder::is_arrow_at_center(arrow));
 
   // Get the desired bubble bounds without adjustment.

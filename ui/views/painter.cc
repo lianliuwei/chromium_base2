@@ -16,52 +16,27 @@
 #include "ui/gfx/point.h"
 #include "ui/gfx/rect.h"
 
+
 namespace views {
 
 namespace {
+
+// GradientPainter ------------------------------------------------------------
 
 class GradientPainter : public Painter {
  public:
   GradientPainter(bool horizontal,
                   SkColor* colors,
                   SkScalar* pos,
-                  size_t count)
-      : horizontal_(horizontal),
-        count_(count) {
-    pos_.reset(new SkScalar[count_]);
-    colors_.reset(new SkColor[count_]);
+                  size_t count);
+  virtual ~GradientPainter();
 
-    for (size_t i = 0; i < count_; ++i) {
-      pos_[i] = pos[i];
-      colors_[i] = colors[i];
-    }
-  }
-
-  virtual ~GradientPainter() {}
-
-  // Overridden from Painter:
-  virtual void Paint(gfx::Canvas* canvas, const gfx::Size& size) OVERRIDE {
-    SkPaint paint;
-    SkPoint p[2];
-    p[0].iset(0, 0);
-    if (horizontal_)
-      p[1].iset(size.width(), 0);
-    else
-      p[1].iset(0, size.height());
-
-    skia::RefPtr<SkShader> s = skia::AdoptRef(SkGradientShader::CreateLinear(
-        p, colors_.get(), pos_.get(), count_, SkShader::kClamp_TileMode, NULL));
-    paint.setStyle(SkPaint::kFill_Style);
-    paint.setShader(s.get());
-    // Need to unref shader, otherwise never deleted.
-
-    canvas->sk_canvas()->drawRectCoords(SkIntToScalar(0), SkIntToScalar(0),
-                                        SkIntToScalar(size.width()),
-                                        SkIntToScalar(size.height()), paint);
-  }
+  // Painter:
+  virtual gfx::Size GetMinimumSize() const OVERRIDE;
+  virtual void Paint(gfx::Canvas* canvas, const gfx::Size& size) OVERRIDE;
 
  private:
-  // If |horizontal_| is true then the gradiant is painted horizontally.
+  // If |horizontal_| is true then the gradient is painted horizontally.
   bool horizontal_;
   // The gradient colors.
   scoped_ptr<SkColor[]> colors_;
@@ -73,13 +48,57 @@ class GradientPainter : public Painter {
   DISALLOW_COPY_AND_ASSIGN(GradientPainter);
 };
 
+GradientPainter::GradientPainter(bool horizontal,
+                                 SkColor* colors,
+                                 SkScalar* pos,
+                                 size_t count)
+    : horizontal_(horizontal),
+      colors_(new SkColor[count]),
+      pos_(new SkScalar[count]),
+      count_(count) {
+  for (size_t i = 0; i < count_; ++i) {
+    pos_[i] = pos[i];
+    colors_[i] = colors[i];
+  }
+}
+
+GradientPainter::~GradientPainter() {
+}
+
+gfx::Size GradientPainter::GetMinimumSize() const {
+  return gfx::Size();
+}
+
+void GradientPainter::Paint(gfx::Canvas* canvas, const gfx::Size& size) {
+  SkPaint paint;
+  SkPoint p[2];
+  p[0].iset(0, 0);
+  if (horizontal_)
+    p[1].iset(size.width(), 0);
+  else
+    p[1].iset(0, size.height());
+
+  skia::RefPtr<SkShader> s = skia::AdoptRef(SkGradientShader::CreateLinear(
+      p, colors_.get(), pos_.get(), count_, SkShader::kClamp_TileMode, NULL));
+  paint.setStyle(SkPaint::kFill_Style);
+  paint.setShader(s.get());
+
+  canvas->sk_canvas()->drawRectCoords(SkIntToScalar(0), SkIntToScalar(0),
+                                      SkIntToScalar(size.width()),
+                                      SkIntToScalar(size.height()), paint);
+}
+
+
+// ImagePainter ---------------------------------------------------------------
+
 // ImagePainter stores and paints nine images as a scalable grid.
 class VIEWS_EXPORT ImagePainter : public Painter {
  public:
-  // Construct an ImagePainter with the specified image resource ids.
+  // Constructs an ImagePainter with the specified image resource ids.
   // See CreateImageGridPainter()'s comment regarding image ID count and order.
   explicit ImagePainter(const int image_ids[]);
-  // Construct an ImagePainter with the specified image and insets.
+
+  // Constructs an ImagePainter with the specified image and insets.
   ImagePainter(const gfx::ImageSkia& image, const gfx::Insets& insets);
 
   virtual ~ImagePainter();
@@ -87,17 +106,24 @@ class VIEWS_EXPORT ImagePainter : public Painter {
   // Returns true if the images are empty.
   bool IsEmpty() const;
 
-  // Overridden from Painter:
+  // Painter:
+  virtual gfx::Size GetMinimumSize() const OVERRIDE;
   virtual void Paint(gfx::Canvas* canvas, const gfx::Size& size) OVERRIDE;
 
  private:
-  // Images must share widths by column and heights by row as depicted below.
-  // Coordinates along the X and Y axes are used for construction and painting.
-  //     x0   x1   x2   x3
-  // y0__|____|____|____|
-  // y1__|_i0_|_i1_|_i2_|
-  // y2__|_i3_|_i4_|_i5_|
-  // y3__|_i6_|_i7_|_i8_|
+  // Stretches the given image over the specified canvas area.
+  static void Fill(gfx::Canvas* c,
+                   const gfx::ImageSkia& i,
+                   int x,
+                   int y,
+                   int w,
+                   int h);
+
+  // Images are numbered as depicted below.
+  //  ____________________
+  // |__i0__|__i1__|__i2__|
+  // |__i3__|__i4__|__i5__|
+  // |__i6__|__i7__|__i8__|
   gfx::ImageSkia images_[9];
 
   DISALLOW_COPY_AND_ASSIGN(ImagePainter);
@@ -106,7 +132,8 @@ class VIEWS_EXPORT ImagePainter : public Painter {
 ImagePainter::ImagePainter(const int image_ids[]) {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   for (size_t i = 0; i < 9; ++i)
-    images_[i] = *rb.GetImageSkiaNamed(image_ids[i]);
+    if (image_ids[i] != 0)
+      images_[i] = *rb.GetImageSkiaNamed(image_ids[i]);
 }
 
 ImagePainter::ImagePainter(const gfx::ImageSkia& image,
@@ -135,31 +162,70 @@ bool ImagePainter::IsEmpty() const {
   return images_[0].isNull();
 }
 
+gfx::Size ImagePainter::GetMinimumSize() const {
+  return IsEmpty() ? gfx::Size() : gfx::Size(
+      images_[0].width() + images_[1].width() + images_[2].width(),
+      images_[0].height() + images_[3].height() + images_[6].height());
+}
+
 void ImagePainter::Paint(gfx::Canvas* canvas, const gfx::Size& size) {
   if (IsEmpty())
     return;
 
-  // Paint image subsets in accordance with the |images_| format.
-  const gfx::Rect rect(size);
-  const int x[] = { rect.x(), rect.x() + images_[0].width(),
-                    rect.right() - images_[2].width(), rect.right() };
-  const int y[] = { rect.y(), rect.y() + images_[0].height(),
-                    rect.bottom() - images_[6].height(), rect.bottom() };
+  // In case the corners and edges don't all have the same width/height, we draw
+  // the center first, and extend it out in all directions to the edges of the
+  // images with the smallest widths/heights.  This way there will be no
+  // unpainted areas, though some corners or edges might overlap the center.
+  int w = size.width();
+  int i0w = images_[0].width();
+  int i2w = images_[2].width();
+  int i3w = images_[3].width();
+  int i5w = images_[5].width();
+  int i6w = images_[6].width();
+  int i8w = images_[8].width();
+  int i4x = std::min(std::min(i0w, i3w), i6w);
+  int i4w = w - i4x - std::min(std::min(i2w, i5w), i8w);
+  int h = size.height();
+  int i0h = images_[0].height();
+  int i1h = images_[1].height();
+  int i2h = images_[2].height();
+  int i6h = images_[6].height();
+  int i7h = images_[7].height();
+  int i8h = images_[8].height();
+  int i4y = std::min(std::min(i0h, i1h), i2h);
+  int i4h = h - i4y - std::min(std::min(i6h, i7h), i8h);
+  if (!images_[4].isNull())
+    Fill(canvas, images_[4], i4x, i4y, i4w, i4h);
+  canvas->DrawImageInt(images_[0], 0, 0);
+  Fill(canvas, images_[1], i0w, 0, w - i0w - i2w, i1h);
+  canvas->DrawImageInt(images_[2], w - i2w, 0);
+  Fill(canvas, images_[3], 0, i0h, i3w, h - i0h - i6h);
+  Fill(canvas, images_[5], w - i5w, i2h, i5w, h - i2h - i8h);
+  canvas->DrawImageInt(images_[6], 0, h - i6h);
+  Fill(canvas, images_[7], i6w, h - i7h, w - i6w - i8w, i7h);
+  canvas->DrawImageInt(images_[8], w - i8w, h - i8h);
+}
 
-  canvas->DrawImageInt(images_[0], x[0], y[0]);
-  canvas->TileImageInt(images_[1], x[1], y[0], x[2] - x[1], y[1] - y[0]);
-  canvas->DrawImageInt(images_[2], x[2], y[0]);
-  canvas->TileImageInt(images_[3], x[0], y[1], x[1] - x[0], y[2] - y[1]);
-  canvas->DrawImageInt(
-      images_[4], 0, 0, images_[4].width(), images_[4].height(),
-      x[1], y[1], x[2] - x[1], y[2] - y[1], false);
-  canvas->TileImageInt(images_[5], x[2], y[1], x[3] - x[2], y[2] - y[1]);
-  canvas->DrawImageInt(images_[6], 0, y[2]);
-  canvas->TileImageInt(images_[7], x[1], y[2], x[2] - x[1], y[3] - y[2]);
-  canvas->DrawImageInt(images_[8], x[2], y[2]);
+// static
+void ImagePainter::Fill(gfx::Canvas* c,
+                        const gfx::ImageSkia& i,
+                        int x,
+                        int y,
+                        int w,
+                        int h) {
+  c->DrawImageInt(i, 0, 0, i.width(), i.height(), x, y, w, h, false);
 }
 
 }  // namespace
+
+
+// Painter --------------------------------------------------------------------
+
+Painter::Painter() {
+}
+
+Painter::~Painter() {
+}
 
 // static
 void Painter::PaintPainterAt(gfx::Canvas* canvas,
@@ -208,26 +274,37 @@ Painter* Painter::CreateImageGridPainter(const int image_ids[]) {
   return new ImagePainter(image_ids);
 }
 
+
+// HorizontalPainter ----------------------------------------------------------
+
 HorizontalPainter::HorizontalPainter(const int image_resource_names[]) {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   for (int i = 0; i < 3; ++i)
     images_[i] = rb.GetImageNamed(image_resource_names[i]).ToImageSkia();
-  height_ = images_[LEFT]->height();
-  DCHECK(images_[LEFT]->height() == images_[RIGHT]->height() &&
-         images_[LEFT]->height() == images_[CENTER]->height());
+  DCHECK_EQ(images_[LEFT]->height(), images_[CENTER]->height());
+  DCHECK_EQ(images_[LEFT]->height(), images_[RIGHT]->height());
+}
+
+HorizontalPainter::~HorizontalPainter() {
+}
+
+gfx::Size HorizontalPainter::GetMinimumSize() const {
+  return gfx::Size(
+      images_[LEFT]->width() + images_[CENTER]->width() +
+          images_[RIGHT]->width(), images_[LEFT]->height());
 }
 
 void HorizontalPainter::Paint(gfx::Canvas* canvas, const gfx::Size& size) {
-  if (size.width() < (images_[LEFT]->width() + images_[CENTER]->width() +
-      images_[RIGHT]->width())) {
-    // No room to paint.
-    return;
-  }
+  if (size.width() < GetMinimumSize().width())
+    return;  // No room to paint.
+
   canvas->DrawImageInt(*images_[LEFT], 0, 0);
-  canvas->DrawImageInt(*images_[RIGHT],
-                       size.width() - images_[RIGHT]->width(), 0);
-  canvas->TileImageInt(*images_[CENTER], images_[LEFT]->width(), 0,
-      size.width() - images_[LEFT]->width() - images_[RIGHT]->width(), height_);
+  canvas->DrawImageInt(*images_[RIGHT], size.width() - images_[RIGHT]->width(),
+                       0);
+  canvas->TileImageInt(
+      *images_[CENTER], images_[LEFT]->width(), 0,
+      size.width() - images_[LEFT]->width() - images_[RIGHT]->width(),
+      images_[LEFT]->height());
 }
 
 }  // namespace views

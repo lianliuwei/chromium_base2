@@ -16,7 +16,6 @@
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/image/image.h"
 #include "ui/native_theme/common_theme.h"
-#include "ui/native_theme/native_theme.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/menu/menu_config.h"
@@ -84,7 +83,7 @@ int MenuItemView::item_right_margin_;
 int MenuItemView::pref_menu_height_;
 
 // static
-const char MenuItemView::kViewClassName[] = "views/MenuItemView";
+const char MenuItemView::kViewClassName[] = "MenuItemView";
 
 MenuItemView::MenuItemView(MenuDelegate* delegate)
     : delegate_(delegate),
@@ -613,7 +612,7 @@ MenuItemView::~MenuItemView() {
   STLDeleteElements(&removed_items_);
 }
 
-std::string MenuItemView::GetClassName() const {
+const char* MenuItemView::GetClassName() const {
   return kViewClassName;
 }
 
@@ -759,14 +758,7 @@ void MenuItemView::AdjustBoundsForRTLUI(gfx::Rect* rect) const {
   rect->set_x(GetMirroredXForRect(*rect));
 }
 
-#if defined(USE_AURA) && !defined(OS_WIN)
 void MenuItemView::PaintButton(gfx::Canvas* canvas, PaintButtonMode mode) {
-  PaintButtonCommon(canvas, mode);
-}
-#endif
-
-void MenuItemView::PaintButtonCommon(gfx::Canvas* canvas,
-                                     PaintButtonMode mode) {
   const MenuConfig& config = GetMenuConfig();
   bool render_selection =
       (mode == PB_NORMAL && IsSelected() &&
@@ -791,18 +783,14 @@ void MenuItemView::PaintButtonCommon(gfx::Canvas* canvas,
                                                &override_color)) {
     canvas->DrawColor(override_color);
   } else if (render_selection) {
-    // TODO(erg): The following doesn't actually get the focused menu item
-    // background for times when we want to match the native OS.
-    if (ui::NativeTheme::IsNewMenuStyleEnabled()) {
-      gfx::Rect item_bounds(0, 0, width(), height());
-      AdjustBoundsForRTLUI(&item_bounds);
-      CommonThemePaintMenuItemBackground(canvas->sk_canvas(),
-          ui::NativeTheme::kHovered, item_bounds);
-    } else {
-      SkColor bg_color = native_theme->GetSystemColor(
-          ui::NativeTheme::kColorId_FocusedMenuItemBackgroundColor);
-      canvas->DrawColor(bg_color, SkXfermode::kSrc_Mode);
-    }
+    gfx::Rect item_bounds(0, 0, width(), height());
+    AdjustBoundsForRTLUI(&item_bounds);
+
+    native_theme->Paint(canvas->sk_canvas(),
+                        ui::NativeTheme::kMenuItemBackground,
+                        ui::NativeTheme::kHovered,
+                        item_bounds,
+                        ui::NativeTheme::ExtraParams());
   }
 
   // Render the check.
@@ -827,9 +815,14 @@ void MenuItemView::PaintButtonCommon(gfx::Canvas* canvas,
   }
 
   // Render the foreground.
-  SkColor fg_color = native_theme->GetSystemColor(
-      enabled() ? ui::NativeTheme::kColorId_EnabledMenuItemForegroundColor
-          : ui::NativeTheme::kColorId_DisabledMenuItemForegroundColor);
+  ui::NativeTheme::ColorId color_id =
+      ui::NativeTheme::kColorId_DisabledMenuItemForegroundColor;
+  if (enabled()) {
+    color_id = render_selection ?
+        ui::NativeTheme::kColorId_SelectedMenuItemForegroundColor:
+        ui::NativeTheme::kColorId_EnabledMenuItemForegroundColor;
+  }
+  SkColor fg_color = native_theme->GetSystemColor(color_id);
   SkColor override_foreground_color;
   if (delegate && delegate->GetForegroundColor(GetCommand(),
                                                render_selection,
@@ -838,9 +831,7 @@ void MenuItemView::PaintButtonCommon(gfx::Canvas* canvas,
 
   const gfx::Font& font = GetFont();
   int accel_width = parent_menu_item_->GetSubmenu()->max_accelerator_width();
-  int label_start = label_start_ + left_icon_margin_ + right_icon_margin_;
-  if ((type_ == CHECKBOX || type_ == RADIO) && icon_view_)
-    label_start += icon_view_->size().width() + config.icon_to_label_padding;
+  int label_start = GetLabelStartForThisItem();
 
   int width = this->width() - label_start - accel_width -
       (!delegate ||
@@ -855,7 +846,7 @@ void MenuItemView::PaintButtonCommon(gfx::Canvas* canvas,
                         text_bounds.x(), text_bounds.y(), text_bounds.width(),
                         text_bounds.height(), flags);
 
-  PaintAccelerator(canvas);
+  PaintAccelerator(canvas, render_selection);
 
   // Render the submenu indicator (arrow).
   if (HasSubmenu()) {
@@ -870,7 +861,8 @@ void MenuItemView::PaintButtonCommon(gfx::Canvas* canvas,
   }
 }
 
-void MenuItemView::PaintAccelerator(gfx::Canvas* canvas) {
+void MenuItemView::PaintAccelerator(gfx::Canvas* canvas,
+                                    bool render_selection) {
   string16 accel_text = GetAcceleratorText();
   if (accel_text.empty())
     return;
@@ -892,10 +884,16 @@ void MenuItemView::PaintAccelerator(gfx::Canvas* canvas) {
   else
     flags |= gfx::Canvas::TEXT_ALIGN_RIGHT;
   canvas->DrawStringInt(
-      accel_text, font, GetNativeTheme()->GetSystemColor(
-          ui::NativeTheme::kColorId_TextButtonDisabledColor),
-      accel_bounds.x(), accel_bounds.y(), accel_bounds.width(),
-      accel_bounds.height(), flags);
+      accel_text,
+      font,
+      GetNativeTheme()->GetSystemColor(render_selection ?
+          ui::NativeTheme::kColorId_SelectedMenuItemForegroundColor :
+          ui::NativeTheme::kColorId_ButtonDisabledColor),
+      accel_bounds.x(),
+      accel_bounds.y(),
+      accel_bounds.width(),
+      accel_bounds.height(),
+      flags);
 }
 
 void MenuItemView::DestroyAllMenuHosts() {
@@ -989,7 +987,7 @@ MenuItemView::MenuItemDimensions MenuItemView::CalculateDimensions() {
     left_icon_margin_ = 0;
     right_icon_margin_ = 0;
   }
-  int label_start = label_start_ + left_icon_margin_ + right_icon_margin_;
+  int label_start = GetLabelStartForThisItem();
 
   dimensions.standard_width = font.GetStringWidth(title_) + label_start +
       item_right_margin_;
@@ -1006,6 +1004,15 @@ MenuItemView::MenuItemDimensions MenuItemView::CalculateDimensions() {
   return dimensions;
 }
 
+int MenuItemView::GetLabelStartForThisItem() {
+  int label_start = label_start_ + left_icon_margin_ + right_icon_margin_;
+  if ((type_ == CHECKBOX || type_ == RADIO) && icon_view_) {
+    label_start += icon_view_->size().width() +
+        GetMenuConfig().icon_to_label_padding;
+  }
+  return label_start;
+}
+
 string16 MenuItemView::GetAcceleratorText() {
   if (id() == kEmptyMenuItemViewID) {
     // Don't query the delegate for menus that represent no children.
@@ -1016,7 +1023,7 @@ string16 MenuItemView::GetAcceleratorText() {
     return string16();
 
   ui::Accelerator accelerator;
-  return (GetDelegate() &&
+  return (GetDelegate() && GetCommand() &&
           GetDelegate()->GetAccelerator(GetCommand(), &accelerator)) ?
       accelerator.GetShortcutText() : string16();
 }

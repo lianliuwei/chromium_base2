@@ -6,6 +6,7 @@
 
 #include "grit/ui_resources.h"
 #include "grit/ui_strings.h"
+#include "ui/base/accessibility/accessible_view_state.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -13,9 +14,10 @@
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/shadow_value.h"
 #include "ui/gfx/skia_util.h"
-#include "ui/message_center/message_center_constants.h"
+#include "ui/message_center/message_center.h"
+#include "ui/message_center/message_center_style.h"
 #include "ui/message_center/message_center_util.h"
-#include "ui/message_center/notification_change_observer.h"
+#include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/scroll_view.h"
@@ -31,7 +33,6 @@ const int kExpandIconRightPadding = 11;
 const int kShadowOffset = 1;
 const int kShadowBlur = 4;
 
-const SkColor kShadowColor = SkColorSetARGB(0.3 * 255, 0, 0, 0);
 const SkColor kTransparentColor = SkColorSetARGB(0, 0, 0, 0);
 
 // Menu constants
@@ -54,6 +55,8 @@ class ControlButton : public views::ImageButton {
   // Overridden from views::ImageButton:
   virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
+  virtual void OnFocus() OVERRIDE;
+  virtual void OnPaintFocusBorder(gfx::Canvas* canvas) OVERRIDE;
 
   // The SetPadding() method also sets the button's image alignment (positive
   // values yield left/top alignments, negative values yield right/bottom ones,
@@ -77,6 +80,7 @@ class ControlButton : public views::ImageButton {
 ControlButton::ControlButton(views::ButtonListener* listener)
   : views::ImageButton(listener) {
   set_focusable(true);
+  set_request_focus_on_press(false);
 }
 
 ControlButton::~ControlButton() {
@@ -129,6 +133,18 @@ void ControlButton::OnPaint(gfx::Canvas* canvas) {
   OnPaintFocusBorder(canvas);
 }
 
+void ControlButton::OnFocus() {
+  views::ImageButton::OnFocus();
+  ScrollRectToVisible(GetLocalBounds());
+}
+
+void ControlButton::OnPaintFocusBorder(gfx::Canvas* canvas) {
+  if (HasFocus() && (focusable() || IsAccessibilityFocusable())) {
+    canvas->DrawRect(gfx::Rect(2, 1, width() - 4, height() - 3),
+                     message_center::kFocusBorderColor);
+  }
+}
+
 gfx::Point ControlButton::ComputePaddedImagePaintPosition(
     const gfx::ImageSkia& image) {
   gfx::Vector2d offset;
@@ -166,7 +182,8 @@ class ShadowBorder : public views::Border {
 void ShadowBorder::Paint(const views::View& view, gfx::Canvas* canvas) {
   SkPaint paint;
   std::vector<gfx::ShadowValue> shadows;
-  shadows.push_back(gfx::ShadowValue(gfx::Point(), kShadowBlur, kShadowColor));
+  shadows.push_back(gfx::ShadowValue(gfx::Point(), kShadowBlur,
+      message_center::kShadowColor));
   skia::RefPtr<SkDrawLooper> looper = gfx::CreateShadowDrawLooper(shadows);
   paint.setLooper(looper.get());
   paint.setColor(kTransparentColor);
@@ -185,7 +202,7 @@ gfx::Insets ShadowBorder::GetInsets() const {
 class MenuModel : public ui::SimpleMenuModel,
                   public ui::SimpleMenuModel::Delegate {
  public:
-  MenuModel(message_center::NotificationChangeObserver* observer,
+  MenuModel(message_center::MessageCenter* message_center,
             const std::string& notification_id,
             const string16& display_source,
             const std::string& extension_id);
@@ -201,30 +218,31 @@ class MenuModel : public ui::SimpleMenuModel,
   virtual void ExecuteCommand(int command_id, int event_flags) OVERRIDE;
 
  private:
-  message_center::NotificationChangeObserver* observer_;  // Weak reference.
+  message_center::MessageCenter* message_center_;  // Weak reference.
   std::string notification_id_;
 
   DISALLOW_COPY_AND_ASSIGN(MenuModel);
 };
 
-MenuModel::MenuModel(message_center::NotificationChangeObserver* observer,
+MenuModel::MenuModel(message_center::MessageCenter* message_center,
                      const std::string& notification_id,
                      const string16& display_source,
                      const std::string& extension_id)
-    : ALLOW_THIS_IN_INITIALIZER_LIST(ui::SimpleMenuModel(this)),
-      observer_(observer),
+    : ui::SimpleMenuModel(this),
+      message_center_(message_center),
       notification_id_(notification_id) {
   // Add 'disable notifications' menu item.
-  if (!extension_id.empty()) {
+  if (!extension_id.empty() && !display_source.empty()) {
     AddItem(kToggleExtensionCommand,
-            l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_EXTENSIONS_DISABLE));
+            l10n_util::GetStringFUTF16(IDS_MESSAGE_CENTER_EXTENSIONS_DISABLE,
+                                       display_source));
   } else if (!display_source.empty()) {
     AddItem(kTogglePermissionCommand,
             l10n_util::GetStringFUTF16(IDS_MESSAGE_CENTER_SITE_DISABLE,
                                        display_source));
   }
   // Add settings menu item.
-  if (!display_source.empty()) {
+  if (message_center::IsRichNotificationEnabled() || !display_source.empty()) {
     AddItem(kShowSettingsCommand,
             l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_SETTINGS));
   }
@@ -242,7 +260,7 @@ bool MenuModel::IsCommandIdChecked(int command_id) const {
 }
 
 bool MenuModel::IsCommandIdEnabled(int command_id) const {
-  return false;
+  return true;
 }
 
 bool MenuModel::GetAcceleratorForCommandId(int command_id,
@@ -253,46 +271,104 @@ bool MenuModel::GetAcceleratorForCommandId(int command_id,
 void MenuModel::ExecuteCommand(int command_id, int event_flags) {
   switch (command_id) {
     case kToggleExtensionCommand:
-      observer_->OnDisableNotificationsByExtension(notification_id_);
+      message_center_->DisableNotificationsByExtension(notification_id_);
       break;
     case kTogglePermissionCommand:
-      observer_->OnDisableNotificationsByUrl(notification_id_);
+      message_center_->DisableNotificationsByUrl(notification_id_);
       break;
     case kShowSettingsCommand:
-      observer_->OnShowNotificationSettings(notification_id_);
+      if (message_center::IsRichNotificationEnabled())
+        message_center_->ShowNotificationSettingsDialog(NULL);
+      else
+        message_center_->ShowNotificationSettings(notification_id_);
       break;
     default:
       NOTREACHED();
   }
 }
 
-} // namespace
+}  // namespace
 
 namespace message_center {
 
-MessageView::MessageView(const Notification& notification,
-                         NotificationChangeObserver* observer,
-                         bool expanded)
-    : observer_(observer),
+class MessageViewContextMenuController : public views::ContextMenuController {
+ public:
+  MessageViewContextMenuController(
+      message_center::MessageCenter* message_center,
+      const Notification& notification);
+  virtual ~MessageViewContextMenuController();
+
+ protected:
+  // Overridden from views::ContextMenuController:
+  virtual void ShowContextMenuForView(views::View* source,
+                                      const gfx::Point& point) OVERRIDE;
+
+  message_center::MessageCenter* message_center_;
+  std::string notification_id_;
+  string16 display_source_;
+  std::string extension_id_;
+};
+
+MessageViewContextMenuController::MessageViewContextMenuController(
+    message_center::MessageCenter* message_center,
+    const Notification& notification)
+    : message_center_(message_center),
       notification_id_(notification.id()),
       display_source_(notification.display_source()),
-      extension_id_(notification.extension_id()),
+      extension_id_(notification.extension_id()) {
+}
+
+MessageViewContextMenuController::~MessageViewContextMenuController() {
+}
+
+void MessageViewContextMenuController::ShowContextMenuForView(
+    views::View* source,
+    const gfx::Point& point) {
+  MenuModel menu_model(message_center_, notification_id_,
+                       display_source_, extension_id_);
+  if (menu_model.GetItemCount() == 0)
+    return;
+
+  views::MenuRunner menu_runner(&menu_model);
+
+  ignore_result(menu_runner.RunMenuAt(
+      source->GetWidget()->GetTopLevelWidget(),
+      NULL,
+      gfx::Rect(point, gfx::Size()),
+      views::MenuItemView::TOPRIGHT,
+      views::MenuRunner::HAS_MNEMONICS));
+}
+
+MessageView::MessageView(const Notification& notification,
+                         MessageCenter* message_center,
+                         bool expanded)
+    : message_center_(message_center),
+      notification_id_(notification.id()),
+      context_menu_controller_(new MessageViewContextMenuController(
+          message_center, notification)),
       scroller_(NULL),
       is_expanded_(expanded) {
+  set_focusable(true);
+  set_context_menu_controller(context_menu_controller_.get());
+
   ControlButton *close = new ControlButton(this);
   close->SetPadding(-kCloseIconRightPadding, kCloseIconTopPadding);
   close->SetNormalImage(IDR_NOTIFICATION_CLOSE);
   close->SetHoveredImage(IDR_NOTIFICATION_CLOSE_HOVER);
   close->SetPressedImage(IDR_NOTIFICATION_CLOSE_PRESSED);
   close->set_owned_by_client();
+  close->SetAccessibleName(l10n_util::GetStringUTF16(
+      IDS_MESSAGE_CENTER_CLOSE_NOTIFICATION_BUTTON_ACCESSIBLE_NAME));
   close_button_.reset(close);
 
   ControlButton *expand = new ControlButton(this);
   expand->SetPadding(-kExpandIconRightPadding, -kExpandIconBottomPadding);
-  expand->SetNormalImage(IDR_NOTIFICATIONS_EXPAND);
-  expand->SetHoveredImage(IDR_NOTIFICATIONS_EXPAND_HOVER);
-  expand->SetPressedImage(IDR_NOTIFICATIONS_EXPAND_PRESSED);
+  expand->SetNormalImage(IDR_NOTIFICATION_EXPAND);
+  expand->SetHoveredImage(IDR_NOTIFICATION_EXPAND_HOVER);
+  expand->SetPressedImage(IDR_NOTIFICATION_EXPAND_PRESSED);
   expand->set_owned_by_client();
+  expand->SetAccessibleName(l10n_util::GetStringUTF16(
+      IDS_MESSAGE_CENTER_EXPAND_NOTIFICATION_BUTTON_ACCESSIBLE_NAME));
   expand_button_.reset(expand);
 
   if (IsRichNotificationEnabled())
@@ -313,24 +389,57 @@ gfx::Insets MessageView::GetShadowInsets() {
                      kShadowBlur / 2);
 }
 
+bool MessageView::IsCloseButtonFocused() {
+  views::FocusManager* focus_manager = GetFocusManager();
+  return focus_manager && focus_manager->GetFocusedView() == close_button();
+}
+
+void MessageView::RequestFocusOnCloseButton() {
+  close_button_->RequestFocus();
+}
+
+void MessageView::GetAccessibleState(ui::AccessibleViewState* state) {
+  state->role = ui::AccessibilityTypes::ROLE_PUSHBUTTON;
+  state->name = accessible_name_;
+}
+
 bool MessageView::OnMousePressed(const ui::MouseEvent& event) {
-  if (event.flags() & ui::EF_RIGHT_MOUSE_BUTTON) {
-    ShowMenu(event.location());
+  if (event.IsOnlyLeftMouseButton()) {
+    message_center_->ClickOnNotification(notification_id_);
     return true;
   }
-  observer_->OnClicked(notification_id_);
+  return false;
+}
+
+bool MessageView::OnKeyPressed(const ui::KeyEvent& event) {
+  if (event.flags() != ui::EF_NONE)
+    return false;
+
+  if (event.key_code() == ui::VKEY_RETURN) {
+    message_center_->ClickOnNotification(notification_id_);
+    return true;
+  } else if ((event.key_code() == ui::VKEY_DELETE ||
+              event.key_code() == ui::VKEY_BACK)) {
+    message_center_->RemoveNotification(notification_id_, true);  // By user.
+    return true;
+  }
+
+  return false;
+}
+
+bool MessageView::OnKeyReleased(const ui::KeyEvent& event) {
+  // Space key handling is triggerred at key-release timing. See
+  // ui/views/controls/buttons/custom_button.cc for why.
+  if (event.flags() != ui::EF_NONE || event.flags() != ui::VKEY_SPACE)
+    return false;
+
+  message_center_->ClickOnNotification(notification_id_);
   return true;
 }
 
 void MessageView::OnGestureEvent(ui::GestureEvent* event) {
   if (event->type() == ui::ET_GESTURE_TAP) {
-    observer_->OnClicked(notification_id_);
-    event->SetHandled();
-    return;
-  }
-
-  if (event->type() == ui::ET_GESTURE_LONG_PRESS) {
-    ShowMenu(event->location());
+    message_center_->ClickOnNotification(notification_id_);
     event->SetHandled();
     return;
   }
@@ -348,35 +457,25 @@ void MessageView::OnGestureEvent(ui::GestureEvent* event) {
   event->SetHandled();
 }
 
-void MessageView::ButtonPressed(views::Button* sender,
-                                const ui::Event& event) {
-  if (sender == close_button()) {
-    observer_->OnRemoveNotification(notification_id_, true);  // By user.
-  } else if (sender == expand_button()) {
-    is_expanded_ = true;
-    observer_->OnExpanded(notification_id_);
+void MessageView::OnPaintFocusBorder(gfx::Canvas* canvas) {
+  if (HasFocus()) {
+    canvas->DrawRect(gfx::Rect(1, 0, width() - 2, height() - 2),
+                     message_center::kFocusBorderColor);
   }
 }
 
-void MessageView::ShowMenu(gfx::Point screen_location) {
-  MenuModel menu_model(observer_, notification_id_,
-                       display_source_, extension_id_);
-  if (menu_model.GetItemCount() == 0)
-    return;
-
-  views::MenuRunner menu_runner(&menu_model);
-
-  views::View::ConvertPointToScreen(this, &screen_location);
-  ignore_result(menu_runner.RunMenuAt(
-      GetWidget()->GetTopLevelWidget(),
-      NULL,
-      gfx::Rect(screen_location, gfx::Size()),
-      views::MenuItemView::TOPRIGHT,
-      views::MenuRunner::HAS_MNEMONICS));
+void MessageView::ButtonPressed(views::Button* sender,
+                                const ui::Event& event) {
+  if (sender == close_button()) {
+    message_center_->RemoveNotification(notification_id_, true);  // By user.
+  } else if (sender == expand_button()) {
+    is_expanded_ = true;
+    message_center_->ExpandNotification(notification_id_);
+  }
 }
 
 void MessageView::OnSlideOut() {
-  observer_->OnRemoveNotification(notification_id_, true);  // By user.
+  message_center_->RemoveNotification(notification_id_, true);  // By user.
 }
 
 }  // namespace message_center

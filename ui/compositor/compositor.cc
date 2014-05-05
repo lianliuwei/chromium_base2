@@ -11,6 +11,7 @@
 #include "base/command_line.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop.h"
+#include "base/run_loop.h"
 #include "base/string_util.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
@@ -31,8 +32,8 @@
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_switches.h"
-#include "webkit/gpu/grcontext_for_webgraphicscontext3d.h"
-#include "webkit/gpu/webgraphicscontext3d_in_process_impl.h"
+#include "webkit/common/gpu/grcontext_for_webgraphicscontext3d.h"
+#include "webkit/common/gpu/webgraphicscontext3d_in_process_command_buffer_impl.h"
 
 #if defined(OS_CHROMEOS)
 #include "base/chromeos/chromeos_version.h"
@@ -41,7 +42,7 @@
 namespace {
 
 const double kDefaultRefreshRate = 60.0;
-const double kTestRefreshRate = 100.0;
+const double kTestRefreshRate = 200.0;
 
 enum SwapType {
   DRAW_SWAP,
@@ -244,12 +245,13 @@ WebKit::WebGraphicsContext3D* DefaultContextFactory::CreateContextCommon(
   attrs.stencil = false;
   attrs.antialias = false;
   attrs.shareResources = true;
+  using webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl;
   WebKit::WebGraphicsContext3D* context =
       offscreen ?
-      webkit::gpu::WebGraphicsContext3DInProcessImpl::CreateForWebView(
-          attrs, false) :
-      webkit::gpu::WebGraphicsContext3DInProcessImpl::CreateForWindow(
-          attrs, compositor->widget(), NULL);
+      WebGraphicsContext3DInProcessCommandBufferImpl::CreateOffscreenContext(
+          attrs) :
+      WebGraphicsContext3DInProcessCommandBufferImpl::CreateViewContext(
+          attrs, compositor->widget());
   if (!context)
     return NULL;
 
@@ -318,7 +320,7 @@ std::string Texture::Produce() {
 
 CompositorLock::CompositorLock(Compositor* compositor)
     : compositor_(compositor) {
-  MessageLoop::current()->PostDelayedTask(
+  base::MessageLoop::current()->PostDelayedTask(
       FROM_HERE,
       base::Bind(&CompositorLock::CancelLock, AsWeakPtr()),
       base::TimeDelta::FromMilliseconds(kCompositorLockTimeoutMs));
@@ -333,6 +335,47 @@ void CompositorLock::CancelLock() {
     return;
   compositor_->UnlockCompositor();
   compositor_ = NULL;
+}
+
+// static
+void DrawWaiterForTest::Wait(Compositor* compositor) {
+  DrawWaiterForTest waiter;
+  waiter.WaitImpl(compositor);
+}
+
+DrawWaiterForTest::DrawWaiterForTest() {
+}
+
+DrawWaiterForTest::~DrawWaiterForTest() {
+}
+
+void DrawWaiterForTest::WaitImpl(Compositor* compositor) {
+  compositor->AddObserver(this);
+  wait_run_loop_.reset(new base::RunLoop());
+  wait_run_loop_->Run();
+  compositor->RemoveObserver(this);
+}
+
+void DrawWaiterForTest::OnCompositingDidCommit(Compositor* compositor) {
+}
+
+void DrawWaiterForTest::OnCompositingStarted(Compositor* compositor,
+                                             base::TimeTicks start_time) {
+}
+
+void DrawWaiterForTest::OnCompositingEnded(Compositor* compositor) {
+  wait_run_loop_->Quit();
+}
+
+void DrawWaiterForTest::OnCompositingAborted(Compositor* compositor) {
+}
+
+void DrawWaiterForTest::OnCompositingLockStateChanged(Compositor* compositor) {
+}
+
+void DrawWaiterForTest::OnUpdateVSyncParameters(Compositor* compositor,
+                                                base::TimeTicks timebase,
+                                                base::TimeDelta interval) {
 }
 
 class PostedSwapQueue {
@@ -410,10 +453,13 @@ Compositor::Compositor(CompositorDelegate* delegate,
       device_scale_factor_(0.0f),
       last_started_frame_(0),
       last_ended_frame_(0),
+      next_draw_is_resize_(false),
       disable_schedule_composite_(false),
       compositor_lock_(NULL) {
   root_web_layer_ = cc::Layer::Create();
   root_web_layer_->SetAnchorPoint(gfx::PointF(0.f, 0.f));
+  // TODO(piman): remove after crbug.com/235302 is fixed.
+  root_web_layer_->SetMasksToBounds(true);
 
   CommandLine* command_line = CommandLine::ForCurrentProcess();
 
@@ -421,7 +467,7 @@ Compositor::Compositor(CompositorDelegate* delegate,
   settings.refresh_rate =
       g_test_compositor_enabled ? kTestRefreshRate : kDefaultRefreshRate;
   settings.partial_swap_enabled =
-      command_line->HasSwitch(cc::switches::kUIEnablePartialSwap);
+      !command_line->HasSwitch(cc::switches::kUIDisablePartialSwap);
   settings.per_tile_painting_enabled =
       command_line->HasSwitch(cc::switches::kUIEnablePerTilePainting);
 
@@ -455,7 +501,7 @@ Compositor::Compositor(CompositorDelegate* delegate,
 
   host_ = cc::LayerTreeHost::Create(this, settings, thread.Pass());
   host_->SetRootLayer(root_web_layer_);
-  host_->SetSurfaceReady();
+  host_->SetLayerTreeHostClientReady();
 }
 
 Compositor::~Compositor() {
@@ -474,13 +520,30 @@ Compositor::~Compositor() {
   ContextFactory::GetInstance()->RemoveCompositor(this);
 }
 
-void Compositor::Initialize(bool use_thread) {
+// static
+void Compositor::Initialize() {
+#if defined(OS_CHROMEOS)
+  bool use_thread = !CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kUIDisableThreadedCompositing);
+#else
+  bool use_thread =
+      CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kUIEnableThreadedCompositing) &&
+      !CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kUIDisableThreadedCompositing);
+#endif
   if (use_thread) {
     g_compositor_thread = new base::Thread("Browser Compositor");
     g_compositor_thread->Start();
   }
 }
 
+// static
+bool Compositor::WasInitializedWithThread() {
+  return !!g_compositor_thread;
+}
+
+// static
 void Compositor::Terminate() {
   if (g_compositor_thread) {
     g_compositor_thread->Stop();
@@ -514,7 +577,7 @@ void Compositor::SetHostHasTransparentBackground(
   host_->set_has_transparent_background(host_has_transparent_background);
 }
 
-void Compositor::Draw(bool force_clear) {
+void Compositor::Draw() {
   DCHECK(!g_compositor_thread);
 
   if (!root_layer_)
@@ -527,13 +590,29 @@ void Compositor::Draw(bool force_clear) {
     // compositeImmediately() directly.
     Layout();
     host_->Composite(base::TimeTicks::Now());
+
+#if defined(OS_WIN)
+    // While we resize, we are usually a few frames behind. By blocking
+    // the UI thread here we minize the area that is mis-painted, specially
+    // in the non-client area. See RenderWidgetHostViewAura::SetBounds for
+    // more details and bug 177115.
+    if (next_draw_is_resize_ && (last_ended_frame_ > 1)) {
+      next_draw_is_resize_ = false;
+      host_->FinishAllRendering();
+    }
+#endif
+
   }
   if (!pending_swap.posted())
     NotifyEnd();
 }
 
-void Compositor::ScheduleFullDraw() {
+void Compositor::ScheduleFullRedraw() {
   host_->SetNeedsRedraw();
+}
+
+void Compositor::ScheduleRedrawRect(const gfx::Rect& damage_rect) {
+  host_->SetNeedsRedrawRect(damage_rect);
 }
 
 bool Compositor::ReadPixels(SkBitmap* bitmap,
@@ -555,14 +634,21 @@ void Compositor::SetScaleAndSize(float scale, const gfx::Size& size_in_pixel) {
   DCHECK_GT(scale, 0);
   if (!size_in_pixel.IsEmpty()) {
     size_ = size_in_pixel;
-    host_->SetViewportSize(size_in_pixel, size_in_pixel);
+    host_->SetViewportSize(size_in_pixel);
     root_web_layer_->SetBounds(size_in_pixel);
+
+    next_draw_is_resize_ = true;
   }
   if (device_scale_factor_ != scale) {
     device_scale_factor_ = scale;
     if (root_layer_)
       root_layer_->OnDeviceScaleFactorChanged(scale);
   }
+}
+
+void Compositor::SetBackgroundColor(SkColor color) {
+  host_->set_background_color(color);
+  ScheduleDraw();
 }
 
 void Compositor::AddObserver(CompositorObserver* observer) {
@@ -592,14 +678,15 @@ void Compositor::OnSwapBuffersComplete() {
 }
 
 void Compositor::OnSwapBuffersAborted() {
-  DCHECK(!g_compositor_thread);
-  DCHECK_GE(1, posted_swaps_->NumSwapsPosted(DRAW_SWAP));
+  if (!g_compositor_thread) {
+    DCHECK_GE(1, posted_swaps_->NumSwapsPosted(DRAW_SWAP));
 
-  // We've just lost the context, so unwind all posted_swaps.
-  while (posted_swaps_->AreSwapsPosted()) {
-    if (posted_swaps_->NextPostedSwap() == DRAW_SWAP)
-      NotifyEnd();
-    posted_swaps_->EndSwap();
+    // We've just lost the context, so unwind all posted_swaps.
+    while (posted_swaps_->AreSwapsPosted()) {
+      if (posted_swaps_->NextPostedSwap() == DRAW_SWAP)
+        NotifyEnd();
+      posted_swaps_->EndSwap();
+    }
   }
 
   FOR_EACH_OBSERVER(CompositorObserver,
@@ -628,10 +715,6 @@ scoped_ptr<cc::OutputSurface> Compositor::CreateOutputSurface() {
       ContextFactory::GetInstance()->CreateOutputSurface(this));
 }
 
-scoped_ptr<cc::InputHandler> Compositor::CreateInputHandler() {
-  return scoped_ptr<cc::InputHandler>();
-}
-
 void Compositor::DidCommit() {
   DCHECK(!IsLocked());
   FOR_EACH_OBSERVER(CompositorObserver,
@@ -644,6 +727,11 @@ void Compositor::DidCommitAndDrawFrame() {
   FOR_EACH_OBSERVER(CompositorObserver,
                     observer_list_,
                     OnCompositingStarted(this, start_time));
+  // If we're threaded without a swap complete callback, we have to
+  // call DidCompleteSwapBuffersManually.
+  if (g_compositor_thread &&
+      !host_->GetRendererCapabilities().using_swap_complete_callback)
+    DidCompleteSwapBuffers();
 }
 
 void Compositor::DidCompleteSwapBuffers() {
@@ -665,6 +753,15 @@ scoped_refptr<cc::ContextProvider>
 Compositor::OffscreenContextProviderForCompositorThread() {
   return ContextFactory::GetInstance()->
       OffscreenContextProviderForCompositorThread();
+}
+
+const cc::LayerTreeDebugState& Compositor::GetLayerTreeDebugState() const {
+  return host_->debug_state();
+}
+
+void Compositor::SetLayerTreeDebugState(
+    const cc::LayerTreeDebugState& debug_state) {
+  host_->SetDebugState(debug_state);
 }
 
 scoped_refptr<CompositorLock> Compositor::GetCompositorLock() {

@@ -5,6 +5,7 @@
 #include "ui/views/focus/focus_manager.h"
 
 #include <algorithm>
+#include <vector>
 
 #include "base/auto_reset.h"
 #include "base/logging.h"
@@ -19,10 +20,12 @@
 #include "ui/views/view.h"
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/widget/widget_delegate.h"
 
 namespace views {
 
 bool FocusManager::shortcut_handling_suspended_ = false;
+bool FocusManager::arrow_key_traversal_enabled_ = false;
 
 FocusManager::FocusManager(Widget* widget, FocusManagerDelegate* delegate)
     : widget_(widget),
@@ -85,6 +88,9 @@ bool FocusManager::OnKeyEvent(const ui::KeyEvent& event) {
       return false;
     }
 #endif
+
+    if (arrow_key_traversal_enabled_ && ProcessArrowKeyTraversal(event))
+      return false;
 
     // Intercept arrow key messages to switch between grouped views.
     if (focused_view_ && focused_view_->GetGroup() != -1 &&
@@ -152,6 +158,64 @@ void FocusManager::AdvanceFocus(bool reverse) {
 void FocusManager::ClearNativeFocus() {
   // Keep the top root window focused so we get keyboard events.
   widget_->ClearNativeFocus();
+}
+
+bool FocusManager::RotatePaneFocus(Direction direction,
+                                   FocusCycleWrappingBehavior wrap) {
+  // Get the list of all accessible panes.
+  std::vector<View*> panes;
+  widget_->widget_delegate()->GetAccessiblePanes(&panes);
+
+  // Count the number of panes and set the default index if no pane
+  // is initially focused.
+  int count = static_cast<int>(panes.size());
+  if (count == 0)
+    return false;
+
+  // Initialize |index| to an appropriate starting index if nothing is
+  // focused initially.
+  int index = direction == kBackward ? 0 : count - 1;
+
+  // Check to see if a pane already has focus and update the index accordingly.
+  const views::View* focused_view = GetFocusedView();
+  if (focused_view) {
+    for (int i = 0; i < count; i++) {
+      if (panes[i] && panes[i]->Contains(focused_view)) {
+        index = i;
+        break;
+      }
+    }
+  }
+
+  // Rotate focus.
+  int start_index = index;
+  for (;;) {
+    if (direction == kBackward)
+      index--;
+    else
+      index++;
+
+    if (wrap == kNoWrap && (index >= count || index < 0))
+      return false;
+    index = (index + count) % count;
+
+    // Ensure that we don't loop more than once.
+    if (index == start_index)
+      break;
+
+    views::View* pane = panes[index];
+    DCHECK(pane);
+
+    if (!pane->visible())
+      continue;
+
+    pane->RequestFocus();
+    focused_view = GetFocusedView();
+    if (pane == focused_view || pane->Contains(focused_view))
+      return true;
+  }
+
+  return false;
 }
 
 View* FocusManager::GetNextFocusableView(View* original_starting_view,
@@ -263,6 +327,10 @@ void FocusManager::SetFocusedViewWithReason(
   focused_view_ = view;
   if (old_focused_view)
     old_focused_view->Blur();
+  // Also make |focused_view_| the stored focus view. This way the stored focus
+  // view is remembered if focus changes are requested prior to a show or while
+  // hidden.
+  SetStoredFocusView(focused_view_);
   if (focused_view_)
     focused_view_->Focus();
 
@@ -271,27 +339,18 @@ void FocusManager::SetFocusedViewWithReason(
 }
 
 void FocusManager::ClearFocus() {
+  // SetFocusedView(NULL) is going to clear out the stored view to. We need to
+  // persist it in this case.
+  views::View* focused_view = GetStoredFocusView();
   SetFocusedView(NULL);
   ClearNativeFocus();
+  SetStoredFocusView(focused_view);
 }
 
 void FocusManager::StoreFocusedView(bool clear_native_focus) {
-  ViewStorage* view_storage = ViewStorage::GetInstance();
-  if (!view_storage) {
-    // This should never happen but bug 981648 seems to indicate it could.
-    NOTREACHED();
-    return;
-  }
-
-  // TODO(jcivelli): when a TabContents containing a popup is closed, the focus
-  // is stored twice causing an assert. We should find a better alternative than
-  // removing the view from the storage explicitly.
-  view_storage->RemoveView(stored_focused_view_storage_id_);
-
+  SetStoredFocusView(focused_view_);
   if (!focused_view_)
     return;
-
-  view_storage->StoreView(stored_focused_view_storage_id_, focused_view_);
 
   View* v = focused_view_;
 
@@ -311,14 +370,7 @@ void FocusManager::StoreFocusedView(bool clear_native_focus) {
 }
 
 bool FocusManager::RestoreFocusedView() {
-  ViewStorage* view_storage = ViewStorage::GetInstance();
-  if (!view_storage) {
-    // This should never happen but bug 981648 seems to indicate it could.
-    NOTREACHED();
-    return false;
-  }
-
-  View* view = view_storage->RetrieveView(stored_focused_view_storage_id_);
+  View* view = GetStoredFocusView();
   if (view) {
     if (ContainsView(view)) {
       if (!view->IsFocusable() && view->IsAccessibilityFocusable()) {
@@ -341,14 +393,38 @@ bool FocusManager::RestoreFocusedView() {
   return false;
 }
 
-void FocusManager::ClearStoredFocusedView() {
+void FocusManager::SetStoredFocusView(View* focus_view) {
   ViewStorage* view_storage = ViewStorage::GetInstance();
   if (!view_storage) {
     // This should never happen but bug 981648 seems to indicate it could.
     NOTREACHED();
     return;
   }
+
+  // TODO(jcivelli): when a TabContents containing a popup is closed, the focus
+  // is stored twice causing an assert. We should find a better alternative than
+  // removing the view from the storage explicitly.
   view_storage->RemoveView(stored_focused_view_storage_id_);
+
+  if (!focus_view)
+    return;
+
+  view_storage->StoreView(stored_focused_view_storage_id_, focus_view);
+}
+
+View* FocusManager::GetStoredFocusView() {
+  ViewStorage* view_storage = ViewStorage::GetInstance();
+  if (!view_storage) {
+    // This should never happen but bug 981648 seems to indicate it could.
+    NOTREACHED();
+    return NULL;
+  }
+
+  return view_storage->RetrieveView(stored_focused_view_storage_id_);
+}
+
+void FocusManager::ClearStoredFocusedView() {
+  SetStoredFocusView(NULL);
 }
 
 // Find the next (previous if reverse is true) focusable view for the specified
@@ -443,6 +519,23 @@ void FocusManager::AddFocusChangeListener(FocusChangeListener* listener) {
 
 void FocusManager::RemoveFocusChangeListener(FocusChangeListener* listener) {
   focus_change_listeners_.RemoveObserver(listener);
+}
+
+bool FocusManager::ProcessArrowKeyTraversal(const ui::KeyEvent& event) {
+  if (event.IsShiftDown() || event.IsControlDown() || event.IsAltDown())
+    return false;
+
+  const int key_code = event.key_code();
+  if (key_code == ui::VKEY_LEFT || key_code == ui::VKEY_UP) {
+    AdvanceFocus(true);
+    return true;
+  }
+  if (key_code == ui::VKEY_RIGHT || key_code == ui::VKEY_DOWN) {
+    AdvanceFocus(false);
+    return true;
+  }
+
+  return false;
 }
 
 }  // namespace views

@@ -37,7 +37,7 @@ static const int kDefaultMenuOffsetY = -4;
 // static
 const int MenuButton::kMenuMarkerPaddingLeft = 3;
 const int MenuButton::kMenuMarkerPaddingRight = -1;
-const char MenuButton::kViewClassName[] = "views/MenuButton";
+const char MenuButton::kViewClassName[] = "MenuButton";
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -172,7 +172,7 @@ gfx::Size MenuButton::GetPreferredSize() {
   return prefsize;
 }
 
-std::string MenuButton::GetClassName() const {
+const char* MenuButton::GetClassName() const {
   return kViewClassName;
 }
 

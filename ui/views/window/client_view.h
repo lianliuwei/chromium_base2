@@ -61,15 +61,14 @@ class VIEWS_EXPORT ClientView : public View {
   virtual gfx::Size GetMaximumSize() OVERRIDE;
   virtual gfx::Size GetMinimumSize() OVERRIDE;
   virtual void Layout() OVERRIDE;
-  virtual std::string GetClassName() const OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
 
  protected:
   // Overridden from View:
   virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
   virtual void OnBoundsChanged(const gfx::Rect& previous_bounds) OVERRIDE;
-  virtual void ViewHierarchyChanged(bool is_add,
-                                    View* parent,
-                                    View* child) OVERRIDE;
+  virtual void ViewHierarchyChanged(
+      const ViewHierarchyChangedDetails& details) OVERRIDE;
 
   // Accessors for private data members.
   View* contents_view() const { return contents_view_; }

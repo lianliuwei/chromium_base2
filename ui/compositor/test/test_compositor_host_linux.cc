@@ -48,7 +48,7 @@ class TestCompositorHostLinux : public TestCompositorHost,
 
 TestCompositorHostLinux::TestCompositorHostLinux(const gfx::Rect& bounds)
     : bounds_(bounds),
-      ALLOW_THIS_IN_INITIALIZER_LIST(method_factory_(this)) {
+      method_factory_(this) {
 }
 
 TestCompositorHostLinux::~TestCompositorHostLinux() {
@@ -85,8 +85,9 @@ ui::Compositor* TestCompositorHostLinux::GetCompositor() {
 }
 
 void TestCompositorHostLinux::ScheduleDraw() {
+  DCHECK(!ui::Compositor::WasInitializedWithThread());
   if (!method_factory_.HasWeakPtrs()) {
-    MessageLoopForUI::current()->PostTask(
+    base::MessageLoopForUI::current()->PostTask(
         FROM_HERE,
         base::Bind(&TestCompositorHostLinux::Draw,
                    method_factory_.GetWeakPtr()));
@@ -95,7 +96,7 @@ void TestCompositorHostLinux::ScheduleDraw() {
 
 void TestCompositorHostLinux::Draw() {
   if (compositor_.get())
-    compositor_->Draw(false);
+    compositor_->Draw();
 }
 
 // static

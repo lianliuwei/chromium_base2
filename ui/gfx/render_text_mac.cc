@@ -68,10 +68,9 @@ SelectionModel RenderTextMac::AdjacentWordSelectionModel(
   return SelectionModel();
 }
 
-void RenderTextMac::GetGlyphBounds(size_t index,
-                                   ui::Range* xspan,
-                                   int* height) {
+ui::Range RenderTextMac::GetGlyphBounds(size_t index) {
   // TODO(asvitkine): Implement this. http://crbug.com/131618
+  return ui::Range();
 }
 
 std::vector<Rect> RenderTextMac::GetSubstringBounds(const ui::Range& range) {
@@ -91,7 +90,7 @@ size_t RenderTextMac::LayoutIndexToTextIndex(size_t index) const {
 
 bool RenderTextMac::IsCursorablePosition(size_t position) {
   // TODO(asvitkine): Implement this. http://crbug.com/131618
-  return false;
+  return true;
 }
 
 void RenderTextMac::ResetLayout() {
@@ -236,6 +235,8 @@ void RenderTextMac::ComputeRuns() {
   CFArrayRef ct_runs = CTLineGetGlyphRuns(line_);
   const CFIndex ct_runs_count = CFArrayGetCount(ct_runs);
 
+  // TODO(asvitkine): Don't use GetTextOffset() until draw time, since it may be
+  // updated based on alignment changes without resetting the layout.
   gfx::Vector2d text_offset = GetTextOffset();
   // Skia will draw glyphs with respect to the baseline.
   text_offset += gfx::Vector2d(0, common_baseline_);

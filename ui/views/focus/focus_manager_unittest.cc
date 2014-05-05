@@ -8,7 +8,8 @@
 #include "base/utf_string_conversions.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/keycodes/keyboard_codes.h"
-#include "ui/views/controls/button/text_button.h"
+#include "ui/views/accessible_pane_view.h"
+#include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/focus/accelerator_handler.h"
 #include "ui/views/focus/focus_manager_factory.h"
@@ -533,15 +534,15 @@ class FocusManagerDtorTest : public FocusManagerTest {
     DISALLOW_COPY_AND_ASSIGN(TestFocusManagerFactory);
   };
 
-  class NativeButtonDtorTracked : public NativeTextButton {
+  class LabelButtonDtorTracked : public LabelButton {
    public:
-    NativeButtonDtorTracked(const string16& text,
-                            DtorTrackVector* dtor_tracker)
-        : NativeTextButton(NULL, text),
+    LabelButtonDtorTracked(const string16& text, DtorTrackVector* dtor_tracker)
+        : LabelButton(NULL, text),
           dtor_tracker_(dtor_tracker) {
+      SetStyle(STYLE_NATIVE_TEXTBUTTON);
     };
-    virtual ~NativeButtonDtorTracked() {
-      dtor_tracker_->push_back("NativeButtonDtorTracked");
+    virtual ~LabelButtonDtorTracked() {
+      dtor_tracker_->push_back("LabelButtonDtorTracked");
     }
 
     DtorTrackVector* dtor_tracker_;
@@ -588,7 +589,7 @@ class FocusManagerDtorTest : public FocusManagerTest {
 TEST_F(FocusManagerDtorTest, FocusManagerDestructedLast) {
   // Setup views hierarchy.
   GetContentsView()->AddChildView(new TestTextfield());
-  GetContentsView()->AddChildView(new NativeButtonDtorTracked(
+  GetContentsView()->AddChildView(new LabelButtonDtorTracked(
       ASCIIToUTF16("button"), &dtor_tracker_));
 
   // Close the window.
@@ -644,6 +645,173 @@ TEST_F(FocusManagerTest, FocusInAboutToRequestFocusFromTabTraversal) {
   v3->RequestFocus();
   GetWidget()->GetFocusManager()->AdvanceFocus(true);
   EXPECT_TRUE(v1->HasFocus());
+}
+
+TEST_F(FocusManagerTest, RotatePaneFocus) {
+  views::AccessiblePaneView* pane1 = new AccessiblePaneView();
+  GetContentsView()->AddChildView(pane1);
+
+  views::View* v1 = new View;
+  v1->set_focusable(true);
+  pane1->AddChildView(v1);
+
+  views::View* v2 = new View;
+  v2->set_focusable(true);
+  pane1->AddChildView(v2);
+
+  views::AccessiblePaneView* pane2 = new AccessiblePaneView();
+  GetContentsView()->AddChildView(pane2);
+
+  views::View* v3 = new View;
+  v3->set_focusable(true);
+  pane2->AddChildView(v3);
+
+  views::View* v4 = new View;
+  v4->set_focusable(true);
+  pane2->AddChildView(v4);
+
+  std::vector<views::View*> panes;
+  panes.push_back(pane1);
+  panes.push_back(pane2);
+  SetAccessiblePanes(panes);
+
+  FocusManager* focus_manager = GetWidget()->GetFocusManager();
+
+  // Advance forwards. Focus should stay trapped within each pane.
+  EXPECT_TRUE(focus_manager->RotatePaneFocus(
+      FocusManager::kForward, FocusManager::kWrap));
+  EXPECT_EQ(v1, focus_manager->GetFocusedView());
+  focus_manager->AdvanceFocus(false);
+  EXPECT_EQ(v2, focus_manager->GetFocusedView());
+  focus_manager->AdvanceFocus(false);
+  EXPECT_EQ(v1, focus_manager->GetFocusedView());
+
+  EXPECT_TRUE(focus_manager->RotatePaneFocus(
+      FocusManager::kForward, FocusManager::kWrap));
+  EXPECT_EQ(v3, focus_manager->GetFocusedView());
+  focus_manager->AdvanceFocus(false);
+  EXPECT_EQ(v4, focus_manager->GetFocusedView());
+  focus_manager->AdvanceFocus(false);
+  EXPECT_EQ(v3, focus_manager->GetFocusedView());
+
+  EXPECT_TRUE(focus_manager->RotatePaneFocus(
+      FocusManager::kForward, FocusManager::kWrap));
+  EXPECT_EQ(v1, focus_manager->GetFocusedView());
+
+  // Advance backwards.
+  EXPECT_TRUE(focus_manager->RotatePaneFocus(
+      FocusManager::kBackward, FocusManager::kWrap));
+  EXPECT_EQ(v3, focus_manager->GetFocusedView());
+
+  EXPECT_TRUE(focus_manager->RotatePaneFocus(
+      FocusManager::kBackward, FocusManager::kWrap));
+  EXPECT_EQ(v1, focus_manager->GetFocusedView());
+
+  // Advance without wrap. When it gets to the end of the list of
+  // panes, RotatePaneFocus should return false but the current
+  // focused view shouldn't change.
+  EXPECT_TRUE(focus_manager->RotatePaneFocus(
+      FocusManager::kForward, FocusManager::kNoWrap));
+  EXPECT_EQ(v3, focus_manager->GetFocusedView());
+
+  EXPECT_FALSE(focus_manager->RotatePaneFocus(
+      FocusManager::kForward, FocusManager::kNoWrap));
+  EXPECT_EQ(v3, focus_manager->GetFocusedView());
+}
+
+// Verifies the stored focus view tracks the focused view.
+TEST_F(FocusManagerTest, ImplicitlyStoresFocus) {
+  views::View* v1 = new View;
+  v1->set_focusable(true);
+  GetContentsView()->AddChildView(v1);
+
+  views::View* v2 = new View;
+  v2->set_focusable(true);
+  GetContentsView()->AddChildView(v2);
+
+  // Verify a focus request on |v1| implicitly updates the stored focus view.
+  v1->RequestFocus();
+  EXPECT_TRUE(v1->HasFocus());
+  EXPECT_EQ(v1, GetWidget()->GetFocusManager()->GetStoredFocusView());
+
+  // Verify a focus request on |v2| implicitly updates the stored focus view.
+  v2->RequestFocus();
+  EXPECT_TRUE(v2->HasFocus());
+  EXPECT_EQ(v2, GetWidget()->GetFocusManager()->GetStoredFocusView());
+}
+
+namespace  {
+
+class FocusManagerArrowKeyTraversalTest : public FocusManagerTest {
+ public:
+  FocusManagerArrowKeyTraversalTest()
+      : previous_arrow_key_traversal_enabled_(false) {
+  }
+  virtual ~FocusManagerArrowKeyTraversalTest() {}
+
+  // FocusManagerTest overrides:
+  virtual void SetUp() OVERRIDE {
+    FocusManagerTest::SetUp();
+
+    previous_arrow_key_traversal_enabled_ =
+      FocusManager::arrow_key_traversal_enabled();
+  }
+  virtual void TearDown() OVERRIDE {
+    FocusManager::set_arrow_key_traversal_enabled(
+        previous_arrow_key_traversal_enabled_);
+    FocusManagerTest::TearDown();
+  }
+
+ private:
+  bool previous_arrow_key_traversal_enabled_;
+
+  DISALLOW_COPY_AND_ASSIGN(FocusManagerArrowKeyTraversalTest);
+};
+
+}  // namespace
+
+TEST_F(FocusManagerArrowKeyTraversalTest, ArrowKeyTraversal) {
+  FocusManager* focus_manager = GetFocusManager();
+  const ui::KeyEvent left_key(
+      ui::ET_KEY_PRESSED, ui::VKEY_LEFT, ui::EF_NONE, false);
+  const ui::KeyEvent right_key(
+      ui::ET_KEY_PRESSED, ui::VKEY_RIGHT, ui::EF_NONE, false);
+  const ui::KeyEvent up_key(
+      ui::ET_KEY_PRESSED, ui::VKEY_UP, ui::EF_NONE, false);
+  const ui::KeyEvent down_key(
+      ui::ET_KEY_PRESSED, ui::VKEY_DOWN, ui::EF_NONE, false);
+
+  std::vector<views::View*> v;
+  for (size_t i = 0; i < 2; ++i) {
+    views::View* view = new View;
+    view->set_focusable(true);
+    GetContentsView()->AddChildView(view);
+    v.push_back(view);
+  }
+
+  // Arrow key traversal is off and arrow key does not change focus.
+  FocusManager::set_arrow_key_traversal_enabled(false);
+  v[0]->RequestFocus();
+  focus_manager->OnKeyEvent(right_key);
+  EXPECT_EQ(v[0], focus_manager->GetFocusedView());
+  focus_manager->OnKeyEvent(left_key);
+  EXPECT_EQ(v[0], focus_manager->GetFocusedView());
+  focus_manager->OnKeyEvent(down_key);
+  EXPECT_EQ(v[0], focus_manager->GetFocusedView());
+  focus_manager->OnKeyEvent(up_key);
+  EXPECT_EQ(v[0], focus_manager->GetFocusedView());
+
+  // Turn on arrow key traversal.
+  FocusManager::set_arrow_key_traversal_enabled(true);
+  v[0]->RequestFocus();
+  focus_manager->OnKeyEvent(right_key);
+  EXPECT_EQ(v[1], focus_manager->GetFocusedView());
+  focus_manager->OnKeyEvent(left_key);
+  EXPECT_EQ(v[0], focus_manager->GetFocusedView());
+  focus_manager->OnKeyEvent(down_key);
+  EXPECT_EQ(v[1], focus_manager->GetFocusedView());
+  focus_manager->OnKeyEvent(up_key);
+  EXPECT_EQ(v[0], focus_manager->GetFocusedView());
 }
 
 }  // namespace views

@@ -10,6 +10,7 @@
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents_delegate.h"
+#include "ui/views/accessibility/native_view_accessibility.h"
 #include "ui/views/controls/webview/webview_export.h"
 #include "ui/views/view.h"
 
@@ -23,7 +24,8 @@ class NativeViewHost;
 
 class WEBVIEW_EXPORT WebView : public View,
                                public content::NotificationObserver,
-                               public content::WebContentsDelegate {
+                               public content::WebContentsDelegate,
+                               public AccessibleWebView {
  public:
   static const char kViewClassName[];
 
@@ -79,14 +81,18 @@ class WEBVIEW_EXPORT WebView : public View,
   void SetPreferredSize(const gfx::Size& preferred_size);
 
   // Overridden from View:
-  virtual std::string GetClassName() const OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
+
+  // Overridden from AccessibleWebView:
+  virtual gfx::NativeViewAccessible AccessibleObjectFromChildId(
+      long child_id) OVERRIDE;
+  virtual View* AsView() OVERRIDE;
 
  private:
   // Overridden from View:
   virtual void OnBoundsChanged(const gfx::Rect& previous_bounds) OVERRIDE;
-  virtual void ViewHierarchyChanged(bool is_add,
-                                    View* parent,
-                                    View* child) OVERRIDE;
+  virtual void ViewHierarchyChanged(
+      const ViewHierarchyChangedDetails& details) OVERRIDE;
   virtual bool SkipDefaultKeyEventProcessing(
       const ui::KeyEvent& event) OVERRIDE;
   virtual bool IsFocusable() const OVERRIDE;

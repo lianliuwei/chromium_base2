@@ -9,7 +9,6 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
 #include "base/synchronization/lock.h"
 #include "ui/gfx/size.h"
 
@@ -93,25 +92,16 @@ static base::LazyInstance<ClipboardMap> g_clipboard_map =
 static base::LazyInstance<base::Lock>::Leaky
     g_clipboard_map_lock = LAZY_INSTANCE_INITIALIZER;
 
-const std::size_t kSourceTagSize = sizeof(Clipboard::SourceTag);
+const std::size_t kSourceTagSize = sizeof(SourceTag);
 
 // The union serves to easily convert SourceTag into its binary representation
 // and vice versa.
 union SourceTag2BinaryHelper {
-  Clipboard::SourceTag tag;
+  SourceTag tag;
   uint8 bytes[kSourceTagSize];
 };
 
 }  // namespace
-
-const Clipboard::SourceTag Clipboard::kInvalidSourceTag =
-    reinterpret_cast<void*>(1);
-const char Clipboard::kMimeTypeText[] = "text/plain";
-const char Clipboard::kMimeTypeURIList[] = "text/uri-list";
-const char Clipboard::kMimeTypeDownloadURL[] = "downloadurl";
-const char Clipboard::kMimeTypeHTML[] = "text/html";
-const char Clipboard::kMimeTypeRTF[] = "text/rtf";
-const char Clipboard::kMimeTypePNG[] = "image/png";
 
 // static
 Clipboard::ObjectMapParam Clipboard::SourceTag2Binary(SourceTag tag) {
@@ -123,7 +113,7 @@ Clipboard::ObjectMapParam Clipboard::SourceTag2Binary(SourceTag tag) {
 }
 
 // static
-Clipboard::SourceTag Clipboard::Binary2SourceTag(const std::string& binary) {
+SourceTag Clipboard::Binary2SourceTag(const std::string& binary) {
   if (binary.size() != kSourceTagSize)
     return SourceTag();
   SourceTag2BinaryHelper helper;
@@ -189,8 +179,6 @@ void Clipboard::WriteObjects(Buffer buffer,
   WriteObjectsImpl(buffer, objects, tag);
   if (!write_objects_callback_.is_null())
     write_objects_callback_.Run(buffer);
-  ReportAction(buffer, tag == SourceTag() ? WRITE_CLIPBOARD_NO_SOURCE_TAG
-                                          : WRITE_CLIPBOARD_SOURCE_TAG);
 }
 
 void Clipboard::DispatchObject(ObjectType type, const ObjectMapParams& params) {
@@ -301,33 +289,6 @@ void Clipboard::ReplaceSharedMemHandle(ObjectMap* objects,
         iter->second[0].push_back(reinterpret_cast<char*>(&bitmap)[i]);
       has_shared_bitmap = true;
     }
-  }
-}
-
-void Clipboard::ReportAction(Buffer buffer, TrackedAction action) const
-{
-  if (buffer != BUFFER_STANDARD)
-    return;
-
-  switch (action) {
-    case WRITE_CLIPBOARD_NO_SOURCE_TAG:
-    case WRITE_CLIPBOARD_SOURCE_TAG:
-      UMA_HISTOGRAM_ENUMERATION("Clipboard.IncognitoUseCase",
-                                action,
-                                MAX_TRACKED_ACTION);
-      break;
-    // The code below counts cases when there is the kInvalidSourceTag in the
-    // clipboard. That is, original data came from Incognito window and was
-    // destroyed with that window.
-    case READ_TEXT:
-      if (kInvalidSourceTag == ReadSourceTag(buffer)) {
-        UMA_HISTOGRAM_ENUMERATION("Clipboard.IncognitoUseCase",
-                                  action,
-                                  MAX_TRACKED_ACTION);
-      }
-      break;
-    case MAX_TRACKED_ACTION:
-      break;
   }
 }
 

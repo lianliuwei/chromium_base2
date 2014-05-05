@@ -5,8 +5,8 @@
 #ifndef UI_MESSAGE_CENTER_VIEWS_MESSAGE_CENTER_BUBBLE_H_
 #define UI_MESSAGE_CENTER_VIEWS_MESSAGE_CENTER_BUBBLE_H_
 
+#include "base/memory/weak_ptr.h"
 #include "ui/message_center/message_center_export.h"
-#include "ui/message_center/notification_change_observer.h"
 #include "ui/message_center/views/message_bubble_base.h"
 
 namespace message_center {
@@ -14,7 +14,9 @@ namespace message_center {
 class MessageCenterView;
 
 // Bubble for message center.
-class MESSAGE_CENTER_EXPORT MessageCenterBubble : public MessageBubbleBase {
+class MESSAGE_CENTER_EXPORT MessageCenterBubble
+    : public MessageBubbleBase,
+      public base::SupportsWeakPtr<MessageCenterBubble> {
  public:
   explicit MessageCenterBubble(MessageCenter* message_center);
 
@@ -32,7 +34,7 @@ class MESSAGE_CENTER_EXPORT MessageCenterBubble : public MessageBubbleBase {
   size_t NumMessageViewsForTest() const;
 
  private:
-  MessageCenterView* contents_view_;
+  MessageCenterView* message_center_view_;
 
   // The maximum height
   int max_height_;
@@ -42,4 +44,4 @@ class MESSAGE_CENTER_EXPORT MessageCenterBubble : public MessageBubbleBase {
 
 }  // namespace message_center
 
-#endif // UI_MESSAGE_CENTER_VIEWS_MESSAGE_CENTER_BUBBLE_H_
+#endif  // UI_MESSAGE_CENTER_VIEWS_MESSAGE_CENTER_BUBBLE_H_

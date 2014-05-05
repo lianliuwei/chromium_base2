@@ -6,6 +6,7 @@
 #define UI_VIEWS_WIDGET_WIDGET_DELEGATE_H_
 
 #include <string>
+#include <vector>
 
 #include "ui/base/accessibility/accessibility_types.h"
 #include "ui/base/ui_base_types.h"
@@ -69,6 +70,9 @@ class VIEWS_EXPORT WidgetDelegate {
 
   // Returns true if the window should show a title in the title bar.
   virtual bool ShouldShowWindowTitle() const;
+
+  // Returns true if the window should show a close button in the title bar.
+  virtual bool ShouldShowCloseButton() const;
 
   // Returns true if the window should handle standard system commands, such as
   // close, minimize, maximize.
@@ -154,6 +158,10 @@ class VIEWS_EXPORT WidgetDelegate {
   virtual bool ShouldDescendIntoChildForEventHandling(
       gfx::NativeView child,
       const gfx::Point& location);
+
+  // Populates |panes| with accessible panes in this window that can
+  // be cycled through with keyboard focus.
+  virtual void GetAccessiblePanes(std::vector<View*>* panes) {}
 
  protected:
   virtual ~WidgetDelegate() {}

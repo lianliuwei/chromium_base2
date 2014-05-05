@@ -9,7 +9,6 @@
 #include "base/strings/string_split.h"
 #include "base/utf_string_conversions.h"
 #include "ui/base/accessibility/accessible_view_state.h"
-#include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/image_view.h"
@@ -67,13 +66,8 @@ MessageBoxView::InitParams::InitParams(const string16& message)
     : options(NO_OPTIONS),
       message(message),
       message_width(kDefaultMessageWidth),
-      top_inset(kPanelVertMargin),
-      bottom_inset(kPanelVertMargin),
-      left_inset(kPanelHorizMargin),
-      right_inset(kPanelHorizMargin),
-      inter_row_vertical_spacing(kRelatedControlVerticalSpacing)
-{
-}
+      inter_row_vertical_spacing(kRelatedControlVerticalSpacing),
+      clipboard_source_tag() {}
 
 MessageBoxView::InitParams::~InitParams() {
 }
@@ -125,15 +119,13 @@ void MessageBoxView::GetAccessibleState(ui::AccessibleViewState* state) {
 ///////////////////////////////////////////////////////////////////////////////
 // MessageBoxView, View overrides:
 
-void MessageBoxView::ViewHierarchyChanged(bool is_add,
-                                          View* parent,
-                                          View* child) {
-  if (child == this && is_add) {
+void MessageBoxView::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
+  if (details.child == this && details.is_add) {
     if (prompt_field_)
       prompt_field_->SelectAll(true);
 
-    GetWidget()->NotifyAccessibilityEvent(
-        this, ui::AccessibilityTypes::EVENT_ALERT, true);
+    NotifyAccessibilityEvent(ui::AccessibilityTypes::EVENT_ALERT, true);
   }
 }
 
@@ -149,7 +141,9 @@ bool MessageBoxView::AcceleratorPressed(const ui::Accelerator& accelerator) {
   if (!clipboard)
     return false;
 
-  ui::ScopedClipboardWriter scw(clipboard, ui::Clipboard::BUFFER_STANDARD);
+  ui::ScopedClipboardWriter scw(clipboard,
+                                ui::Clipboard::BUFFER_STANDARD,
+                                source_tag_);
   string16 text = message_labels_[0]->text();
   for (size_t i = 1; i < message_labels_.size(); ++i)
     text += message_labels_[i]->text();
@@ -194,11 +188,8 @@ void MessageBoxView::Init(const InitParams& params) {
     prompt_field_->SetText(params.default_prompt);
   }
 
-  top_inset_ = params.top_inset;
-  bottom_inset_ = params.bottom_inset;
-  left_inset_ = params.left_inset;
-  right_inset_ = params.right_inset;
   inter_row_vertical_spacing_ = params.inter_row_vertical_spacing;
+  source_tag_ = params.clipboard_source_tag;
 
   ResetLayoutManager();
 }
@@ -206,7 +197,6 @@ void MessageBoxView::Init(const InitParams& params) {
 void MessageBoxView::ResetLayoutManager() {
   // Initialize the Grid Layout Manager used for this dialog box.
   GridLayout* layout = GridLayout::CreatePanel(this);
-  layout->SetInsets(top_inset_, bottom_inset_, left_inset_, right_inset_);
   SetLayoutManager(layout);
 
   gfx::Size icon_size;

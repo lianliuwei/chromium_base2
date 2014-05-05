@@ -13,7 +13,9 @@
 #include "base/observer_list.h"
 #include "base/time.h"
 #include "cc/trees/layer_tree_host_client.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "ui/compositor/compositor_export.h"
+#include "ui/compositor/compositor_observer.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/size.h"
 #include "ui/gfx/transform.h"
@@ -22,9 +24,14 @@
 
 class SkBitmap;
 
+namespace base {
+class RunLoop;
+}
+
 namespace cc {
 class ContextProvider;
 class Layer;
+class LayerTreeDebugState;
 class LayerTreeHost;
 }
 
@@ -206,6 +213,37 @@ class COMPOSITOR_EXPORT CompositorLock
   DISALLOW_COPY_AND_ASSIGN(CompositorLock);
 };
 
+// This is only to be used for test. It allows execution of other tasks on
+// the current message loop before the current task finishs (there is a
+// potential for re-entrancy).
+class COMPOSITOR_EXPORT DrawWaiterForTest : public ui::CompositorObserver {
+ public:
+  // Waits for a draw to be issued by the compositor. If the test times out
+  // here, there may be a logic error in the compositor code causing it
+  // not to draw.
+  static void Wait(Compositor* compositor);
+
+ private:
+  DrawWaiterForTest();
+  virtual ~DrawWaiterForTest();
+
+  void WaitImpl(Compositor* compositor);
+
+  // CompositorObserver implementation.
+  virtual void OnCompositingDidCommit(Compositor* compositor) OVERRIDE;
+  virtual void OnCompositingStarted(Compositor* compositor,
+                                    base::TimeTicks start_time) OVERRIDE;
+  virtual void OnCompositingEnded(Compositor* compositor) OVERRIDE;
+  virtual void OnCompositingAborted(Compositor* compositor) OVERRIDE;
+  virtual void OnCompositingLockStateChanged(Compositor* compositor) OVERRIDE;
+  virtual void OnUpdateVSyncParameters(Compositor* compositor,
+                                       base::TimeTicks timebase,
+                                       base::TimeDelta interval) OVERRIDE;
+
+  scoped_ptr<base::RunLoop> wait_run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(DrawWaiterForTest);
+};
 
 // Compositor object to take care of GPU painting.
 // A Browser compositor object is responsible for generating the final
@@ -220,7 +258,8 @@ class COMPOSITOR_EXPORT Compositor
              gfx::AcceleratedWidget widget);
   virtual ~Compositor();
 
-  static void Initialize(bool useThread);
+  static void Initialize();
+  static bool WasInitializedWithThread();
   static void Terminate();
 
   // Schedules a redraw of the layer tree associated with this compositor.
@@ -244,15 +283,17 @@ class COMPOSITOR_EXPORT Compositor
   // compositing layers on.
   float device_scale_factor() const { return device_scale_factor_; }
 
-  // Draws the scene created by the layer tree and any visual effects. If
-  // |force_clear| is true, this will cause the compositor to clear before
-  // compositing.
-  void Draw(bool force_clear);
+  // Draws the scene created by the layer tree and any visual effects.
+  void Draw();
 
   // Where possible, draws are scissored to a damage region calculated from
   // changes to layer properties.  This bypasses that and indicates that
   // the whole frame needs to be drawn.
-  void ScheduleFullDraw();
+  void ScheduleFullRedraw();
+
+  // Schedule redraw and append damage_rect to the damage region calculated
+  // from changes to layer properties.
+  void ScheduleRedrawRect(const gfx::Rect& damage_rect);
 
   // Reads the region |bounds_in_pixel| of the contents of the last rendered
   // frame into the given bitmap.
@@ -264,6 +305,10 @@ class COMPOSITOR_EXPORT Compositor
 
   // Returns the size of the widget that is being drawn to in pixel coordinates.
   const gfx::Size& size() const { return size_; }
+
+  // Sets the background color used for areas that aren't covered by
+  // the |root_layer|.
+  void SetBackgroundColor(SkColor color);
 
   // Returns the widget for this compositor.
   gfx::AcceleratedWidget widget() const { return widget_; }
@@ -302,8 +347,7 @@ class COMPOSITOR_EXPORT Compositor
                                    float page_scale) OVERRIDE {}
   virtual scoped_ptr<cc::OutputSurface>
       CreateOutputSurface() OVERRIDE;
-  virtual void DidRecreateOutputSurface(bool success) OVERRIDE {}
-  virtual scoped_ptr<cc::InputHandler> CreateInputHandler() OVERRIDE;
+  virtual void DidInitializeOutputSurface(bool success) OVERRIDE {}
   virtual void WillCommit() OVERRIDE {}
   virtual void DidCommit() OVERRIDE;
   virtual void DidCommitAndDrawFrame() OVERRIDE;
@@ -318,6 +362,9 @@ class COMPOSITOR_EXPORT Compositor
   int last_ended_frame() { return last_ended_frame_; }
 
   bool IsLocked() { return compositor_lock_ != NULL; }
+
+  const cc::LayerTreeDebugState& GetLayerTreeDebugState() const;
+  void SetLayerTreeDebugState(const cc::LayerTreeDebugState& debug_state);
 
  private:
   friend class base::RefCounted<Compositor>;
@@ -353,6 +400,8 @@ class COMPOSITOR_EXPORT Compositor
 
   int last_started_frame_;
   int last_ended_frame_;
+
+  bool next_draw_is_resize_;
 
   bool disable_schedule_composite_;
 

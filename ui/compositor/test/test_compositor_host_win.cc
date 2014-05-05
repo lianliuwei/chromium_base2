@@ -35,6 +35,7 @@ class TestCompositorHostWin : public TestCompositorHost,
 
   // Overridden from CompositorDelegate:
   virtual void ScheduleDraw() OVERRIDE {
+    DCHECK(!ui::Compositor::WasInitializedWithThread());
     RECT rect;
     ::GetClientRect(hwnd(), &rect);
     InvalidateRect(hwnd(), &rect, FALSE);
@@ -46,7 +47,7 @@ class TestCompositorHostWin : public TestCompositorHost,
   END_MSG_MAP()
 
   void OnPaint(HDC dc) {
-    compositor_->Draw(false);
+    compositor_->Draw();
     ValidateRect(hwnd(), NULL);
   }
 

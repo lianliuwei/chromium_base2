@@ -234,7 +234,6 @@ class COMPOSITOR_EXPORT Layer
   // cc::Layer.
   static gfx::Transform ConvertTransformToCCTransform(
       const gfx::Transform& transform,
-      const gfx::Rect& bounds,
       float device_scale_factor);
 
   // See description in View for details
@@ -307,6 +306,7 @@ class COMPOSITOR_EXPORT Layer
   // TextureLayerClient
   virtual unsigned PrepareTexture(cc::ResourceUpdateQueue* queue) OVERRIDE;
   virtual WebKit::WebGraphicsContext3D* Context3d() OVERRIDE;
+  virtual bool PrepareTextureMailbox(cc::TextureMailbox* mailbox) OVERRIDE;
 
   float device_scale_factor() const { return device_scale_factor_; }
 
@@ -369,6 +369,7 @@ class COMPOSITOR_EXPORT Layer
   void CreateWebLayer();
   void RecomputeCCTransformFromTransform(const gfx::Transform& transform);
   void RecomputeDrawsContentAndUVRect();
+  void RecomputePosition();
 
   // Set all filters which got applied to the layer.
   void SetLayerFilters();

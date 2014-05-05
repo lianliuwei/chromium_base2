@@ -30,14 +30,23 @@ class AppsGridControllerTestHelper : public ui::CocoaTest {
   // Send a click to the test window in the centre of |view|.
   void SimulateClick(NSView* view);
 
-  // Send a key press to the first responder.
-  void SimulateKeyPress(unichar c);
+  // Send a key action using handleCommandBySelector.
+  void SimulateKeyAction(SEL c);
 
   void SimulateMouseEnterItemAt(size_t index);
   void SimulateMouseExitItemAt(size_t index);
 
   // Do a bulk replacement of the items in the grid.
   void ReplaceTestModel(int item_count);
+
+  // Get a string representation of the items as they are currently ordered in
+  // the view. Each page will start and end with a | character.
+  std::string GetViewContent() const;
+
+  // Find the page containing |item_id|, and return the index of that page.
+  // Return NSNotFound if the item is not found, or if the item appears more
+  // than once.
+  size_t GetPageIndexForItem(int item_id) const;
 
   void DelayForCollectionView();
   void SinkEvents();
@@ -53,7 +62,7 @@ class AppsGridControllerTestHelper : public ui::CocoaTest {
   AppsGridController* apps_grid_controller_;
 
  private:
-  MessageLoopForUI message_loop_;
+  base::MessageLoopForUI message_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(AppsGridControllerTestHelper);
 };

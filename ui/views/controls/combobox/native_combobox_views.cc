@@ -18,6 +18,7 @@
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
+#include "ui/views/color_constants.h"
 #include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/controls/focusable_border.h"
 #include "ui/views/controls/menu/menu_runner.h"
@@ -51,6 +52,8 @@ const int kDisclosureArrowRightPadding = 7;
 // Define the id of the first item in the menu (since it needs to be > 0)
 const int kFirstMenuItemId = 1000;
 
+const SkColor kInvalidTextColor = SK_ColorWHITE;
+
 // The background to use for invalid comboboxes.
 class InvalidBackground : public Background {
  public:
@@ -62,7 +65,7 @@ class InvalidBackground : public Background {
     gfx::Rect bounds(view->GetLocalBounds());
     // Inset by 2 to leave 1 empty pixel between background and border.
     bounds.Inset(2, 2, 2, 2);
-    canvas->FillRect(bounds, SK_ColorRED);
+    canvas->FillRect(bounds, kWarningColor);
   }
 
  private:
@@ -219,6 +222,7 @@ void NativeComboboxViews::UpdateFromModel() {
 
 void NativeComboboxViews::UpdateSelectedIndex() {
   selected_index_ = combobox_->selected_index();
+  SchedulePaint();
 }
 
 void NativeComboboxViews::UpdateEnabled() {
@@ -258,7 +262,7 @@ void NativeComboboxViews::SetFocus() {
 
 void NativeComboboxViews::ValidityStateChanged() {
   if (combobox_->invalid()) {
-    text_border_->SetColor(SK_ColorRED);
+    text_border_->SetColor(kWarningColor);
     set_background(new InvalidBackground());
   } else {
     text_border_->UseDefaultColor();
@@ -328,9 +332,9 @@ void NativeComboboxViews::PaintText(gfx::Canvas* canvas) {
   int x = insets.left();
   int y = insets.top();
   int text_height = height() - insets.height();
-  SkColor text_color = GetNativeTheme()->GetSystemColor(
-      combobox_->invalid() ? ui::NativeTheme::kColorId_LabelDisabledColor :
-      ui::NativeTheme::kColorId_LabelEnabledColor);
+  SkColor text_color = combobox_->invalid() ? kInvalidTextColor :
+      GetNativeTheme()->GetSystemColor(
+          ui::NativeTheme::kColorId_LabelEnabledColor);
 
   int index = GetSelectedIndex();
   if (index < 0 || index > combobox_->model()->GetItemCount())

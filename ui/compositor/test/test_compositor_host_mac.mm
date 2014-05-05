@@ -39,7 +39,7 @@
 
 - (void)drawRect:(NSRect)rect {
   DCHECK(compositor_) << "Drawing with no compositor set.";
-  compositor_->Draw(false);
+  compositor_->Draw();
 }
 @end
 
@@ -138,6 +138,7 @@ ui::Compositor* TestCompositorHostMac::GetCompositor() {
 }
 
 void TestCompositorHostMac::ScheduleDraw() {
+  DCHECK(!ui::Compositor::WasInitializedWithThread());
   if (!compositor_.get())
     return;
 

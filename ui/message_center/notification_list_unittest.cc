@@ -10,35 +10,11 @@
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/message_center/message_center_style.h"
 #include "ui/message_center/notification_types.h"
 
 namespace message_center {
-namespace {
-
-class MockNotificationListDelegate : public NotificationList::Delegate {
- public:
-  MockNotificationListDelegate() : send_remove_count_(0) {}
-  virtual ~MockNotificationListDelegate() {}
-
-  size_t GetSendRemoveCountAndReset() {
-    size_t result = send_remove_count_;
-    send_remove_count_ = 0;
-    return result;
-  }
-
- private:
-  // Overridden from NotificationList::Delegate:
-  virtual void SendRemoveNotification(const std::string& id,
-                                      bool by_user) OVERRIDE {
-    send_remove_count_++;
-  }
-
-  virtual void OnQuietModeChanged(bool quiet_mode) OVERRIDE {
-  }
-
-  size_t send_remove_count_;
-  DISALLOW_COPY_AND_ASSIGN(MockNotificationListDelegate);
-};
+namespace test {
 
 class NotificationListTest : public testing::Test {
  public:
@@ -46,8 +22,7 @@ class NotificationListTest : public testing::Test {
   virtual ~NotificationListTest() {}
 
   virtual void SetUp() {
-    delegate_.reset(new MockNotificationListDelegate);
-    notification_list_.reset(new NotificationList(delegate_.get()));
+    notification_list_.reset(new NotificationList());
     counter_ = 0;
   }
 
@@ -68,9 +43,10 @@ class NotificationListTest : public testing::Test {
   }
 
   // Utility methods of AddNotification.
-  std::string AddPriorityNotification(int priority) {
+  std::string AddPriorityNotification(NotificationPriority priority) {
     base::DictionaryValue optional;
-    optional.SetInteger(message_center::kPriorityKey, priority);
+    optional.SetInteger(message_center::kPriorityKey,
+                        static_cast<int>(priority));
     return AddNotification(&optional);
   }
   void SetupTimestampKey(const base::Time& time,
@@ -83,7 +59,14 @@ class NotificationListTest : public testing::Test {
     return notification_list()->GetPopupNotifications().size();
   }
 
-  MockNotificationListDelegate* delegate() { return delegate_.get(); }
+  Notification* GetNotification(const std::string& id) {
+    NotificationList::Notifications::iterator iter =
+        notification_list()->GetNotification(id);
+    if (iter == notification_list()->GetNotifications().end())
+      return NULL;
+    return *iter;
+  }
+
   NotificationList* notification_list() { return notification_list_.get(); }
 
  private:
@@ -93,20 +76,27 @@ class NotificationListTest : public testing::Test {
   static const char kDisplaySource[];
   static const char kExtensionId[];
 
-  scoped_ptr<MockNotificationListDelegate> delegate_;
   scoped_ptr<NotificationList> notification_list_;
   size_t counter_;
 
   DISALLOW_COPY_AND_ASSIGN(NotificationListTest);
 };
 
+bool IsInNotifications(const NotificationList::Notifications& notifications,
+                       const std::string& id) {
+  for (NotificationList::Notifications::const_iterator iter =
+           notifications.begin(); iter != notifications.end(); ++iter) {
+    if ((*iter)->id() == id)
+      return true;
+  }
+  return false;
+}
+
 const char NotificationListTest::kIdFormat[] = "id%ld";
 const char NotificationListTest::kTitleFormat[] = "id%ld";
 const char NotificationListTest::kMessageFormat[] = "message%ld";
 const char NotificationListTest::kDisplaySource[] = "source";
 const char NotificationListTest::kExtensionId[] = "ext";
-
-}  // namespace
 
 TEST_F(NotificationListTest, Basic) {
   ASSERT_EQ(0u, notification_list()->NotificationCount());
@@ -145,13 +135,26 @@ TEST_F(NotificationListTest, MessageCenterVisible) {
   AddNotification(NULL);
   EXPECT_EQ(1u, notification_list()->NotificationCount());
   ASSERT_EQ(1u, notification_list()->unread_count());
+  ASSERT_EQ(1u, GetPopupCounts());
 
-  // Toggle the message center visibility. It resets the unread count when
-  // hidden.
-  notification_list()->SetMessageCenterVisible(true);
-  ASSERT_EQ(1u, notification_list()->unread_count());
-  notification_list()->SetMessageCenterVisible(false);
+  // Make the message center visible. It resets the unread count and popup
+  // counts.
+  notification_list()->SetMessageCenterVisible(true, NULL);
   ASSERT_EQ(0u, notification_list()->unread_count());
+  ASSERT_EQ(0u, GetPopupCounts());
+}
+
+TEST_F(NotificationListTest, UnreadCount) {
+  std::string id0 = AddNotification(NULL);
+  std::string id1 = AddNotification(NULL);
+  ASSERT_EQ(2u, notification_list()->unread_count());
+
+  notification_list()->MarkSinglePopupAsDisplayed(id0);
+  EXPECT_EQ(1u, notification_list()->unread_count());
+  notification_list()->MarkSinglePopupAsDisplayed(id0);
+  EXPECT_EQ(1u, notification_list()->unread_count());
+  notification_list()->MarkSinglePopupAsDisplayed(id1);
+  EXPECT_EQ(0u, notification_list()->unread_count());
 }
 
 TEST_F(NotificationListTest, UpdateNotification) {
@@ -168,7 +171,7 @@ TEST_F(NotificationListTest, UpdateNotification) {
   EXPECT_EQ(UTF8ToUTF16("newbody"), (*notifications.begin())->message());
 }
 
-TEST_F(NotificationListTest, SendRemoveNotifications) {
+TEST_F(NotificationListTest, GetNotificationsBySourceOrExtensions) {
   notification_list()->AddNotification(
       message_center::NOTIFICATION_TYPE_SIMPLE, "id0", UTF8ToUTF16("title0"),
       UTF8ToUTF16("message0"), UTF8ToUTF16("source0"), "ext0", NULL);
@@ -182,29 +185,35 @@ TEST_F(NotificationListTest, SendRemoveNotifications) {
       message_center::NOTIFICATION_TYPE_SIMPLE, "id3", UTF8ToUTF16("title1"),
       UTF8ToUTF16("message1"), UTF8ToUTF16("source2"), "ext1", NULL);
 
-  notification_list()->SendRemoveNotificationsBySource("id0");
-  EXPECT_EQ(2u, delegate()->GetSendRemoveCountAndReset());
-  notification_list()->SendRemoveNotificationsByExtension("id0");
-  EXPECT_EQ(3u, delegate()->GetSendRemoveCountAndReset());
+  NotificationList::Notifications by_source =
+      notification_list()->GetNotificationsBySource("id0");
+  EXPECT_TRUE(IsInNotifications(by_source, "id0"));
+  EXPECT_TRUE(IsInNotifications(by_source, "id1"));
+  EXPECT_FALSE(IsInNotifications(by_source, "id2"));
+  EXPECT_FALSE(IsInNotifications(by_source, "id3"));
+
+  NotificationList::Notifications by_extension =
+      notification_list()->GetNotificationsByExtension("id0");
+  EXPECT_TRUE(IsInNotifications(by_extension, "id0"));
+  EXPECT_TRUE(IsInNotifications(by_extension, "id1"));
+  EXPECT_TRUE(IsInNotifications(by_extension, "id2"));
+  EXPECT_FALSE(IsInNotifications(by_extension, "id3"));
 }
 
 TEST_F(NotificationListTest, OldPopupShouldNotBeHidden) {
   std::vector<std::string> ids;
-  for (size_t i = 0; i <= NotificationList::kMaxVisiblePopupNotifications;
-       i++) {
+  for (size_t i = 0; i <= kMaxVisiblePopupNotifications; i++)
     ids.push_back(AddNotification(NULL));
-  }
 
   NotificationList::PopupNotifications popups =
       notification_list()->GetPopupNotifications();
   // The popup should contain the oldest kMaxVisiblePopupNotifications. Newer
   // one should come earlier in the popup list. It means, the last element
   // of |popups| should be the firstly added one, and so on.
-  EXPECT_EQ(NotificationList::kMaxVisiblePopupNotifications, popups.size());
+  EXPECT_EQ(kMaxVisiblePopupNotifications, popups.size());
   NotificationList::PopupNotifications::const_reverse_iterator iter =
       popups.rbegin();
-  for (size_t i = 0; i < NotificationList::kMaxVisiblePopupNotifications;
-       ++i, ++iter) {
+  for (size_t i = 0; i < kMaxVisiblePopupNotifications; ++i, ++iter) {
     EXPECT_EQ(ids[i], (*iter)->id()) << i;
   }
 
@@ -220,27 +229,25 @@ TEST_F(NotificationListTest, Priority) {
   ASSERT_EQ(0u, notification_list()->unread_count());
 
   // Default priority has the limit on the number of the popups.
-  for (size_t i = 0; i <= NotificationList::kMaxVisiblePopupNotifications;
-       ++i) {
+  for (size_t i = 0; i <= kMaxVisiblePopupNotifications; ++i)
     AddNotification(NULL);
-  }
-  EXPECT_EQ(NotificationList::kMaxVisiblePopupNotifications + 1,
+  EXPECT_EQ(kMaxVisiblePopupNotifications + 1,
             notification_list()->NotificationCount());
-  EXPECT_EQ(NotificationList::kMaxVisiblePopupNotifications, GetPopupCounts());
+  EXPECT_EQ(kMaxVisiblePopupNotifications, GetPopupCounts());
 
   // Low priority: not visible to popups.
-  notification_list()->SetMessageCenterVisible(true);
-  notification_list()->SetMessageCenterVisible(false);
+  notification_list()->SetMessageCenterVisible(true, NULL);
+  notification_list()->SetMessageCenterVisible(false, NULL);
   EXPECT_EQ(0u, notification_list()->unread_count());
-  AddPriorityNotification(-1);
-  EXPECT_EQ(NotificationList::kMaxVisiblePopupNotifications + 2,
+  AddPriorityNotification(LOW_PRIORITY);
+  EXPECT_EQ(kMaxVisiblePopupNotifications + 2,
             notification_list()->NotificationCount());
   EXPECT_EQ(1u, notification_list()->unread_count());
   EXPECT_EQ(0u, GetPopupCounts());
 
   // Minimum priority: doesn't update the unread count.
-  AddPriorityNotification(-2);
-  EXPECT_EQ(NotificationList::kMaxVisiblePopupNotifications + 3,
+  AddPriorityNotification(MIN_PRIORITY);
+  EXPECT_EQ(kMaxVisiblePopupNotifications + 3,
             notification_list()->NotificationCount());
   EXPECT_EQ(1u, notification_list()->unread_count());
   EXPECT_EQ(0u, GetPopupCounts());
@@ -248,32 +255,27 @@ TEST_F(NotificationListTest, Priority) {
   notification_list()->RemoveAllNotifications();
 
   // Higher priority: no limits to the number of popups.
-  for (size_t i = 0; i < NotificationList::kMaxVisiblePopupNotifications * 2;
-       ++i) {
-    AddPriorityNotification(1);
-  }
-  for (size_t i = 0; i < NotificationList::kMaxVisiblePopupNotifications * 2;
-       ++i) {
-    AddPriorityNotification(2);
-  }
-  EXPECT_EQ(NotificationList::kMaxVisiblePopupNotifications * 4,
+  for (size_t i = 0; i < kMaxVisiblePopupNotifications * 2; ++i)
+    AddPriorityNotification(HIGH_PRIORITY);
+  for (size_t i = 0; i < kMaxVisiblePopupNotifications * 2; ++i)
+    AddPriorityNotification(MAX_PRIORITY);
+  EXPECT_EQ(kMaxVisiblePopupNotifications * 4,
             notification_list()->NotificationCount());
-  EXPECT_EQ(NotificationList::kMaxVisiblePopupNotifications * 4,
-            GetPopupCounts());
+  EXPECT_EQ(kMaxVisiblePopupNotifications * 4, GetPopupCounts());
 }
 
 TEST_F(NotificationListTest, HasPopupsWithPriority) {
   ASSERT_EQ(0u, notification_list()->NotificationCount());
   ASSERT_EQ(0u, notification_list()->unread_count());
 
-  AddPriorityNotification(-2);
-  AddPriorityNotification(2);
+  AddPriorityNotification(MIN_PRIORITY);
+  AddPriorityNotification(MAX_PRIORITY);
 
   EXPECT_EQ(1u, GetPopupCounts());
 }
 
 TEST_F(NotificationListTest, PriorityPromotion) {
-  std::string id0 = AddPriorityNotification(-1);
+  std::string id0 = AddPriorityNotification(LOW_PRIORITY);
   std::string replaced = id0 + "_replaced";
   EXPECT_EQ(1u, notification_list()->NotificationCount());
   EXPECT_EQ(0u, GetPopupCounts());
@@ -290,6 +292,59 @@ TEST_F(NotificationListTest, PriorityPromotion) {
   EXPECT_EQ(UTF8ToUTF16("newtitle"), (*notifications.begin())->title());
   EXPECT_EQ(UTF8ToUTF16("newbody"), (*notifications.begin())->message());
   EXPECT_EQ(1, (*notifications.begin())->priority());
+}
+
+TEST_F(NotificationListTest, PriorityPromotionWithPopups) {
+  std::string id0 = AddPriorityNotification(LOW_PRIORITY);
+  std::string id1 = AddPriorityNotification(DEFAULT_PRIORITY);
+  EXPECT_EQ(1u, GetPopupCounts());
+  notification_list()->MarkSinglePopupAsShown(id1, true);
+  EXPECT_EQ(0u, GetPopupCounts());
+
+  // id0 promoted to LOW->DEFAULT, it'll appear as toast (popup).
+  base::DictionaryValue priority_default;
+  priority_default.SetInteger(message_center::kPriorityKey,
+                              static_cast<int>(DEFAULT_PRIORITY));
+  notification_list()->UpdateNotificationMessage(
+      id0, id0, UTF8ToUTF16("newtitle"), UTF8ToUTF16("newbody"),
+      &priority_default);
+  EXPECT_EQ(1u, GetPopupCounts());
+  notification_list()->MarkSinglePopupAsShown(id0, true);
+  EXPECT_EQ(0u, GetPopupCounts());
+
+  // update with no promotion change for id0, it won't appear as a toast.
+  notification_list()->UpdateNotificationMessage(
+      id0, id0, UTF8ToUTF16("newtitle2"), UTF8ToUTF16("newbody2"),
+      NULL);
+  EXPECT_EQ(0u, GetPopupCounts());
+
+  // id1 promoted to DEFAULT->HIGH, it'll appear as toast (popup).
+  base::DictionaryValue priority_high;
+  priority_high.SetInteger(message_center::kPriorityKey,
+                           static_cast<int>(HIGH_PRIORITY));
+  notification_list()->UpdateNotificationMessage(
+      id1, id1, UTF8ToUTF16("newtitle"), UTF8ToUTF16("newbody"),
+      &priority_high);
+  EXPECT_EQ(1u, GetPopupCounts());
+  notification_list()->MarkSinglePopupAsShown(id1, true);
+  EXPECT_EQ(0u, GetPopupCounts());
+
+  // id1 promoted to HIGH->MAX, it'll appear as toast again.
+  base::DictionaryValue priority_max;
+  priority_max.SetInteger(message_center::kPriorityKey,
+                          static_cast<int>(MAX_PRIORITY));
+  notification_list()->UpdateNotificationMessage(
+      id1, id1, UTF8ToUTF16("newtitle2"), UTF8ToUTF16("newbody2"),
+      &priority_max);
+  EXPECT_EQ(1u, GetPopupCounts());
+  notification_list()->MarkSinglePopupAsShown(id1, true);
+  EXPECT_EQ(0u, GetPopupCounts());
+
+  // id1 demoted to MAX->DEFAULT, no appearing as toast.
+  notification_list()->UpdateNotificationMessage(
+      id1, id1, UTF8ToUTF16("newtitle3"), UTF8ToUTF16("newbody3"),
+      &priority_default);
+  EXPECT_EQ(0u, GetPopupCounts());
 }
 
 TEST_F(NotificationListTest, NotificationOrderAndPriority) {
@@ -339,14 +394,16 @@ TEST_F(NotificationListTest, MarkSinglePopupAsShown) {
   std::string id2 = AddNotification(NULL);
   std::string id3 = AddNotification(NULL);
   ASSERT_EQ(3u, notification_list()->NotificationCount());
-  ASSERT_EQ(std::min(static_cast<size_t>(3u),
-                     NotificationList::kMaxVisiblePopupNotifications),
+  ASSERT_EQ(std::min(static_cast<size_t>(3u), kMaxVisiblePopupNotifications),
             GetPopupCounts());
+  notification_list()->MarkSinglePopupAsDisplayed(id1);
+  notification_list()->MarkSinglePopupAsDisplayed(id2);
+  notification_list()->MarkSinglePopupAsDisplayed(id3);
 
   notification_list()->MarkSinglePopupAsShown(id2, true);
   notification_list()->MarkSinglePopupAsShown(id3, false);
   EXPECT_EQ(3u, notification_list()->NotificationCount());
-  EXPECT_EQ(2u, notification_list()->unread_count());
+  EXPECT_EQ(1u, notification_list()->unread_count());
   EXPECT_EQ(1u, GetPopupCounts());
   NotificationList::PopupNotifications popups =
       notification_list()->GetPopupNotifications();
@@ -396,11 +453,39 @@ TEST_F(NotificationListTest, MarkSinglePopupAsShown) {
   EXPECT_EQ(id1, (*iter)->id());
 }
 
+TEST_F(NotificationListTest, UpdateAfterMarkedAsShown) {
+  std::string id1 = AddNotification(NULL);
+  std::string id2 = AddNotification(NULL);
+  notification_list()->MarkSinglePopupAsDisplayed(id1);
+  notification_list()->MarkSinglePopupAsDisplayed(id2);
+
+  EXPECT_EQ(2u, GetPopupCounts());
+
+  const Notification* n1 = GetNotification(id1);
+  EXPECT_FALSE(n1->shown_as_popup());
+  EXPECT_TRUE(n1->is_read());
+
+  notification_list()->MarkSinglePopupAsShown(id1, true);
+
+  n1 = GetNotification(id1);
+  EXPECT_TRUE(n1->shown_as_popup());
+  EXPECT_TRUE(n1->is_read());
+
+  const std::string replaced("test-replaced-id");
+  notification_list()->UpdateNotificationMessage(
+      id1, replaced, UTF8ToUTF16("newtitle"), UTF8ToUTF16("newbody"), NULL);
+  n1 = GetNotification(id1);
+  EXPECT_TRUE(n1 == NULL);
+  const Notification* nr = GetNotification(replaced);
+  EXPECT_TRUE(nr->shown_as_popup());
+  EXPECT_TRUE(nr->is_read());
+}
+
 TEST_F(NotificationListTest, QuietMode) {
   notification_list()->SetQuietMode(true);
   AddNotification(NULL);
-  AddPriorityNotification(1);
-  AddPriorityNotification(2);
+  AddPriorityNotification(HIGH_PRIORITY);
+  AddPriorityNotification(MAX_PRIORITY);
   EXPECT_EQ(3u, notification_list()->NotificationCount());
   EXPECT_EQ(0u, GetPopupCounts());
   // TODO(mukai): fix here when notification_list distinguish dismiss by quiet
@@ -415,4 +500,5 @@ TEST_F(NotificationListTest, QuietMode) {
   // TODO(mukai): Add test of quiet mode with expiration.
 }
 
+}  // namespace test
 }  // namespace message_center

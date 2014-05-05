@@ -16,6 +16,7 @@ class Display;
 namespace aura {
 class Window;
 namespace client {
+class CursorClientObserver;
 
 // An interface that receives cursor change events.
 class AURA_EXPORT CursorClient {
@@ -29,6 +30,9 @@ class AURA_EXPORT CursorClient {
   // Hides the cursor. Mouse events keep being sent even when the cursor is
   // invisible.
   virtual void HideCursor() = 0;
+
+  // Sets the scale of the mouse cursor icon.
+  virtual void SetScale(float scale) = 0;
 
   // Gets whether the cursor is visible.
   virtual bool IsCursorVisible() const = 0;
@@ -59,6 +63,10 @@ class AURA_EXPORT CursorClient {
   // Used to pass the cursor resource module name to the cursor loader. This is
   // typically used to load non system cursors.
   virtual void SetCursorResourceModule(const string16& module_name) = 0;
+
+  // Used to add or remove a CursorClientObserver.
+  virtual void AddObserver(CursorClientObserver* observer) = 0;
+  virtual void RemoveObserver(CursorClientObserver* observer) = 0;
 
  protected:
   virtual ~CursorClient() {}

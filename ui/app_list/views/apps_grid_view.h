@@ -20,6 +20,7 @@
 
 namespace views {
 class ButtonListener;
+class DragImageView;
 }
 
 namespace app_list {
@@ -28,6 +29,7 @@ namespace test {
 class AppsGridViewTestApi;
 }
 
+class ApplicationDragAndDropHost;
 class AppListItemView;
 class AppsGridViewDelegate;
 class PageSwitcher;
@@ -65,14 +67,18 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   // transition, this does nothing.
   void EnsureViewVisible(const views::View* view);
 
-  void InitiateDrag(views::View* view,
+  void InitiateDrag(AppListItemView* view,
                     Pointer pointer,
                     const ui::LocatedEvent& event);
-  void UpdateDrag(views::View* view,
+  void UpdateDrag(AppListItemView* view,
                   Pointer pointer,
                   const ui::LocatedEvent& event);
   void EndDrag(bool cancel);
   bool IsDraggedView(const views::View* view) const;
+
+  // Set the drag and drop host for application links.
+  void SetDragAndDropHostOfCurrentAppList(
+      ApplicationDragAndDropHost* drag_and_drop_host);
 
   // Prerenders the icons on and around |page_index|.
   void Prerender(int page_index);
@@ -85,9 +91,22 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   virtual void Layout() OVERRIDE;
   virtual bool OnKeyPressed(const ui::KeyEvent& event) OVERRIDE;
   virtual bool OnKeyReleased(const ui::KeyEvent& event) OVERRIDE;
-  virtual void ViewHierarchyChanged(bool is_add,
-                                    views::View* parent,
-                                    views::View* child) OVERRIDE;
+  virtual void ViewHierarchyChanged(
+      const ViewHierarchyChangedDetails& details) OVERRIDE;
+
+  // Get the last grid view which was created.
+  static AppsGridView* GetLastGridViewForTest();
+
+  // Return the view model for test purposes.
+  const views::ViewModel* view_model_for_test() const { return &view_model_; }
+
+  // For test: Return if the drag and drop handler was set.
+  bool has_drag_and_drop_host_for_test() { return NULL != drag_and_drop_host_; }
+
+  // For test: Return if the drag and drop operation gets dispatched.
+  bool forward_events_to_drag_and_drop_host_for_test() {
+    return forward_events_to_drag_and_drop_host_;
+  }
 
  private:
   friend class app_list::test::AppsGridViewTestApi;
@@ -128,7 +147,7 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   Index GetIndexOfView(const views::View* view) const;
   views::View* GetViewAtIndex(const Index& index) const;
 
-  void MoveSelected(int page_delta, int slot_delta);
+  void MoveSelected(int page_delta, int slot_x_delta, int slot_y_delta);
 
   void CalculateIdealBounds();
   void AnimateToIdealBounds();
@@ -156,6 +175,9 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   // as drop target.
   void CalculateDropTarget(const gfx::Point& drag_point,
                            bool use_page_button_hovering);
+
+  // Dispatch the drag and drop update event to the dnd host (if needed).
+  void DispatchDragEventToDragAndDropHost(const ui::LocatedEvent& event);
 
   // Starts the page flip timer if |drag_point| is in left/right side page flip
   // zone or is over page switcher.
@@ -202,10 +224,17 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
 
   views::View* selected_view_;
 
-  views::View* drag_view_;
+  AppListItemView* drag_view_;
   gfx::Point drag_start_;
   Pointer drag_pointer_;
   Index drop_target_;
+
+  // An application target drag and drop host which accepts dnd operations.
+  ApplicationDragAndDropHost* drag_and_drop_host_;
+
+  // The drag operation is currently inside the dnd host and events get
+  // forwarded.
+  bool forward_events_to_drag_and_drop_host_;
 
   // Last mouse drag location in this view's coordinates.
   gfx::Point last_drag_point_;

@@ -425,11 +425,9 @@ bool Layer::GetTargetTransformRelativeTo(const Layer* ancestor,
 // static
 gfx::Transform Layer::ConvertTransformToCCTransform(
     const gfx::Transform& transform,
-    const gfx::Rect& bounds,
     float device_scale_factor) {
   gfx::Transform cc_transform;
   cc_transform.Scale(device_scale_factor, device_scale_factor);
-  cc_transform.Translate(bounds.x(), bounds.y());
   cc_transform.PreconcatTransform(transform);
   cc_transform.Scale(1.0f / device_scale_factor, 1.0f / device_scale_factor);
   return cc_transform;
@@ -463,6 +461,7 @@ void Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
   cc_layer_->RemoveLayerAnimationEventObserver(this);
   new_layer->SetOpacity(cc_layer_->opacity());
   new_layer->SetTransform(cc_layer_->transform());
+  new_layer->SetPosition(cc_layer_->position());
 
   cc_layer_= new_layer;
   content_layer_ = NULL;
@@ -488,6 +487,10 @@ void Layer::SwitchCCLayerForTest() {
 }
 
 void Layer::SetExternalTexture(Texture* texture) {
+  // Hold a ref to the old |Texture| until we have updated all
+  // compositor references to the texture id that it holds.
+  scoped_refptr<ui::Texture> old_texture = texture_;
+
   DCHECK_EQ(type_, LAYER_TEXTURED);
   DCHECK(!solid_color_layer_);
   bool has_texture = !!texture;
@@ -520,7 +523,7 @@ void Layer::SetDelegatedFrame(scoped_ptr<cc::DelegatedFrameData> frame,
   if (!!delegated_renderer_layer_ != has_frame) {
     if (has_frame) {
       scoped_refptr<cc::DelegatedRendererLayer> new_layer =
-          cc::DelegatedRendererLayer::Create();
+          cc::DelegatedRendererLayer::Create(NULL);
       SwitchToLayer(new_layer);
       delegated_renderer_layer_ = new_layer;
     } else {
@@ -601,6 +604,7 @@ void Layer::OnDeviceScaleFactorChanged(float device_scale_factor) {
   device_scale_factor_ = device_scale_factor;
   RecomputeCCTransformFromTransform(transform);
   RecomputeDrawsContentAndUVRect();
+  RecomputePosition();
   SchedulePaint(gfx::Rect(bounds_.size()));
   if (delegate_)
     delegate_->OnDeviceScaleFactorChanged(device_scale_factor);
@@ -638,6 +642,10 @@ unsigned Layer::PrepareTexture(cc::ResourceUpdateQueue* queue) {
 WebKit::WebGraphicsContext3D* Layer::Context3d() {
   DCHECK(texture_layer_);
   return texture_->HostContext3D();
+}
+
+bool Layer::PrepareTextureMailbox(cc::TextureMailbox* mailbox) {
+  return false;
 }
 
 void Layer::SetForceRenderSurface(bool force) {
@@ -704,11 +712,11 @@ void Layer::SetBoundsImmediately(const gfx::Rect& bounds) {
   if (delegate_)
     closure = delegate_->PrepareForLayerBoundsChange();
   bool was_move = bounds_.size() == bounds.size();
-  gfx::Transform transform = this->transform();
   bounds_ = bounds;
 
-  RecomputeCCTransformFromTransform(transform);
   RecomputeDrawsContentAndUVRect();
+  RecomputePosition();
+
   if (!closure.is_null())
     closure.Run();
 
@@ -891,17 +899,16 @@ void Layer::CreateWebLayer() {
   cc_layer_->SetContentsOpaque(true);
   cc_layer_->SetIsDrawable(type_ != LAYER_NOT_DRAWN);
   cc_layer_->AddLayerAnimationEventObserver(this);
+  RecomputePosition();
 }
 
 void Layer::RecomputeCCTransformFromTransform(const gfx::Transform& transform) {
   cc_layer_->SetTransform(ConvertTransformToCCTransform(transform,
-                                                        bounds_,
                                                         device_scale_factor_));
 }
 
 gfx::Transform Layer::transform() const {
   gfx::Transform transform;
-  transform.Translate(-bounds_.x(), -bounds_.y());
   transform.Scale(1.0f / device_scale_factor_, 1.0f / device_scale_factor_);
   transform.PreconcatTransform(cc_layer_->transform());
   transform.Scale(device_scale_factor_, device_scale_factor_);
@@ -930,6 +937,12 @@ void Layer::RecomputeDrawsContentAndUVRect() {
     size.ClampToMax(delegated_frame_size_in_dip_);
   }
   cc_layer_->SetBounds(ConvertSizeToPixel(this, size));
+}
+
+void Layer::RecomputePosition() {
+  cc_layer_->SetPosition(gfx::ScalePoint(
+        gfx::PointF(bounds_.x(), bounds_.y()),
+        device_scale_factor_));
 }
 
 }  // namespace ui

@@ -8,6 +8,7 @@
 #include "base/logging.h"
 #include "base/message_loop.h"
 #include "base/utf_string_conversions.h"
+#include "ui/base/default_theme_provider.h"
 #include "ui/base/events/event.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/l10n/l10n_font_util.h"
@@ -21,11 +22,11 @@
 #include "ui/views/focus/widget_focus_manager.h"
 #include "ui/views/ime/input_method.h"
 #include "ui/views/views_delegate.h"
-#include "ui/views/widget/default_theme_provider.h"
 #include "ui/views/widget/native_widget_private.h"
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/tooltip_manager.h"
 #include "ui/views/widget/widget_delegate.h"
+#include "ui/views/widget/widget_deletion_observer.h"
 #include "ui/views/widget/widget_observer.h"
 #include "ui/views/window/custom_frame_view.h"
 
@@ -169,6 +170,7 @@ Widget::InitParams::InitParams(Type type)
       mirror_origin_in_rtl(false),
       has_dropshadow(false),
       remove_standard_frame(false),
+      use_system_default_icon(false),
       show_state(ui::SHOW_STATE_DEFAULT),
       double_buffer(false),
       parent(NULL),
@@ -348,7 +350,11 @@ void Widget::Init(const InitParams& in_params) {
   params.top_level = is_top_level_;
 #if defined(OS_WIN) && defined(USE_AURA)
   // It'll need to be faded in if it's top level and not the main window.
-  params.transparent = is_top_level_ && params.type != InitParams::TYPE_WINDOW;
+  // Maintain transparent if the creator of the Widget specified transparent
+  // already.
+  params.transparent =
+      params.transparent ||
+      (is_top_level_ && params.type != InitParams::TYPE_WINDOW);
 #endif
 
   if (ViewsDelegate::views_delegate)
@@ -360,7 +366,7 @@ void Widget::Init(const InitParams& in_params) {
   native_widget_ = CreateNativeWidget(params.native_widget, this)->
                    AsNativeWidgetPrivate();
   root_view_.reset(CreateRootView());
-  default_theme_provider_.reset(new DefaultThemeProvider);
+  default_theme_provider_.reset(new ui::DefaultThemeProvider);
   if (params.type == InitParams::TYPE_MENU) {
     is_mouse_button_pressed_ =
         internal::NativeWidgetPrivate::IsMouseButtonDown();
@@ -412,15 +418,16 @@ bool Widget::GetAccelerator(int cmd_id, ui::Accelerator* accelerator) {
   return false;
 }
 
-void Widget::ViewHierarchyChanged(bool is_add, View* parent, View* child) {
-  if (!is_add) {
-    if (child == dragged_view_)
+void Widget::ViewHierarchyChanged(
+    const View::ViewHierarchyChangedDetails& details) {
+  if (!details.is_add) {
+    if (details.child == dragged_view_)
       dragged_view_ = NULL;
     FocusManager* focus_manager = GetFocusManager();
     if (focus_manager)
-      focus_manager->ViewRemoved(child);
-    ViewStorage::GetInstance()->ViewRemoved(child);
-    native_widget_->ViewRemoved(child);
+      focus_manager->ViewRemoved(details.child);
+    ViewStorage::GetInstance()->ViewRemoved(details.child);
+    native_widget_->ViewRemoved(details.child);
   }
 }
 
@@ -772,10 +779,6 @@ void Widget::SetCursor(gfx::NativeCursor cursor) {
   native_widget_->SetCursor(cursor);
 }
 
-void Widget::ResetLastMouseMoveFlag() {
-  last_mouse_event_was_move_ = false;
-}
-
 void Widget::SetNativeWindowProperty(const char* name, void* value) {
   native_widget_->SetNativeWindowProperty(name, value);
 }
@@ -877,16 +880,8 @@ ui::Compositor* Widget::GetCompositor() {
   return native_widget_->GetCompositor();
 }
 
-gfx::Vector2d Widget::CalculateOffsetToAncestorWithLayer(
-    ui::Layer** layer_parent) {
-  return native_widget_->CalculateOffsetToAncestorWithLayer(layer_parent);
-}
-
-void Widget::ReorderLayers() {
-  ui::Layer* layer = NULL;
-  CalculateOffsetToAncestorWithLayer(&layer);
-  if (layer)
-    root_view_->ReorderChildLayers(layer);
+ui::Layer* Widget::GetLayer() {
+  return native_widget_->GetLayer();
 }
 
 void Widget::UpdateRootLayers() {
@@ -894,15 +889,6 @@ void Widget::UpdateRootLayers() {
   // mutation of the tree can trigger this call we delay until absolutely
   // necessary.
   root_layers_dirty_ = true;
-}
-
-void Widget::NotifyAccessibilityEvent(
-    View* view,
-    ui::AccessibilityTypes::Event event_type,
-    bool send_native_event) {
-  // TODO(dmazzoni): get rid of this method and have clients just use
-  // View::NotifyAccessibilityEvent directly.
-  view->NotifyAccessibilityEvent(event_type, send_native_event);
 }
 
 const NativeWidget* Widget::native_widget() const {
@@ -943,9 +929,14 @@ void Widget::TooltipTextChanged(View* view) {
 }
 
 bool Widget::SetInitialFocus() {
-  if (!focus_on_creation_)
-    return true;
   View* v = widget_delegate_->GetInitiallyFocusedView();
+  if (!focus_on_creation_) {
+    // If not focusing the window now, tell the focus manager which view to
+    // focus when the window is restored.
+    if (v)
+      focus_manager_->SetStoredFocusView(v);
+    return true;
+  }
   if (v)
     v->RequestFocus();
   return !!v;
@@ -957,6 +948,15 @@ View* Widget::GetChildViewParent() {
 
 gfx::Rect Widget::GetWorkAreaBoundsInScreen() const {
   return native_widget_->GetWorkAreaBoundsInScreen();
+}
+
+void Widget::SynthesizeMouseMoveEvent() {
+  last_mouse_event_was_move_ = false;
+  ui::MouseEvent mouse_event(ui::ET_MOUSE_MOVED,
+                             last_mouse_event_position_,
+                             last_mouse_event_position_,
+                             ui::EF_IS_SYNTHESIZED);
+  root_view_->OnMouseMoved(mouse_event);
 }
 
 void Widget::OnOwnerClosing() {
@@ -1086,36 +1086,7 @@ bool Widget::OnNativeWidgetPaintAccelerated(const gfx::Rect& dirty_region) {
   if (!compositor)
     return false;
 
-#if defined(OS_WIN) && defined(USE_AURA)
-  compositor->ScheduleDraw();
-#else
-  // If the root view is animating, it is likely that it does not cover the same
-  // set of pixels it did at the last frame, so we must clear when compositing
-  // to avoid leaving ghosts.
-  bool force_clear = false;
-  if (GetRootView()->layer()) {
-    const gfx::Transform& layer_transform = GetRootView()->layer()->transform();
-    if (layer_transform != GetRootView()->GetTransform()) {
-      // The layer has not caught up to the view (i.e., the layer is still
-      // animating), and so a clear is required.
-      force_clear = true;
-    } else {
-      // Determine if the layer fills the client area.
-      gfx::RectF layer_bounds = GetRootView()->layer()->bounds();
-      layer_transform.TransformRect(&layer_bounds);
-      gfx::Rect client_bounds = GetClientAreaBoundsInScreen();
-      // Translate bounds to origin (client area bounds are offset to account
-      // for buttons, etc).
-      client_bounds.set_origin(gfx::Point(0, 0));
-      if (!layer_bounds.Contains(client_bounds)) {
-        // It doesn't, and so a clear is required.
-        force_clear = true;
-      }
-    }
-  }
-
-  compositor->Draw(force_clear);
-#endif
+  compositor->ScheduleRedrawRect(dirty_region);
   return true;
 }
 
@@ -1147,17 +1118,23 @@ void Widget::OnMouseEvent(ui::MouseEvent* event) {
   ScopedEvent scoped(this, *event);
   View* root_view = GetRootView();
   switch (event->type()) {
-    case ui::ET_MOUSE_PRESSED:
+    case ui::ET_MOUSE_PRESSED: {
       last_mouse_event_was_move_ = false;
+
+      // We may get deleted by the time we return from OnMousePressed. So we
+      // use an observer to make sure we are still alive.
+      WidgetDeletionObserver widget_deletion_observer(this);
       // Make sure we're still visible before we attempt capture as the mouse
       // press processing may have made the window hide (as happens with menus).
-      if (root_view && root_view->OnMousePressed(*event) && IsVisible()) {
+      if (root_view && root_view->OnMousePressed(*event) &&
+          widget_deletion_observer.IsWidgetAlive() && IsVisible()) {
         is_mouse_button_pressed_ = true;
         if (!native_widget_->HasCapture())
           native_widget_->SetCapture();
         event->SetHandled();
       }
       return;
+    }
     case ui::ET_MOUSE_RELEASED:
       last_mouse_event_was_move_ = false;
       is_mouse_button_pressed_ = false;

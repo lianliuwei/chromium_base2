@@ -4,6 +4,7 @@
 
 #include "ui/views/corewm/cursor_manager.h"
 
+#include "ui/aura/client/cursor_client_observer.h"
 #include "ui/views/corewm/native_cursor_manager.h"
 #include "ui/views/test/views_test_base.h"
 
@@ -37,6 +38,12 @@ class TestingCursorManager : public views::corewm::NativeCursorManager {
     delegate->CommitMouseEventsEnabled(enabled);
   }
 
+  virtual void SetScale(
+      float scale,
+      views::corewm::NativeCursorManagerDelegate* delegate) OVERRIDE {
+    delegate->CommitScale(scale);
+  }
+
   virtual void SetCursorResourceModule(const string16& module_name) OVERRIDE {
   }
 
@@ -58,6 +65,28 @@ class CursorManagerTest : public views::ViewsTestBase {
 
   TestingCursorManager* delegate_;
   views::corewm::CursorManager cursor_manager_;
+};
+
+class TestingCursorClientObserver : public aura::client::CursorClientObserver {
+ public:
+  TestingCursorClientObserver()
+      : cursor_visibility_(false),
+        did_visibility_change_(false) {}
+  void reset() { cursor_visibility_ = did_visibility_change_ = false; }
+  bool is_cursor_visible() const { return cursor_visibility_; }
+  bool did_visibility_change() const { return did_visibility_change_; }
+
+  // Overridden from aura::client::CursorClientObserver:
+  virtual void OnCursorVisibilityChanged(bool is_visible) OVERRIDE {
+    cursor_visibility_ = is_visible;
+    did_visibility_change_ = true;
+  }
+
+ private:
+  bool cursor_visibility_;
+  bool did_visibility_change_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestingCursorClientObserver);
 };
 
 TEST_F(CursorManagerTest, ShowHideCursor) {
@@ -160,6 +189,23 @@ TEST_F(CursorManagerTest, EnableDisableMouseEvents) {
   EXPECT_FALSE(cursor_manager_.IsMouseEventsEnabled());
 }
 
+TEST_F(CursorManagerTest, SetScale) {
+  EXPECT_EQ(1.f, cursor_manager_.GetCurrentScale());
+  cursor_manager_.SetScale(2.f);
+  EXPECT_EQ(2.f, cursor_manager_.GetCurrentScale());
+
+  // Cusror scale does change even while cursor is locked.
+  cursor_manager_.LockCursor();
+  EXPECT_EQ(2.f, cursor_manager_.GetCurrentScale());
+  cursor_manager_.SetScale(2.5f);
+  EXPECT_EQ(2.5f, cursor_manager_.GetCurrentScale());
+  cursor_manager_.UnlockCursor();
+
+  EXPECT_EQ(2.5f, cursor_manager_.GetCurrentScale());
+  cursor_manager_.SetScale(1.f);
+  EXPECT_EQ(1.f, cursor_manager_.GetCurrentScale());
+}
+
 TEST_F(CursorManagerTest, IsMouseEventsEnabled) {
   cursor_manager_.EnableMouseEvents();
   EXPECT_TRUE(cursor_manager_.IsMouseEventsEnabled());
@@ -243,4 +289,57 @@ TEST_F(CursorManagerTest, MultipleEnableMouseEvents) {
   cursor_manager_.LockCursor();
   cursor_manager_.UnlockCursor();
   EXPECT_TRUE(cursor_manager_.IsCursorVisible());
+}
+
+TEST_F(CursorManagerTest, TestCursorClientObserver) {
+  // Add two observers. Both should have OnCursorVisibilityChanged()
+  // invoked when the visibility of the cursor changes.
+  TestingCursorClientObserver observer_a;
+  TestingCursorClientObserver observer_b;
+  cursor_manager_.AddObserver(&observer_a);
+  cursor_manager_.AddObserver(&observer_b);
+
+  // Initial state before any events have been sent.
+  observer_a.reset();
+  observer_b.reset();
+  EXPECT_FALSE(observer_a.did_visibility_change());
+  EXPECT_FALSE(observer_b.did_visibility_change());
+  EXPECT_FALSE(observer_a.is_cursor_visible());
+  EXPECT_FALSE(observer_b.is_cursor_visible());
+
+  // Hide the cursor using HideCursor().
+  cursor_manager_.HideCursor();
+  EXPECT_TRUE(observer_a.did_visibility_change());
+  EXPECT_TRUE(observer_b.did_visibility_change());
+  EXPECT_FALSE(observer_a.is_cursor_visible());
+  EXPECT_FALSE(observer_b.is_cursor_visible());
+
+  // Show the cursor using ShowCursor().
+  observer_a.reset();
+  observer_b.reset();
+  cursor_manager_.ShowCursor();
+  EXPECT_TRUE(observer_a.did_visibility_change());
+  EXPECT_TRUE(observer_b.did_visibility_change());
+  EXPECT_TRUE(observer_a.is_cursor_visible());
+  EXPECT_TRUE(observer_b.is_cursor_visible());
+
+  // Remove observer_b. Its OnCursorVisibilityChanged() should
+  // not be invoked past this point.
+  cursor_manager_.RemoveObserver(&observer_b);
+
+  // Hide the cursor using HideCursor().
+  observer_a.reset();
+  observer_b.reset();
+  cursor_manager_.HideCursor();
+  EXPECT_TRUE(observer_a.did_visibility_change());
+  EXPECT_FALSE(observer_b.did_visibility_change());
+  EXPECT_FALSE(observer_a.is_cursor_visible());
+
+  // Show the cursor using ShowCursor().
+  observer_a.reset();
+  observer_b.reset();
+  cursor_manager_.ShowCursor();
+  EXPECT_TRUE(observer_a.did_visibility_change());
+  EXPECT_FALSE(observer_b.did_visibility_change());
+  EXPECT_TRUE(observer_a.is_cursor_visible());
 }

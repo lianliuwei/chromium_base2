@@ -15,6 +15,7 @@
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/root_window_host.h"
 #include "ui/base/cursor/cursor_loader_x11.h"
+#include "ui/base/dragdrop/desktop_selection_provider_aurax11.h"
 #include "ui/base/x/x11_atom_cache.h"
 #include "ui/gfx/rect.h"
 #include "ui/views/views_export.h"
@@ -30,6 +31,7 @@ class ScreenPositionClient;
 namespace views {
 class DesktopActivationClient;
 class DesktopCaptureClient;
+class DesktopDragDropClientAuraX11;
 class DesktopDispatcherClient;
 class X11DesktopWindowMoveClient;
 class X11WindowEventFilter;
@@ -38,10 +40,11 @@ namespace corewm {
 class CursorManager;
 }
 
-class VIEWS_EXPORT DesktopRootWindowHostX11
-    : public DesktopRootWindowHost,
-      public aura::RootWindowHost,
-      public MessageLoop::Dispatcher {
+class VIEWS_EXPORT DesktopRootWindowHostX11 :
+    public DesktopRootWindowHost,
+    public aura::RootWindowHost,
+    public ui::DesktopSelectionProviderAuraX11,
+    public base::MessageLoop::Dispatcher {
  public:
   DesktopRootWindowHostX11(
       internal::NativeWidgetDelegate* native_widget_delegate,
@@ -139,6 +142,7 @@ class VIEWS_EXPORT DesktopRootWindowHostX11
   virtual void FlashFrame(bool flash_frame) OVERRIDE;
   virtual void OnNativeWidgetFocus() OVERRIDE;
   virtual void OnNativeWidgetBlur() OVERRIDE;
+  virtual void SetInactiveRenderingDisabled(bool disable_inactive) OVERRIDE;
 
   // Overridden from aura::RootWindowHost:
   virtual void SetDelegate(aura::RootWindowHostDelegate* delegate) OVERRIDE;
@@ -164,12 +168,13 @@ class VIEWS_EXPORT DesktopRootWindowHostX11
   virtual bool CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
                                   const gfx::Point& dest_offset,
                                   SkCanvas* canvas) OVERRIDE;
-  virtual bool GrabSnapshot(
-      const gfx::Rect& snapshot_bounds,
-      std::vector<unsigned char>* png_representation) OVERRIDE;
   virtual void PostNativeEvent(const base::NativeEvent& native_event) OVERRIDE;
   virtual void OnDeviceScaleFactorChanged(float device_scale_factor) OVERRIDE;
   virtual void PrepareForShutdown() OVERRIDE;
+
+  // Overridden from DesktopSelectionProviderAuraX11:
+  virtual void SetDropHandler(
+      ui::OSExchangeDataProviderAuraX11* handler) OVERRIDE;
 
   // Overridden from Dispatcher:
   virtual bool Dispatch(const base::NativeEvent& event) OVERRIDE;
@@ -208,6 +213,7 @@ class VIEWS_EXPORT DesktopRootWindowHostX11
   scoped_ptr<views::corewm::CursorManager> cursor_client_;
   scoped_ptr<DesktopDispatcherClient> dispatcher_client_;
   scoped_ptr<aura::client::ScreenPositionClient> position_client_;
+  scoped_ptr<DesktopDragDropClientAuraX11> drag_drop_client_;
 
   // Current Aura cursor.
   gfx::NativeCursor current_cursor_;
@@ -223,6 +229,9 @@ class VIEWS_EXPORT DesktopRootWindowHostX11
 
   aura::RootWindowHostDelegate* root_window_host_delegate_;
   aura::Window* content_window_;
+
+  // We forward drop related messages to this object.
+  ui::OSExchangeDataProviderAuraX11* drop_handler_;
 
   // The current root window host that has capture. While X11 has something
   // like Windows SetCapture()/ReleaseCapture(), it is entirely implicit and

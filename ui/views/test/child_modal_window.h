@@ -10,7 +10,7 @@
 #include "ui/views/widget/widget_observer.h"
 
 namespace views {
-class NativeTextButton;
+class LabelButton;
 class NativeViewHost;
 class Textfield;
 class View;
@@ -39,9 +39,8 @@ class ChildModalParent : public WidgetDelegateView,
   virtual bool CanResize() const OVERRIDE;
   virtual void DeleteDelegate() OVERRIDE;
   virtual void Layout() OVERRIDE;
-  virtual void ViewHierarchyChanged(bool is_add,
-                                    View* parent,
-                                    View* child) OVERRIDE;
+  virtual void ViewHierarchyChanged(
+      const ViewHierarchyChangedDetails& details) OVERRIDE;
 
   // Overridden from ButtonListener:
   virtual void ButtonPressed(Button* sender,
@@ -52,7 +51,7 @@ class ChildModalParent : public WidgetDelegateView,
 
   // The button to toggle showing and hiding the child window. The child window
   // does not block input to this button.
-  NativeTextButton* button_;
+  LabelButton* button_;
 
   // The text field to indicate the keyboard focus.
   Textfield* textfield_;

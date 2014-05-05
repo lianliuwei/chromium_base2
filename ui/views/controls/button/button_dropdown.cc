@@ -37,7 +37,7 @@ ButtonDropDown::ButtonDropDown(ButtonListener* listener, ui::MenuModel* model)
       model_(model),
       menu_showing_(false),
       y_position_on_lbuttondown_(0),
-      ALLOW_THIS_IN_INITIALIZER_LIST(show_menu_factory_(this)) {
+      show_menu_factory_(this) {
   set_context_menu_controller(this);
 }
 
@@ -67,7 +67,7 @@ bool ButtonDropDown::OnMousePressed(const ui::MouseEvent& event) {
     y_position_on_lbuttondown_ = event.y();
 
     // Schedule a task that will show the menu.
-    MessageLoop::current()->PostDelayedTask(
+    base::MessageLoop::current()->PostDelayedTask(
         FROM_HERE,
         base::Bind(&ButtonDropDown::ShowDropDownMenu,
                    show_menu_factory_.GetWeakPtr()),
@@ -102,7 +102,7 @@ void ButtonDropDown::OnMouseReleased(const ui::MouseEvent& event) {
     show_menu_factory_.InvalidateWeakPtrs();
 }
 
-std::string ButtonDropDown::GetClassName() const {
+const char* ButtonDropDown::GetClassName() const {
   return kViewClassName;
 }
 

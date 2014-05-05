@@ -9,7 +9,9 @@
 #include <vector>
 
 #include "base/basictypes.h"
+#include "base/callback.h"
 #include "base/memory/scoped_ptr.h"
+#include "ui/base/events/event_constants.h"
 #include "ui/base/keycodes/keyboard_codes.h"
 #include "ui/gfx/point.h"
 
@@ -34,6 +36,9 @@ class ScreenPositionClient;
 }
 
 namespace test {
+
+typedef base::Callback<void(ui::EventType, const gfx::Vector2dF&)>
+        ScrollStepCallback;
 
 // A delegate interface for EventGenerator that provides a way to
 // locate aura root window for given point.
@@ -106,10 +111,18 @@ class EventGenerator {
   // Generates a right button release event.
   void ReleaseRightButton();
 
-  // Generates events to move mouse to be the given |point|.
-  void MoveMouseTo(const gfx::Point& point, int count);
-  void MoveMouseTo(const gfx::Point& point) {
-    MoveMouseTo(point, 1);
+  // Generates events to move mouse to be the given |point| in the
+  // |current_root_window_|'s host window coordinates.
+  void MoveMouseToInHost(const gfx::Point& point_in_host);
+  void MoveMouseToInHost(int x, int y) {
+    MoveMouseToInHost(gfx::Point(x, y));
+  }
+
+  // Generates events to move mouse to be the given |point| in screen
+  // coordinates.
+  void MoveMouseTo(const gfx::Point& point_in_screen, int count);
+  void MoveMouseTo(const gfx::Point& point_in_screen) {
+    MoveMouseTo(point_in_screen, 1);
   }
   void MoveMouseTo(int x, int y) {
     MoveMouseTo(gfx::Point(x, y));
@@ -184,6 +197,16 @@ class EventGenerator {
                              const gfx::Point& end,
                              const base::TimeDelta& duration,
                              int steps);
+
+  // The same as GestureScrollSequence(), with the exception that |callback| is
+  // called at each step of the scroll sequence. |callback| is called at the
+  // start of the sequence with ET_GESTURE_SCROLL_BEGIN, followed by one or more
+  // ET_GESTURE_SCROLL_UPDATE and ends with an ET_GESTURE_SCROLL_END.
+  void GestureScrollSequenceWithCallback(const gfx::Point& start,
+                                         const gfx::Point& end,
+                                         const base::TimeDelta& duration,
+                                         int steps,
+                                         const ScrollStepCallback& callback);
 
   // Generates press, move, release touch-events to generate a sequence of
   // multi-finger scroll events. |count| specifies the number of touch-points

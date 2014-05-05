@@ -12,6 +12,7 @@
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_sender.h"
 #include "ui/aura/client/capture_client.h"
+#include "ui/aura/client/cursor_client.h"
 #include "ui/aura/root_window.h"
 #include "ui/base/cursor/cursor_loader_win.h"
 #include "ui/base/events/event.h"
@@ -93,6 +94,13 @@ void HandleSaveFile(
                                                             callback);
 }
 
+void HandleSelectFolder(const string16& title,
+                        const SelectFolderCompletion& callback) {
+  DCHECK(aura::RemoteRootWindowHostWin::Instance());
+  aura::RemoteRootWindowHostWin::Instance()->HandleSelectFolder(title,
+                                                                callback);
+}
+
 RemoteRootWindowHostWin* g_instance = NULL;
 
 RemoteRootWindowHostWin* RemoteRootWindowHostWin::Instance() {
@@ -106,7 +114,9 @@ RemoteRootWindowHostWin* RemoteRootWindowHostWin::Create(
 }
 
 RemoteRootWindowHostWin::RemoteRootWindowHostWin(const gfx::Rect& bounds)
-    : delegate_(NULL), host_(NULL) {
+    : delegate_(NULL),
+      host_(NULL),
+      ignore_mouse_moves_until_set_cursor_ack_(false) {
   prop_.reset(new ui::ViewProp(NULL, kRootWindowHostWinKey, this));
 }
 
@@ -145,6 +155,12 @@ bool RemoteRootWindowHostWin::OnMessageReceived(const IPC::Message& message) {
                         OnFileOpenDone)
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_MultiFileOpenDone,
                         OnMultiFileOpenDone)
+    IPC_MESSAGE_HANDLER(MetroViewerHostMsg_SelectFolderDone,
+                        OnSelectFolderDone)
+    IPC_MESSAGE_HANDLER(MetroViewerHostMsg_WindowActivated,
+                        OnWindowActivated)
+    IPC_MESSAGE_HANDLER(MetroViewerHostMsg_SetCursorPosAck,
+                        OnSetCursorPosAck)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -158,13 +174,13 @@ void RemoteRootWindowHostWin::HandleOpenFile(
   if (!host_)
     return;
 
-  // Can only one of these operations in flight.
+  // Can only have one of these operations in flight.
   DCHECK(file_open_completion_callback_.is_null());
   file_open_completion_callback_ = callback;
 
   host_->Send(new MetroViewerHostMsg_DisplayFileOpen(title,
                                                      filter,
-                                                     default_path.value(),
+                                                     default_path,
                                                      false));
 }
 
@@ -176,13 +192,13 @@ void RemoteRootWindowHostWin::HandleOpenMultipleFiles(
   if (!host_)
     return;
 
-  // Can only one of these operations in flight.
+  // Can only have one of these operations in flight.
   DCHECK(multi_file_open_completion_callback_.is_null());
   multi_file_open_completion_callback_ = callback;
 
   host_->Send(new MetroViewerHostMsg_DisplayFileOpen(title,
                                                      filter,
-                                                     default_path.value(),
+                                                     default_path,
                                                      true));
 }
 
@@ -202,11 +218,24 @@ void RemoteRootWindowHostWin::HandleSaveFile(
   params.filter = filter;
   params.filter_index = filter_index;
 
-  // Can only one of these operations in flight.
+  // Can only have one of these operations in flight.
   DCHECK(file_saveas_completion_callback_.is_null());
   file_saveas_completion_callback_ = callback;
 
   host_->Send(new MetroViewerHostMsg_DisplayFileSaveAs(params));
+}
+
+void RemoteRootWindowHostWin::HandleSelectFolder(
+    const string16& title,
+    const SelectFolderCompletion& callback) {
+  if (!host_)
+    return;
+
+  // Can only have one of these operations in flight.
+  DCHECK(select_folder_completion_callback_.is_null());
+  select_folder_completion_callback_ = callback;
+
+  host_->Send(new MetroViewerHostMsg_DisplaySelectFolder(title));
 }
 
 void RemoteRootWindowHostWin::SetDelegate(RootWindowHostDelegate* delegate) {
@@ -269,6 +298,12 @@ void RemoteRootWindowHostWin::ReleaseCapture() {
 }
 
 bool RemoteRootWindowHostWin::QueryMouseLocation(gfx::Point* location_return) {
+  aura::client::CursorClient* cursor_client =
+      aura::client::GetCursorClient(GetRootWindow());
+  if (cursor_client && !cursor_client->IsMouseEventsEnabled()) {
+    *location_return = gfx::Point(0, 0);
+    return false;
+  }
   POINT pt;
   GetCursorPos(&pt);
   *location_return =
@@ -287,13 +322,6 @@ bool RemoteRootWindowHostWin::CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
   return false;
 }
 
-bool RemoteRootWindowHostWin::GrabSnapshot(
-    const gfx::Rect& snapshot_bounds,
-    std::vector<unsigned char>* png_representation) {
-  NOTIMPLEMENTED();
-  return false;
-}
-
 void RemoteRootWindowHostWin::UnConfineCursor() {
 }
 
@@ -302,6 +330,28 @@ void RemoteRootWindowHostWin::OnCursorVisibilityChanged(bool show) {
 }
 
 void RemoteRootWindowHostWin::MoveCursorTo(const gfx::Point& location) {
+  VLOG(1) << "In MoveCursorTo: " << location.x() << ", " << location.y();
+  if (!host_)
+    return;
+
+  // This function can be called in cases like when the mouse cursor is
+  // restricted within a viewport (For e.g. LockCursor) which assumes that
+  // subsequent mouse moves would be received starting with the new cursor
+  // coordinates. This is a challenge for Windows ASH for the reasons
+  // outlined below.
+  // Other cases which don't expect this behavior should continue to work
+  // without issues.
+
+  // The mouse events are received by the viewer process and sent to the
+  // browser. If we invoke the SetCursor API here we continue to receive
+  // mouse messages from the viewer which were posted before the SetCursor
+  // API executes which messes up the state in the browser. To workaround
+  // this we invoke the SetCursor API in the viewer process and ignore
+  // mouse messages until we received an ACK from the viewer indicating that
+  // the SetCursor operation completed.
+  ignore_mouse_moves_until_set_cursor_ack_ = true;
+  VLOG(1) << "In MoveCursorTo. Sending IPC";
+  host_->Send(new MetroViewerHostMsg_SetCursorPos(location.x(), location.y()));
 }
 
 void RemoteRootWindowHostWin::SetFocusWhenShown(bool focus_when_shown) {
@@ -321,6 +371,9 @@ void RemoteRootWindowHostWin::PrepareForShutdown() {
 }
 
 void RemoteRootWindowHostWin::OnMouseMoved(int32 x, int32 y, int32 flags) {
+  if (ignore_mouse_moves_until_set_cursor_ack_)
+    return;
+
   gfx::Point location(x, y);
   ui::MouseEvent event(ui::ET_MOUSE_MOVED, location, location, flags);
   delegate_->OnHostMouseEvent(&event);
@@ -333,7 +386,7 @@ void RemoteRootWindowHostWin::OnMouseButton(
   mouse_event.set_flags(flags);
 
   if (type == ui::ET_MOUSEWHEEL) {
-    ui::MouseWheelEvent wheel_event(mouse_event, extra);
+    ui::MouseWheelEvent wheel_event(mouse_event, 0, extra);
     delegate_->OnHostMouseEvent(&wheel_event);
   } else {
     mouse_event.SetClickCount(1);
@@ -404,17 +457,17 @@ void RemoteRootWindowHostWin::OnTouchMoved(int32 x,
 }
 
 void RemoteRootWindowHostWin::OnFileSaveAsDone(bool success,
-                                               string16 filename,
+                                               const base::FilePath& filename,
                                                int filter_index) {
   if (success) {
-    file_saveas_completion_callback_.Run(
-        base::FilePath(filename), filter_index, NULL);
+    file_saveas_completion_callback_.Run(filename, filter_index, NULL);
   }
   file_saveas_completion_callback_.Reset();
 }
 
 
-void RemoteRootWindowHostWin::OnFileOpenDone(bool success, string16 filename) {
+void RemoteRootWindowHostWin::OnFileOpenDone(bool success,
+                                             const base::FilePath& filename) {
   if (success) {
     file_open_completion_callback_.Run(
         base::FilePath(filename), 0, NULL);
@@ -431,13 +484,31 @@ void RemoteRootWindowHostWin::OnMultiFileOpenDone(
   multi_file_open_completion_callback_.Reset();
 }
 
+void RemoteRootWindowHostWin::OnSelectFolderDone(
+    bool success,
+    const base::FilePath& folder) {
+  if (success) {
+    select_folder_completion_callback_.Run(base::FilePath(folder), 0, NULL);
+  }
+  select_folder_completion_callback_.Reset();
+}
+
+void RemoteRootWindowHostWin::OnWindowActivated(bool active) {
+  active ? GetRootWindow()->Focus() : GetRootWindow()->Blur();
+}
+
+void RemoteRootWindowHostWin::OnSetCursorPosAck() {
+  DCHECK(ignore_mouse_moves_until_set_cursor_ack_);
+  ignore_mouse_moves_until_set_cursor_ack_ = false;
+}
+
 void RemoteRootWindowHostWin::DispatchKeyboardMessage(ui::EventType type,
                                                       uint32 vkey,
                                                       uint32 repeat_count,
                                                       uint32 scan_code,
                                                       uint32 flags,
                                                       bool is_character) {
-  if (MessageLoop::current()->IsNested()) {
+  if (base::MessageLoop::current()->IsNested()) {
     SetVirtualKeyStates(flags);
 
     uint32 message = is_character ? WM_CHAR :

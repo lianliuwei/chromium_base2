@@ -18,7 +18,7 @@
         '<(DEPTH)/third_party/WebKit/Source/WebKit/chromium/WebKit.gyp:webkit',
         '<(DEPTH)/ui/gl/gl.gyp:gl',
         '<(DEPTH)/ui/ui.gyp:ui',
-        '<(DEPTH)/webkit/gpu/webkit_gpu.gyp:webkit_gpu',
+        '<(DEPTH)/webkit/common/gpu/webkit_gpu.gyp:webkit_gpu',
       ],
       'defines': [
         'COMPOSITOR_IMPLEMENTATION',
@@ -85,6 +85,10 @@
       'sources': [
         'test/compositor_test_support.cc',
         'test/compositor_test_support.h',
+        'test/test_layers.cc',
+        'test/test_layers.h',
+        'test/test_suite.cc',
+        'test/test_suite.h',
       ],
       'conditions': [
         ['os_posix == 1 and OS != "mac"', {
@@ -130,8 +134,6 @@
         'test/test_layer_animation_delegate.h',
         'test/test_layer_animation_observer.cc',
         'test/test_layer_animation_observer.h',
-        'test/test_suite.cc',
-        'test/test_suite.h',
         'test/test_utils.cc',
         'test/test_utils.h',
       ],

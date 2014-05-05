@@ -7,28 +7,26 @@
 
 #include <vector>
 
+#include "ui/message_center/message_center_export.h"
 #include "ui/message_center/views/message_view.h"
-
-namespace views {
-class Label;
-}  // namespace views
 
 namespace message_center {
 
-class NotificationChangeObserver;
+class BoundedLabel;
+class MessageCenter;
 
 // View that displays all current types of notification (web, basic, image, and
 // list). Future notification types may be handled by other classes, in which
 // case instances of those classes would be returned by the Create() factory
 // method below.
-class NotificationView : public MessageView {
+class MESSAGE_CENTER_EXPORT NotificationView : public MessageView {
  public:
   // Creates appropriate MessageViews for notifications. Those currently are
   // always NotificationView or MessageSimpleView instances but in the future
   // may be instances of other classes, with the class depending on the
   // notification type.
   static MessageView* Create(const Notification& notification,
-                             NotificationChangeObserver* observer,
+                             MessageCenter* message_center,
                              bool expanded);
 
   virtual ~NotificationView();
@@ -37,25 +35,33 @@ class NotificationView : public MessageView {
   virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual int GetHeightForWidth(int width) OVERRIDE;
   virtual void Layout() OVERRIDE;
+  virtual void OnFocus() OVERRIDE;
+  virtual void ScrollRectToVisible(const gfx::Rect& rect) OVERRIDE;
+  virtual views::View* GetEventHandlerForPoint(
+      const gfx::Point& point) OVERRIDE;
+  virtual gfx::NativeCursor GetCursor(const ui::MouseEvent& event) OVERRIDE;
 
   // Overridden from MessageView:
   virtual void ButtonPressed(views::Button* sender,
                              const ui::Event& event) OVERRIDE;
 
- private:
+ protected:
   NotificationView(const Notification& notification,
-                   NotificationChangeObserver* observer,
+                   MessageCenter* message_center,
                    bool expanded);
 
-  // Truncate the very long text if we should. See crbug.com/222151 for the
-  // details.
-  string16 MaybeTruncateText(const string16& text, size_t limit);
+ private:
+  bool IsExpansionNeeded(int width);
+  bool IsMessageExpansionNeeded(int width);
+  int GetMessageLineLimit(int width);
+  int GetMessageLines(int width, int limit);
+  int GetMessageHeight(int width, int limit);
 
   // Weak references to NotificationView descendants owned by their parents.
   views::View* background_view_;
   views::View* top_view_;
-  views::Label* title_view_;
-  views::Label* message_view_;
+  BoundedLabel* title_view_;
+  BoundedLabel* message_view_;
   std::vector<views::View*> item_views_;
   views::View* icon_view_;
   views::View* bottom_view_;

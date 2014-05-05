@@ -22,9 +22,12 @@ class DictionaryValue;
 }
 
 namespace message_center {
+namespace test {
+class NotificationListTest;
+}
 
 // Comparers used to auto-sort the lists of Notifications.
-struct ComparePriorityTimestampSerial {
+struct MESSAGE_CENTER_EXPORT ComparePriorityTimestampSerial {
   bool operator()(Notification* n1, Notification* n2);
 };
 
@@ -43,23 +46,14 @@ class MESSAGE_CENTER_EXPORT NotificationList {
   // toasts.
   typedef std::set<Notification*, CompareTimestampSerial> PopupNotifications;
 
-  class MESSAGE_CENTER_EXPORT Delegate {
-   public:
-    virtual ~Delegate();
-
-    // Removes notifications
-    virtual void SendRemoveNotification(const std::string& id,
-                                        bool by_user) = 0;
-
-    // Called when the quiet mode status has been changed.
-    virtual void OnQuietModeChanged(bool quiet_mode) = 0;
-  };
-
-  explicit NotificationList(Delegate* delegate);
+  explicit NotificationList();
   virtual ~NotificationList();
 
-  // Affects whether or not a message has been "read".
-  void SetMessageCenterVisible(bool visible);
+  // Affects whether or not a message has been "read". Collects the set of
+  // ids whose state have changed and set to |udpated_ids|. NULL if updated
+  // ids don't matter.
+  void SetMessageCenterVisible(bool visible,
+                               std::set<std::string>* updated_ids);
 
   void AddNotification(NotificationType type,
                        const std::string& id,
@@ -79,9 +73,8 @@ class MESSAGE_CENTER_EXPORT NotificationList {
 
   void RemoveAllNotifications();
 
-  void SendRemoveNotificationsBySource(const std::string& id);
-
-  void SendRemoveNotificationsByExtension(const std::string& id);
+  Notifications GetNotificationsBySource(const std::string& id);
+  Notifications GetNotificationsByExtension(const std::string& id);
 
   // Returns true if the notification exists and was updated.
   bool SetNotificationIcon(const std::string& notification_id,
@@ -116,6 +109,9 @@ class MESSAGE_CENTER_EXPORT NotificationList {
   void MarkSinglePopupAsShown(const std::string& id,
                               bool mark_notification_as_read);
 
+  // Marks a specific popup item as displayed.
+  void MarkSinglePopupAsDisplayed(const std::string& id);
+
   // Marks the specified notification as expanded in the notification center.
   void MarkNotificationAsExpanded(const std::string& id);
 
@@ -135,10 +131,9 @@ class MESSAGE_CENTER_EXPORT NotificationList {
   size_t NotificationCount() const;
   size_t unread_count() const { return unread_count_; }
 
-  static const size_t kMaxVisiblePopupNotifications;
-  static const size_t kMaxVisibleMessageCenterNotifications;
-
  private:
+  friend class test::NotificationListTest;
+
   // Iterates through the list and returns the first notification matching |id|.
   Notifications::iterator GetNotification(const std::string& id);
 
@@ -149,7 +144,6 @@ class MESSAGE_CENTER_EXPORT NotificationList {
   // Sets the current quiet mode status to |quiet_mode|.
   void SetQuietModeInternal(bool quiet_mode);
 
-  Delegate* delegate_;
   Notifications notifications_;
   bool message_center_visible_;
   size_t unread_count_;

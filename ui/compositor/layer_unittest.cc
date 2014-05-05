@@ -3,10 +3,12 @@
 // found in the LICENSE file.
 
 #include "base/basictypes.h"
+#include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/file_util.h"
 #include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/message_loop.h"
 #include "base/path_service.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
@@ -20,6 +22,7 @@
 #include "ui/compositor/layer_animation_sequence.h"
 #include "ui/compositor/layer_animator.h"
 #include "ui/compositor/test/test_compositor_host.h"
+#include "ui/compositor/test/test_layers.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/gfx_paths.h"
@@ -30,20 +33,6 @@ using cc::MatchesPNGFile;
 namespace ui {
 
 namespace {
-
-// Returns a comma-separated list of the names of |layer|'s children in
-// bottom-to-top stacking order.
-std::string GetLayerChildrenNames(const Layer& layer) {
-  std::string names;
-  for (std::vector<Layer*>::const_iterator it = layer.children().begin();
-       it != layer.children().end(); ++it) {
-    if (!names.empty())
-      names += ",";
-    names += (*it)->name();
-  }
-  return names;
-}
-
 
 // There are three test classes in here that configure the Compositor and
 // Layer's slightly differently:
@@ -124,7 +113,8 @@ class LayerWithRealCompositorTest : public testing::Test {
 
   void DrawTree(Layer* root) {
     GetCompositor()->SetRootLayer(root);
-    GetCompositor()->Draw(false);
+    GetCompositor()->ScheduleDraw();
+    WaitForDraw();
   }
 
   bool ReadPixels(SkBitmap* bitmap) {
@@ -132,8 +122,8 @@ class LayerWithRealCompositorTest : public testing::Test {
                                        gfx::Rect(GetCompositor()->size()));
   }
 
-  void RunPendingMessages() {
-    MessageLoopForUI::current()->RunUntilIdle();
+  void WaitForDraw() {
+    ui::DrawWaiterForTest::Wait(GetCompositor());
   }
 
   // Invalidates the entire contents of the layer.
@@ -376,14 +366,13 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_Hierarchy) {
 
 class LayerWithDelegateTest : public testing::Test, public CompositorDelegate {
  public:
-  LayerWithDelegateTest() : schedule_draw_invoked_(false) {}
+  LayerWithDelegateTest() {}
   virtual ~LayerWithDelegateTest() {}
 
   // Overridden from testing::Test:
   virtual void SetUp() OVERRIDE {
     ui::SetupTestCompositor();
-    compositor_.reset(new Compositor(
-        this, gfx::kNullAcceleratedWidget));
+    compositor_.reset(new Compositor(this, gfx::kNullAcceleratedWidget));
     compositor_->SetScaleAndSize(1.0f, gfx::Size(1000, 1000));
   }
 
@@ -410,7 +399,7 @@ class LayerWithDelegateTest : public testing::Test, public CompositorDelegate {
 
   void DrawTree(Layer* root) {
     compositor()->SetRootLayer(root);
-    compositor()->Draw(false);
+    Draw();
   }
 
   // Invalidates the entire contents of the layer.
@@ -421,17 +410,22 @@ class LayerWithDelegateTest : public testing::Test, public CompositorDelegate {
 
   // Invokes DrawTree on the compositor.
   void Draw() {
-    compositor_->Draw(false);
+    compositor()->ScheduleDraw();
+    WaitForDraw();
+  }
+
+  void WaitForDraw() {
+    DrawWaiterForTest::Wait(compositor());
   }
 
   // CompositorDelegate overrides.
   virtual void ScheduleDraw() OVERRIDE {
-    schedule_draw_invoked_ = true;
+    DCHECK(!ui::Compositor::WasInitializedWithThread());
+    if (compositor_) {
+      base::MessageLoop::current()->PostTask(
+          FROM_HERE, base::Bind(&Compositor::Draw, compositor_->AsWeakPtr()));
+    }
   }
-
- protected:
-  // Set to true when ScheduleDraw (CompositorDelegate override) is invoked.
-  bool schedule_draw_invoked_;
 
  private:
   scoped_ptr<Compositor> compositor_;
@@ -489,7 +483,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_Delegate) {
   scoped_ptr<Layer> l1(CreateColorLayer(SK_ColorBLACK,
                                         gfx::Rect(20, 20, 400, 400)));
   GetCompositor()->SetRootLayer(l1.get());
-  RunPendingMessages();
+  WaitForDraw();
 
   TestLayerDelegate delegate;
   l1->set_delegate(&delegate);
@@ -498,17 +492,18 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_Delegate) {
   delegate.AddColor(SK_ColorGREEN);
 
   l1->SchedulePaint(gfx::Rect(0, 0, 400, 400));
-  RunPendingMessages();
+  WaitForDraw();
+
   EXPECT_EQ(delegate.color_index(), 1);
   EXPECT_EQ(delegate.paint_size(), l1->bounds().size());
 
   l1->SchedulePaint(gfx::Rect(10, 10, 200, 200));
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_EQ(delegate.color_index(), 2);
   EXPECT_EQ(delegate.paint_size(), gfx::Size(200, 200));
 
   l1->SchedulePaint(gfx::Rect(5, 5, 50, 50));
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_EQ(delegate.color_index(), 0);
   EXPECT_EQ(delegate.paint_size(), gfx::Size(50, 50));
 }
@@ -524,7 +519,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_DrawTree) {
   l2->Add(l3.get());
 
   GetCompositor()->SetRootLayer(l1.get());
-  RunPendingMessages();
+  WaitForDraw();
 
   DrawTreeLayerDelegate d1;
   l1->set_delegate(&d1);
@@ -534,7 +529,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_DrawTree) {
   l3->set_delegate(&d3);
 
   l2->SchedulePaint(gfx::Rect(5, 5, 5, 5));
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_FALSE(d1.painted());
   EXPECT_TRUE(d2.painted());
   EXPECT_FALSE(d3.painted());
@@ -561,7 +556,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_HierarchyNoTexture) {
   l2->Add(l3.get());
 
   GetCompositor()->SetRootLayer(l1.get());
-  RunPendingMessages();
+  WaitForDraw();
 
   DrawTreeLayerDelegate d2;
   l2->set_delegate(&d2);
@@ -570,7 +565,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_HierarchyNoTexture) {
 
   l2->SchedulePaint(gfx::Rect(5, 5, 5, 5));
   l3->SchedulePaint(gfx::Rect(5, 5, 5, 5));
-  RunPendingMessages();
+  WaitForDraw();
 
   // |d2| should not have received a paint notification since it has no texture.
   EXPECT_FALSE(d2.painted());
@@ -614,10 +609,6 @@ class LayerWithNullDelegateTest : public LayerWithDelegateTest {
     Layer* layer = CreateLayer(LAYER_NOT_DRAWN);
     layer->SetBounds(bounds);
     return layer;
-  }
-
-  void RunPendingMessages() {
-    MessageLoopForUI::current()->RunUntilIdle();
   }
 
  private:
@@ -690,49 +681,49 @@ TEST_F(LayerWithNullDelegateTest, Stacking) {
   root->Add(l1.get());
 
   // Layers' children are stored in bottom-to-top order.
-  EXPECT_EQ("3,2,1", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("3 2 1", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackAtTop(l3.get());
-  EXPECT_EQ("2,1,3", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("2 1 3", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackAtTop(l1.get());
-  EXPECT_EQ("2,3,1", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("2 3 1", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackAtTop(l1.get());
-  EXPECT_EQ("2,3,1", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("2 3 1", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackAbove(l2.get(), l3.get());
-  EXPECT_EQ("3,2,1", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("3 2 1", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackAbove(l1.get(), l3.get());
-  EXPECT_EQ("3,1,2", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("3 1 2", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackAbove(l2.get(), l1.get());
-  EXPECT_EQ("3,1,2", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("3 1 2", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackAtBottom(l2.get());
-  EXPECT_EQ("2,3,1", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("2 3 1", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackAtBottom(l3.get());
-  EXPECT_EQ("3,2,1", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("3 2 1", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackAtBottom(l3.get());
-  EXPECT_EQ("3,2,1", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("3 2 1", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackBelow(l2.get(), l3.get());
-  EXPECT_EQ("2,3,1", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("2 3 1", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackBelow(l1.get(), l3.get());
-  EXPECT_EQ("2,1,3", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("2 1 3", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackBelow(l3.get(), l2.get());
-  EXPECT_EQ("3,2,1", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("3 2 1", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackBelow(l3.get(), l2.get());
-  EXPECT_EQ("3,2,1", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("3 2 1", test::ChildLayerNamesAsString(*root.get()));
 
   root->StackBelow(l3.get(), l1.get());
-  EXPECT_EQ("2,3,1", GetLayerChildrenNames(*root.get()));
+  EXPECT_EQ("2 3 1", test::ChildLayerNamesAsString(*root.get()));
 }
 
 // Verifies SetBounds triggers the appropriate painting/drawing.
@@ -742,17 +733,15 @@ TEST_F(LayerWithNullDelegateTest, SetBoundsSchedulesPaint) {
 
   Draw();
 
-  schedule_draw_invoked_ = false;
   l1->SetBounds(gfx::Rect(5, 5, 200, 200));
 
   // The CompositorDelegate (us) should have been told to draw for a move.
-  EXPECT_TRUE(schedule_draw_invoked_);
+  WaitForDraw();
 
-  schedule_draw_invoked_ = false;
   l1->SetBounds(gfx::Rect(5, 5, 100, 100));
 
   // The CompositorDelegate (us) should have been told to draw for a resize.
-  EXPECT_TRUE(schedule_draw_invoked_);
+  WaitForDraw();
 }
 
 // Checks that pixels are actually drawn to the screen with a read back.
@@ -828,37 +817,36 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_CompositorObservers) {
   // Explicitly called DrawTree should cause the observers to be notified.
   // NOTE: this call to DrawTree sets l1 to be the compositor's root layer.
   DrawTree(l1.get());
-  RunPendingMessages();
   EXPECT_TRUE(observer.notified());
 
   // As should scheduling a draw and waiting.
   observer.Reset();
   l1->ScheduleDraw();
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_TRUE(observer.notified());
 
   // Moving, but not resizing, a layer should alert the observers.
   observer.Reset();
   l2->SetBounds(gfx::Rect(0, 0, 350, 350));
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_TRUE(observer.notified());
 
   // So should resizing a layer.
   observer.Reset();
   l2->SetBounds(gfx::Rect(0, 0, 400, 400));
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_TRUE(observer.notified());
 
   // Opacity changes should alert the observers.
   observer.Reset();
   l2->SetOpacity(0.5f);
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_TRUE(observer.notified());
 
   // So should setting the opacity back.
   observer.Reset();
   l2->SetOpacity(1.0f);
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_TRUE(observer.notified());
 
   // Setting the transform of a layer should alert the observers.
@@ -868,7 +856,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_CompositorObservers) {
   transform.Rotate(90.0);
   transform.Translate(-200.0, -200.0);
   l2->SetTransform(transform);
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_TRUE(observer.notified());
 
   // A change resulting in an aborted swap buffer should alert the observer
@@ -876,7 +864,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_CompositorObservers) {
   observer.Reset();
   l2->SetOpacity(0.1f);
   GetCompositor()->OnSwapBuffersAborted();
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_TRUE(observer.notified());
   EXPECT_TRUE(observer.aborted());
 
@@ -885,7 +873,8 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_CompositorObservers) {
   // Opacity changes should no longer alert the removed observer.
   observer.Reset();
   l2->SetOpacity(0.5f);
-  RunPendingMessages();
+  WaitForDraw();
+
   EXPECT_FALSE(observer.notified());
 }
 
@@ -1043,22 +1032,19 @@ TEST_F(LayerWithDelegateTest, SchedulePaintFromOnPaintLayer) {
 
   SchedulePaintForLayer(root.get());
   DrawTree(root.get());
-  schedule_draw_invoked_ = false;
   child->SchedulePaint(gfx::Rect(0, 0, 20, 20));
   child_delegate.GetPaintCountAndClear();
-  EXPECT_TRUE(schedule_draw_invoked_);
-  schedule_draw_invoked_ = false;
+
   // Set a rect so that when OnPaintLayer() is invoked SchedulePaint is invoked
   // again.
   child_delegate.SetSchedulePaintRect(gfx::Rect(10, 10, 30, 30));
-  DrawTree(root.get());
+  WaitForDraw();
   // |child| should have been painted once.
   EXPECT_EQ(1, child_delegate.GetPaintCountAndClear());
-  // ScheduleDraw() should have been invoked.
-  EXPECT_TRUE(schedule_draw_invoked_);
+
   // Because SchedulePaint() was invoked from OnPaintLayer() |child| should
   // still need to be painted.
-  DrawTree(root.get());
+  WaitForDraw();
   EXPECT_EQ(1, child_delegate.GetPaintCountAndClear());
   EXPECT_TRUE(child_delegate.last_clip_rect().Contains(
                   gfx::Rect(10, 10, 30, 30)));
@@ -1080,7 +1066,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_ScaleUpDown) {
   GetCompositor()->SetScaleAndSize(1.0f, gfx::Size(500, 500));
   GetCompositor()->SetRootLayer(root.get());
   root->Add(l1.get());
-  RunPendingMessages();
+  WaitForDraw();
 
   EXPECT_EQ("10,20 200x220", root->bounds().ToString());
   EXPECT_EQ("10,20 140x180", l1->bounds().ToString());
@@ -1092,7 +1078,6 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_ScaleUpDown) {
   EXPECT_EQ(0.0f, root_delegate.device_scale_factor());
   EXPECT_EQ(0.0f, l1_delegate.device_scale_factor());
 
-  RunPendingMessages();
   EXPECT_EQ("200x220", root_delegate.paint_size().ToString());
   EXPECT_EQ("140x180", l1_delegate.paint_size().ToString());
 
@@ -1110,7 +1095,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_ScaleUpDown) {
   EXPECT_EQ(2.0f, l1_delegate.device_scale_factor());
 
   // Canvas size must have been scaled down up.
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_EQ("400x440", root_delegate.paint_size().ToString());
   EXPECT_EQ("2.0 2.0", root_delegate.ToScaleString());
   EXPECT_EQ("280x360", l1_delegate.paint_size().ToString());
@@ -1130,7 +1115,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_ScaleUpDown) {
   EXPECT_EQ(1.0f, l1_delegate.device_scale_factor());
 
   // Canvas size must have been scaled down too.
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_EQ("200x220", root_delegate.paint_size().ToString());
   EXPECT_EQ("1.0 1.0", root_delegate.ToScaleString());
   EXPECT_EQ("140x180", l1_delegate.paint_size().ToString());
@@ -1144,7 +1129,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_ScaleUpDown) {
   // No scale change, so no scale notification.
   EXPECT_EQ(0.0f, root_delegate.device_scale_factor());
   EXPECT_EQ(0.0f, l1_delegate.device_scale_factor());
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_EQ("0x0", root_delegate.paint_size().ToString());
   EXPECT_EQ("0.0 0.0", root_delegate.ToScaleString());
   EXPECT_EQ("0x0", l1_delegate.paint_size().ToString());
@@ -1162,7 +1147,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_ScaleReparent) {
 
   GetCompositor()->SetScaleAndSize(1.0f, gfx::Size(500, 500));
   GetCompositor()->SetRootLayer(root.get());
-  RunPendingMessages();
+  WaitForDraw();
 
   root->Add(l1.get());
   EXPECT_EQ("10,20 140x180", l1->bounds().ToString());
@@ -1170,7 +1155,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_ScaleReparent) {
   EXPECT_EQ("140x180", size_in_pixel.ToString());
   EXPECT_EQ(0.0f, l1_delegate.device_scale_factor());
 
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_EQ("140x180", l1_delegate.paint_size().ToString());
   EXPECT_EQ("1.0 1.0", l1_delegate.ToScaleString());
 
@@ -1190,7 +1175,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_ScaleReparent) {
   size_in_pixel = l1->cc_layer()->bounds();
   EXPECT_EQ("280x360", size_in_pixel.ToString());
   EXPECT_EQ(2.0f, l1_delegate.device_scale_factor());
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_EQ("280x360", l1_delegate.paint_size().ToString());
   EXPECT_EQ("2.0 2.0", l1_delegate.ToScaleString());
 }
@@ -1212,7 +1197,7 @@ TEST_F(LayerWithRealCompositorTest, MAYBE_NoScaleCanvas) {
   // Scale factor change is notified regardless of scale_content flag.
   EXPECT_EQ(2.0f, l1_delegate.device_scale_factor());
 
-  RunPendingMessages();
+  WaitForDraw();
   EXPECT_EQ("280x360", l1_delegate.paint_size().ToString());
   EXPECT_EQ("1.0 1.0", l1_delegate.ToScaleString());
 }
@@ -1237,26 +1222,24 @@ TEST_F(LayerWithDelegateTest, SetBoundsWhenInvisible) {
   // Reset into invisible state.
   child->SetVisible(false);
   DrawTree(root.get());
-  schedule_draw_invoked_ = false;
   delegate.Reset();
 
   // Move layer.
   child->SetBounds(gfx::Rect(200, 200, 500, 500));
   child->SetVisible(true);
-  EXPECT_TRUE(schedule_draw_invoked_);
+  WaitForDraw();
   DrawTree(root.get());
   EXPECT_FALSE(delegate.painted());
 
   // Reset into invisible state.
   child->SetVisible(false);
   DrawTree(root.get());
-  schedule_draw_invoked_ = false;
   delegate.Reset();
 
   // Resize layer.
   child->SetBounds(gfx::Rect(200, 200, 400, 400));
   child->SetVisible(true);
-  EXPECT_TRUE(schedule_draw_invoked_);
+  WaitForDraw();
   DrawTree(root.get());
   EXPECT_TRUE(delegate.painted());
 }

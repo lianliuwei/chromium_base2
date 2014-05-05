@@ -7,11 +7,14 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <string>
+
 #import "base/memory/scoped_nsobject.h"
+#include "ui/message_center/message_center_export.h"
 
 namespace message_center {
+class MessageCenter;
 class Notification;
-class NotificationChangeObserver;
 }
 
 @class HoverImageButton;
@@ -19,13 +22,17 @@ class NotificationChangeObserver;
 // The base view controller class for notifications. A notification at minimum
 // has an image, title, body, and close button. This controller can be used as
 // the content for both a popup bubble and a view in the notification tray.
+MESSAGE_CENTER_EXPORT
 @interface MCNotificationController : NSViewController {
  @protected
   // The message object. Weak.
   const message_center::Notification* notification_;
 
-  // Observer of the notification, where action messages are forwarded. Weak.
-  message_center::NotificationChangeObserver* observer_;
+  // A copy of the notification ID.
+  std::string notificationID_;
+
+  // Controller of the notifications, where action messages are forwarded. Weak.
+  message_center::MessageCenter* messageCenter_;
 
   // The button that invokes |-close:|, in the upper-right corner.
   scoped_nsobject<HoverImageButton> closeButton_;
@@ -38,17 +45,29 @@ class NotificationChangeObserver;
 
   // Body text of the message.
   scoped_nsobject<NSTextField> message_;
+
+  // Container for optional items at the bottom of the notification.
+  scoped_nsobject<NSView> bottomView_;
 }
 
 // Creates a new controller for a given notification.
 - (id)initWithNotification:(const message_center::Notification*)notification
-    changeObserver:(message_center::NotificationChangeObserver*)observer;
+    messageCenter:(message_center::MessageCenter*)messageCenter;
+
+// If the model object changes, this method will update the views to reflect
+// the new model object. Returns the updated frame of the notification.
+- (NSRect)updateNotification:(const message_center::Notification*)notification;
 
 // Action for clicking on the notification's |closeButton_|.
 - (void)close:(id)sender;
 
 // Accessor for the notification.
 - (const message_center::Notification*)notification;
+
+// Gets the notification ID. This string is owned by the NotificationController
+// rather than the model object, so it's safe to use after the Notification has
+// been deleted.
+- (const std::string&)notificationID;
 
 @end
 

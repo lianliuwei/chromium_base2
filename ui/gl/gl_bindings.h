@@ -151,6 +151,8 @@
 
 // GL_CHROMIUM_pixel_transfer_buffer_object
 #define GL_PIXEL_UNPACK_TRANSFER_BUFFER_CHROMIUM         0x78EC
+#define GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM           0x78ED
+#define GL_PIXEL_PACK_TRANSFER_BUFFER_BINDING_CHROMIUM   0x78EE
 #define GL_PIXEL_UNPACK_TRANSFER_BUFFER_BINDING_CHROMIUM 0x78EF
 
 /* GL_EXT_discard_framebuffer */
@@ -190,6 +192,11 @@ typedef void (*OSMESAproc)();
 // Forward declare EGL types.
 typedef uint64 EGLuint64CHROMIUM;
 
+#ifndef EGL_ANDROID_image_native_buffer
+#define EGL_ANDROID_image_native_buffer 1
+#define EGL_NATIVE_BUFFER_ANDROID                        0x3140
+#endif
+
 #include "gl_bindings_autogen_gl.h"
 #include "gl_bindings_autogen_osmesa.h"
 
@@ -199,11 +206,84 @@ typedef uint64 EGLuint64CHROMIUM;
 #elif defined(USE_X11)
 #include "gl_bindings_autogen_egl.h"
 #include "gl_bindings_autogen_glx.h"
+#elif defined(USE_OZONE)
+#include "gl_bindings_autogen_egl.h"
 #elif defined(OS_ANDROID)
 #include "gl_bindings_autogen_egl.h"
 #endif
 
 namespace gfx {
+
+struct GL_EXPORT DriverGL {
+  void Initialize();
+  void InitializeExtensions(GLContext* context);
+  void InitializeDebugBindings();
+  void ClearBindings();
+  void UpdateDebugExtensionBindings();
+
+  ProcsGL fn;
+  ProcsGL orig_fn;
+  ProcsGL debug_fn;
+  ExtensionsGL ext;
+
+ private:
+  void InitializeBindings();
+  void InitializeExtensionBindings(GLContext* context);
+};
+
+struct GL_EXPORT DriverOSMESA {
+  void InitializeBindings();
+  void InitializeExtensionBindings(GLContext* context);
+  void InitializeDebugBindings();
+  void ClearBindings();
+  void UpdateDebugExtensionBindings();
+
+  ProcsOSMESA fn;
+  ProcsOSMESA debug_fn;
+  ExtensionsOSMESA ext;
+};
+
+#if defined(OS_WIN)
+struct GL_EXPORT DriverWGL {
+  void InitializeBindings();
+  void InitializeExtensionBindings(GLContext* context);
+  void InitializeDebugBindings();
+  void ClearBindings();
+  void UpdateDebugExtensionBindings();
+
+  ProcsWGL fn;
+  ProcsWGL debug_fn;
+  ExtensionsWGL ext;
+};
+#endif
+
+#if defined(OS_WIN) || defined(USE_X11) || defined(OS_ANDROID) || defined(USE_OZONE)
+struct GL_EXPORT DriverEGL {
+  void InitializeBindings();
+  void InitializeExtensionBindings(GLContext* context);
+  void InitializeDebugBindings();
+  void ClearBindings();
+  void UpdateDebugExtensionBindings();
+
+  ProcsEGL fn;
+  ProcsEGL debug_fn;
+  ExtensionsEGL ext;
+};
+#endif
+
+#if defined(USE_X11)
+struct GL_EXPORT DriverGLX {
+  void InitializeBindings();
+  void InitializeExtensionBindings(GLContext* context);
+  void InitializeDebugBindings();
+  void ClearBindings();
+  void UpdateDebugExtensionBindings();
+
+  ProcsGLX fn;
+  ProcsGLX debug_fn;
+  ExtensionsGLX ext;
+};
+#endif
 
 GL_EXPORT extern GLApi* g_current_gl_context;
 GL_EXPORT extern OSMESAApi* g_current_osmesa_context;
@@ -223,6 +303,11 @@ GL_EXPORT extern EGLApi* g_current_egl_context;
 GL_EXPORT extern GLXApi* g_current_glx_context;
 GL_EXPORT extern DriverEGL g_driver_egl;
 GL_EXPORT extern DriverGLX g_driver_glx;
+
+#elif defined(USE_OZONE)
+
+GL_EXPORT extern EGLApi* g_current_egl_context;
+GL_EXPORT extern DriverEGL g_driver_egl;
 
 #elif defined(OS_ANDROID)
 

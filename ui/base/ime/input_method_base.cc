@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "ui/base/ime/input_method_delegate.h"
+#include "ui/base/ime/input_method_observer.h"
 #include "ui/base/ime/text_input_client.h"
 
 namespace ui {
@@ -17,6 +18,9 @@ InputMethodBase::InputMethodBase()
 }
 
 InputMethodBase::~InputMethodBase() {
+  FOR_EACH_OBSERVER(InputMethodObserver,
+                    observer_list_,
+                    OnInputMethodDestroyed(this));
 }
 
 void InputMethodBase::SetDelegate(internal::InputMethodDelegate* delegate) {
@@ -43,6 +47,9 @@ void InputMethodBase::SetFocusedTextInputClient(TextInputClient* client) {
   OnWillChangeFocusedClient(old, client);
   text_input_client_ = client;  // NULL allowed.
   OnDidChangeFocusedClient(old, client);
+
+  if (old != text_input_client_)
+    NotifyTextInputStateChanged(text_input_client_);
 }
 
 TextInputClient* InputMethodBase::GetTextInputClient() const {
@@ -52,6 +59,7 @@ TextInputClient* InputMethodBase::GetTextInputClient() const {
 void InputMethodBase::OnTextInputTypeChanged(const TextInputClient* client) {
   if (!IsTextInputClientFocused(client))
     return;
+  NotifyTextInputStateChanged(client);
 }
 
 TextInputType InputMethodBase::GetTextInputType() const {
@@ -62,6 +70,14 @@ TextInputType InputMethodBase::GetTextInputType() const {
 bool InputMethodBase::CanComposeInline() const {
   TextInputClient* client = GetTextInputClient();
   return client ? client->CanComposeInline() : true;
+}
+
+void InputMethodBase::AddObserver(InputMethodObserver* observer) {
+  observer_list_.AddObserver(observer);
+}
+
+void InputMethodBase::RemoveObserver(InputMethodObserver* observer) {
+  observer_list_.RemoveObserver(observer);
 }
 
 bool InputMethodBase::IsTextInputClientFocused(const TextInputClient* client) {
@@ -88,6 +104,13 @@ bool InputMethodBase::DispatchFabricatedKeyEventPostIME(EventType type,
                                                         int flags) const {
   return delegate_ ? delegate_->DispatchFabricatedKeyEventPostIME
       (type, key_code, flags) : false;
+}
+
+void InputMethodBase::NotifyTextInputStateChanged(
+    const TextInputClient* client) {
+  FOR_EACH_OBSERVER(InputMethodObserver,
+                    observer_list_,
+                    OnTextInputStateChanged(client));
 }
 
 }  // namespace ui

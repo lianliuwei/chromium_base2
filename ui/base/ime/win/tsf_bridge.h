@@ -51,8 +51,11 @@ class UI_EXPORT TSFBridge {
   // unless |client| is focused.
   virtual void OnTextInputTypeChanged(TextInputClient* client) = 0;
 
+  // Sends an event to TSF manager that the text layout should be updated.
+  virtual void OnTextLayoutChanged() = 0;
+
   // Cancels the ongoing composition if exists.
-  // Returns false if an error occures.
+  // Returns false if an error occurs.
   virtual bool CancelComposition() = 0;
 
   // Sets currently focused TextInputClient.
@@ -66,6 +69,9 @@ class UI_EXPORT TSFBridge {
 
   // Obtains current thread manager.
   virtual base::win::ScopedComPtr<ITfThreadMgr> GetThreadManager() = 0;
+
+  // Returns the focused text input client.
+  virtual TextInputClient* GetFocusedTextInputClient() const = 0;
 
  protected:
   // Uses GetInstance() instead.

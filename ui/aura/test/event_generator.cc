@@ -6,7 +6,7 @@
 
 #include "base/bind.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/message_loop_proxy.h"
+#include "base/message_loop/message_loop_proxy.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/root_window.h"
 #include "ui/base/events/event.h"
@@ -25,6 +25,9 @@
 namespace aura {
 namespace test {
 namespace {
+
+void DummyCallback(ui::EventType, const gfx::Vector2dF&) {
+}
 
 class DefaultEventGeneratorDelegate : public EventGeneratorDelegate {
  public:
@@ -61,8 +64,8 @@ class TestTouchEvent : public ui::TouchEvent {
   TestTouchEvent(ui::EventType type,
                  const gfx::Point& root_location,
                  int flags)
-      : TouchEvent(type, root_location, 0, ui::EventTimeForNow()) {
-    set_flags(flags);
+      : TouchEvent(type, root_location, flags, 0, ui::EventTimeForNow(),
+                   1.0f, 1.0f, 1.0f, 1.0f) {
   }
 
  private:
@@ -142,12 +145,23 @@ void EventGenerator::ReleaseRightButton() {
   ReleaseButton(ui::EF_RIGHT_MOUSE_BUTTON);
 }
 
-void EventGenerator::MoveMouseTo(const gfx::Point& point, int count) {
+void EventGenerator::MoveMouseToInHost(const gfx::Point& point_in_host) {
+  const ui::EventType event_type = (flags_ & ui::EF_LEFT_MOUSE_BUTTON) ?
+      ui::ET_MOUSE_DRAGGED : ui::ET_MOUSE_MOVED;
+  ui::MouseEvent mouseev(event_type, point_in_host, point_in_host, flags_);
+  Dispatch(&mouseev);
+
+  current_location_ = point_in_host;
+  current_root_window_->ConvertPointFromHost(&current_location_);
+}
+
+void EventGenerator::MoveMouseTo(const gfx::Point& point_in_screen,
+                                 int count) {
   DCHECK_GT(count, 0);
   const ui::EventType event_type = (flags_ & ui::EF_LEFT_MOUSE_BUTTON) ?
       ui::ET_MOUSE_DRAGGED : ui::ET_MOUSE_MOVED;
 
-  gfx::Vector2dF diff(point - current_location_);
+  gfx::Vector2dF diff(point_in_screen - current_location_);
   for (float i = 1; i <= count; i++) {
     gfx::Vector2dF step(diff);
     step.Scale(i / count);
@@ -156,10 +170,9 @@ void EventGenerator::MoveMouseTo(const gfx::Point& point, int count) {
       UpdateCurrentRootWindow(move_point);
     ConvertPointToTarget(current_root_window_, &move_point);
     ui::MouseEvent mouseev(event_type, move_point, move_point, flags_);
-    mouseev.set_system_location(move_point);
     Dispatch(&mouseev);
   }
-  current_location_ = point;
+  current_location_ = point_in_screen;
 }
 
 void EventGenerator::MoveMouseRelativeTo(const Window* window,
@@ -186,10 +199,11 @@ void EventGenerator::PressTouch() {
 }
 
 void EventGenerator::MoveTouch(const gfx::Point& point) {
-  TestTouchEvent touchev(ui::ET_TOUCH_MOVED, point, flags_);
+  current_location_ = point;
+  TestTouchEvent touchev(
+      ui::ET_TOUCH_MOVED, GetLocationInCurrentRoot(), flags_);
   Dispatch(&touchev);
 
-  current_location_ = point;
   if (!grab_)
     UpdateCurrentRootWindow(point);
 }
@@ -242,10 +256,22 @@ void EventGenerator::GestureScrollSequence(const gfx::Point& start,
                                            const gfx::Point& end,
                                            const base::TimeDelta& step_delay,
                                            int steps) {
+  GestureScrollSequenceWithCallback(start, end, step_delay, steps,
+                                    base::Bind(&DummyCallback));
+}
+
+void EventGenerator::GestureScrollSequenceWithCallback(
+    const gfx::Point& start,
+    const gfx::Point& end,
+    const base::TimeDelta& step_delay,
+    int steps,
+    const ScrollStepCallback& callback) {
   const int kTouchId = 5;
   base::TimeDelta timestamp = ui::EventTimeForNow();
   ui::TouchEvent press(ui::ET_TOUCH_PRESSED, start, kTouchId, timestamp);
   Dispatch(&press);
+
+  callback.Run(ui::ET_GESTURE_SCROLL_BEGIN, gfx::Vector2dF());
 
   int dx = (end.x() - start.x()) / steps;
   int dy = (end.y() - start.y()) / steps;
@@ -255,10 +281,13 @@ void EventGenerator::GestureScrollSequence(const gfx::Point& start,
     timestamp += step_delay;
     ui::TouchEvent move(ui::ET_TOUCH_MOVED, location, kTouchId, timestamp);
     Dispatch(&move);
+    callback.Run(ui::ET_GESTURE_SCROLL_UPDATE, gfx::Vector2dF(dx, dy));
   }
 
   ui::TouchEvent release(ui::ET_TOUCH_RELEASED, end, kTouchId, timestamp);
   Dispatch(&release);
+
+  callback.Run(ui::ET_GESTURE_SCROLL_END, gfx::Vector2dF());
 }
 
 void EventGenerator::GestureMultiFingerScroll(int count,

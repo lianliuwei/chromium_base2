@@ -58,7 +58,8 @@ GLContextCGL::GLContextCGL(GLShareGroup* share_group)
     gpu_preference_(PreferIntegratedGpu),
     discrete_pixelformat_(NULL),
     screen_(-1),
-    renderer_id_(-1) {
+    renderer_id_(-1),
+    safe_to_force_gpu_switch_(false) {
 }
 
 bool GLContextCGL::Initialize(GLSurface* compatible_surface,
@@ -111,10 +112,10 @@ void GLContextCGL::Destroy() {
   if (discrete_pixelformat_) {
     // Delay releasing the pixel format for 10 seconds to reduce the number of
     // unnecessary GPU switches.
-    MessageLoop::current()->PostDelayedTask(FROM_HERE,
-                                            base::Bind(&CGLReleasePixelFormat,
-                                                       discrete_pixelformat_),
-                                            base::TimeDelta::FromSeconds(10));
+    base::MessageLoop::current()->PostDelayedTask(
+        FROM_HERE,
+        base::Bind(&CGLReleasePixelFormat, discrete_pixelformat_),
+        base::TimeDelta::FromSeconds(10));
     discrete_pixelformat_ = NULL;
   }
   if (context_) {
@@ -125,36 +126,41 @@ void GLContextCGL::Destroy() {
 
 bool GLContextCGL::MakeCurrent(GLSurface* surface) {
   DCHECK(context_);
-  int renderer_id = share_group()->GetRendererID();
-  int screen;
-  CGLGetVirtualScreen(static_cast<CGLContextObj>(context_), &screen);
 
-  if (g_support_renderer_switching &&
-      !discrete_pixelformat_ && renderer_id != -1 &&
-      (screen != screen_ || renderer_id != renderer_id_)) {
-    // Attempt to find a virtual screen that's using the requested renderer,
-    // and switch the context to use that screen. Don't attempt to switch if
-    // the context requires the discrete GPU.
-    CGLPixelFormatObj format = GetPixelFormat();
-    int virtual_screen_count;
-    if (CGLDescribePixelFormat(format, 0, kCGLPFAVirtualScreenCount,
-                               &virtual_screen_count) != kCGLNoError)
-      return false;
+  // The call to CGLSetVirtualScreen can hang on some AMD drivers
+  // http://crbug.com/227228
+  if (safe_to_force_gpu_switch_) {
+    int renderer_id = share_group()->GetRendererID();
+    int screen;
+    CGLGetVirtualScreen(static_cast<CGLContextObj>(context_), &screen);
 
-    for (int i = 0; i < virtual_screen_count; ++i) {
-      int screen_renderer_id;
-      if (CGLDescribePixelFormat(format, i, kCGLPFARendererID,
-                                 &screen_renderer_id) != kCGLNoError)
+    if (g_support_renderer_switching &&
+        !discrete_pixelformat_ && renderer_id != -1 &&
+        (screen != screen_ || renderer_id != renderer_id_)) {
+      // Attempt to find a virtual screen that's using the requested renderer,
+      // and switch the context to use that screen. Don't attempt to switch if
+      // the context requires the discrete GPU.
+      CGLPixelFormatObj format = GetPixelFormat();
+      int virtual_screen_count;
+      if (CGLDescribePixelFormat(format, 0, kCGLPFAVirtualScreenCount,
+                                 &virtual_screen_count) != kCGLNoError)
         return false;
 
-      screen_renderer_id &= kCGLRendererIDMatchingMask;
-      if (screen_renderer_id == renderer_id) {
-        CGLSetVirtualScreen(static_cast<CGLContextObj>(context_), i);
-        screen_ = i;
-        break;
+      for (int i = 0; i < virtual_screen_count; ++i) {
+        int screen_renderer_id;
+        if (CGLDescribePixelFormat(format, i, kCGLPFARendererID,
+                                   &screen_renderer_id) != kCGLNoError)
+          return false;
+
+        screen_renderer_id &= kCGLRendererIDMatchingMask;
+        if (screen_renderer_id == renderer_id) {
+          CGLSetVirtualScreen(static_cast<CGLContextObj>(context_), i);
+          screen_ = i;
+          break;
+        }
       }
+      renderer_id_ = renderer_id;
     }
-    renderer_id_ = renderer_id;
   }
 
   if (IsCurrent(surface))
@@ -266,6 +272,11 @@ bool GLContextCGL::GetTotalGpuMemory(size_t* bytes) {
 
   return false;
 }
+
+void GLContextCGL::SetSafeToForceGpuSwitch() {
+  safe_to_force_gpu_switch_ = true;
+}
+
 
 GLContextCGL::~GLContextCGL() {
   Destroy();

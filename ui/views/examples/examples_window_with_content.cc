@@ -6,26 +6,22 @@
 
 #include <string>
 
-#include "base/command_line.h"
 #include "base/memory/scoped_vector.h"
 #include "base/utf_string_conversions.h"
 #include "content/public/browser/browser_context.h"
 #include "ui/base/models/combobox_model.h"
 #include "ui/base/ui_base_paths.h"
-#include "ui/views/controls/button/text_button.h"
 #include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/controls/label.h"
-#include "ui/views/controls/tabbed_pane/tabbed_pane.h"
 #include "ui/views/examples/bubble_example.h"
 #include "ui/views/examples/button_example.h"
+#include "ui/views/examples/checkbox_example.h"
 #include "ui/views/examples/combobox_example.h"
 #include "ui/views/examples/double_split_view_example.h"
 #include "ui/views/examples/label_example.h"
 #include "ui/views/examples/link_example.h"
 #include "ui/views/examples/menu_example.h"
 #include "ui/views/examples/message_box_example.h"
-#include "ui/views/examples/native_theme_button_example.h"
-#include "ui/views/examples/native_theme_checkbox_example.h"
 #include "ui/views/examples/progress_bar_example.h"
 #include "ui/views/examples/radio_button_example.h"
 #include "ui/views/examples/scroll_view_example.h"
@@ -39,15 +35,10 @@
 #include "ui/views/examples/tree_view_example.h"
 #include "ui/views/examples/webview_example.h"
 #include "ui/views/examples/widget_example.h"
-#include "ui/views/focus/accelerator_handler.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
-
-#if defined(USE_AURA)
-#include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
-#endif
 
 namespace views {
 namespace examples {
@@ -111,14 +102,13 @@ class ExamplesWindowContents : public WidgetDelegateView,
   virtual void WindowClosing() OVERRIDE {
     instance_ = NULL;
     if (operation_ == QUIT_ON_CLOSE)
-      MessageLoopForUI::current()->Quit();
+      base::MessageLoopForUI::current()->Quit();
   }
 
   // Overridden from View:
-  virtual void ViewHierarchyChanged(bool is_add,
-                                    View* parent,
-                                    View* child) OVERRIDE {
-    if (is_add && child == this)
+  virtual void ViewHierarchyChanged(
+      const ViewHierarchyChangedDetails& details) OVERRIDE {
+    if (details.is_add && details.child == this)
       InitExamplesWindow();
   }
 
@@ -167,14 +157,13 @@ class ExamplesWindowContents : public WidgetDelegateView,
     // Please keep this list in alphabetical order!
     combobox_model_.AddExample(new BubbleExample);
     combobox_model_.AddExample(new ButtonExample);
+    combobox_model_.AddExample(new CheckboxExample);
     combobox_model_.AddExample(new ComboboxExample);
     combobox_model_.AddExample(new DoubleSplitViewExample);
     combobox_model_.AddExample(new LabelExample);
     combobox_model_.AddExample(new LinkExample);
     combobox_model_.AddExample(new MenuExample);
     combobox_model_.AddExample(new MessageBoxExample);
-    combobox_model_.AddExample(new NativeThemeButtonExample);
-    combobox_model_.AddExample(new NativeThemeCheckboxExample);
     combobox_model_.AddExample(new ProgressBarExample);
     combobox_model_.AddExample(new RadioButtonExample);
     combobox_model_.AddExample(new ScrollViewExample);

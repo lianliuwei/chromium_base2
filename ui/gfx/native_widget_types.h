@@ -108,11 +108,9 @@ typedef struct _GtkWidget GtkWidget;
 typedef struct _GtkWindow GtkWindow;
 #elif defined(OS_ANDROID)
 struct ANativeWindow;
-namespace content {
-class ContentViewCore;
-}
 namespace ui {
 class WindowAndroid;
+class ViewAndroid;
 }
 #endif
 class SkBitmap;
@@ -149,7 +147,7 @@ typedef GdkRegion* NativeRegion;
 typedef GdkEvent* NativeEvent;
 #elif defined(OS_ANDROID)
 typedef void* NativeCursor;
-typedef content::ContentViewCore* NativeView;
+typedef ui::ViewAndroid* NativeView;
 typedef ui::WindowAndroid* NativeWindow;
 typedef void* NativeRegion;
 typedef jobject NativeEvent;
@@ -252,6 +250,9 @@ static inline NativeView NativeViewFromIdInBrowser(NativeViewId id) {
 #elif defined(OS_ANDROID)
   typedef uint64 PluginWindowHandle;
   const PluginWindowHandle kNullPluginWindow = 0;
+#elif defined(USE_OZONE)
+  typedef intptr_t PluginWindowHandle;
+  const PluginWindowHandle kNullPluginWindow = 0;
 #else
   // On OS X we don't have windowed plugins.
   // We use a NULL/0 PluginWindowHandle in shared code to indicate there
@@ -317,9 +318,14 @@ const AcceleratedWidget kNullAcceleratedWidget = 0;
 #elif defined(OS_ANDROID)
 typedef ANativeWindow* AcceleratedWidget;
 const AcceleratedWidget kNullAcceleratedWidget = 0;
+#elif defined(USE_OZONE)
+typedef intptr_t AcceleratedWidget;
+const AcceleratedWidget kNullAcceleratedWidget = 0;
 #else
 #error unknown platform
 #endif
+
+typedef void* GpuMemoryBufferHandle;
 
 }  // namespace gfx
 

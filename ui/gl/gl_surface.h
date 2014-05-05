@@ -18,10 +18,6 @@ namespace gfx {
 class GLContext;
 class VSyncProvider;
 
-#if defined(OS_ANDROID)
-class AndroidNativeWindow;
-#endif
-
 // Encapsulates a surface that can be rendered to with GL, hiding platform
 // specific management.
 class GL_EXPORT GLSurface : public base::RefCounted<GLSurface> {
@@ -39,6 +35,9 @@ class GL_EXPORT GLSurface : public base::RefCounted<GLSurface> {
 
   virtual bool Resize(const gfx::Size& size);
 
+  // Recreate the surface without changing the size.
+  virtual bool Recreate();
+
   // Unschedule the GpuScheduler and return true to abort the processing of
   // a GL draw call to this surface and defer it until the GpuScheduler is
   // rescheduled.
@@ -53,10 +52,6 @@ class GL_EXPORT GLSurface : public base::RefCounted<GLSurface> {
 
   // Get the size of the surface.
   virtual gfx::Size GetSize() = 0;
-
-#if defined(OS_ANDROID)
-  virtual void SetNativeWindow(AndroidNativeWindow* window) { }
-#endif
 
   // Get the underlying platform specific surface "handle".
   virtual void* GetHandle() = 0;
@@ -137,6 +132,7 @@ class GL_EXPORT GLSurfaceAdapter : public GLSurface {
   virtual bool Initialize() OVERRIDE;
   virtual void Destroy() OVERRIDE;
   virtual bool Resize(const gfx::Size& size) OVERRIDE;
+  virtual bool Recreate() OVERRIDE;
   virtual bool DeferDraws() OVERRIDE;
   virtual bool IsOffscreen() OVERRIDE;
   virtual bool SwapBuffers() OVERRIDE;

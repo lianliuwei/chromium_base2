@@ -11,7 +11,7 @@
     'conditions': [
       ['use_x11 == 1', {
         'include_dirs': [
-          '<(DEPTH)/third_party/angle/include',
+          '<(DEPTH)/third_party/khronos',
         ],
       }],
       # TODO(ncarter): Does hlsl compilation belong in a shared location?
@@ -81,9 +81,8 @@
         'surface_switches.cc',
         'transport_dib.h',
         'transport_dib.cc',
-        'transport_dib_android.cc',
-        'transport_dib_linux.cc',
-        'transport_dib_mac.cc',
+        'transport_dib_gtk.cc',
+        'transport_dib_posix.cc',
         'transport_dib_win.cc',
       ],
       'defines': [
@@ -100,7 +99,7 @@
           'dependencies': [
             '<(DEPTH)/base/base.gyp:base',
             '<(DEPTH)/base/base.gyp:run_all_unittests',
-            '<(DEPTH)/media/media.gyp:yuv_convert',
+            '<(DEPTH)/media/media.gyp:media',
             '<(DEPTH)/skia/skia.gyp:skia',
             '<(DEPTH)/testing/gtest.gyp:gtest',
             '<(DEPTH)/ui/ui.gyp:ui',

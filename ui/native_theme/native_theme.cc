@@ -6,11 +6,13 @@
 
 #include "base/command_line.h"
 #include "base/metrics/field_trial.h"
-#include "ui/base/ui_base_switches.h"
+
 
 // Constants for the new menu style field trial.
-const char kNewMenuStyleFieldTrialName[] = "NewMenuStyle";
-const char kNewMenuStyleFieldTrialGroupName[] = "OldStyle";
+const char kMenuVariationFieldTrialName[] = "NewMenuStyle";
+const char kMenuVariationFieldTrialGroupNameCompact1[] = "Compact1";
+const char kMenuVariationFieldTrialGroupNameCompact2[] = "Compact2";
+const char kMenuVariationFieldTrialGroupNameHigherContrast[] = "HigherContrast";
 
 namespace ui {
 
@@ -26,21 +28,17 @@ void NativeTheme::SetScrollbarColors(unsigned inactive_color,
 // such as native_theme_win.cc or native_theme_linux.cc
 
 // static
-bool NativeTheme::IsNewMenuStyleEnabled() {
-#if defined(USE_AURA)
-  return true;
-#else
-  static bool enable_new_menu_style =
-      !CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableNewMenuStyle);
-  // Run experiment only if there is no kDisableNewMenuStyle flag.
-  if (enable_new_menu_style) {
-    enable_new_menu_style =
-        base::FieldTrialList::FindFullName(kNewMenuStyleFieldTrialName) !=
-        kNewMenuStyleFieldTrialGroupName;
-  }
-  return enable_new_menu_style;
-#endif
+NativeTheme::MenuVariation NativeTheme::GetMenuVariation() {
+  std::string trial_group_name =
+      base::FieldTrialList::FindFullName(kMenuVariationFieldTrialName);
+  if (trial_group_name == kMenuVariationFieldTrialGroupNameCompact1)
+    return MENU_VARIATION_COMPACT_1;
+  if (trial_group_name == kMenuVariationFieldTrialGroupNameCompact2)
+    return MENU_VARIATION_COMPACT_2;
+  if (trial_group_name == kMenuVariationFieldTrialGroupNameHigherContrast)
+    return MENU_VARIATION_CONTRAST;
+
+  return MENU_VARIATION_NORMAL;
 }
 
 NativeTheme::NativeTheme()

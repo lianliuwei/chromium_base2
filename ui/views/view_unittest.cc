@@ -1040,6 +1040,15 @@ TEST_F(ViewTest, HitTestMasks) {
   EXPECT_EQ(v1, root_view->GetEventHandlerForPoint(v1_origin));
   EXPECT_EQ(root_view, root_view->GetEventHandlerForPoint(v2_origin));
 
+  // Test GetTooltipHandlerForPoint
+  EXPECT_EQ(v1, root_view->GetTooltipHandlerForPoint(v1_centerpoint));
+  EXPECT_EQ(v2, root_view->GetTooltipHandlerForPoint(v2_centerpoint));
+
+  EXPECT_EQ(v1, root_view->GetTooltipHandlerForPoint(v1_origin));
+  EXPECT_EQ(root_view, root_view->GetTooltipHandlerForPoint(v2_origin));
+
+  EXPECT_FALSE(v1->GetTooltipHandlerForPoint(v2_origin));
+
   widget->CloseNow();
 }
 
@@ -1571,11 +1580,10 @@ class MockMenuModel : public ui::MenuModel {
       MenuModel** model, int* index));
 };
 
-class TestDialog : public DialogDelegate, public ButtonListener {
+class TestDialog : public DialogDelegateView, public ButtonListener {
  public:
   explicit TestDialog(MockMenuModel* mock_menu_model)
-      : contents_(NULL),
-        button1_(NULL),
+      : button1_(NULL),
         button2_(NULL),
         checkbox_(NULL),
         button_drop_(NULL),
@@ -1583,37 +1591,23 @@ class TestDialog : public DialogDelegate, public ButtonListener {
         mock_menu_model_(mock_menu_model),
         canceled_(false),
         oked_(false),
-        closeable_(false),
-        widget_(NULL) {
+        closeable_(false) {
+    button1_ = new LabelButton(this, ASCIIToUTF16("Button1"));
+    button2_ = new LabelButton(this, ASCIIToUTF16("Button2"));
+    checkbox_ = new Checkbox(ASCIIToUTF16("My checkbox"));
+    button_drop_ = new ButtonDropDown(this, mock_menu_model_);
+    AddChildView(button1_);
+    AddChildView(button2_);
+    AddChildView(checkbox_);
+    AddChildView(button_drop_);
   }
+
+  virtual ~TestDialog() {}
 
   void TearDown() {
     // Now we can close safely.
     closeable_ = true;
-    widget_->Close();
-    widget_ = NULL;
-    // delegate has to be alive while shutting down.
-    MessageLoop::current()->DeleteSoon(FROM_HERE, this);
-  }
-
-  // DialogDelegate implementation:
-  virtual int GetDefaultDialogButton() const OVERRIDE {
-    return ui::DIALOG_BUTTON_OK;
-  }
-
-  virtual View* GetContentsView() OVERRIDE {
-    if (!contents_) {
-      contents_ = new View;
-      button1_ = new LabelButton(this, ASCIIToUTF16("Button1"));
-      button2_ = new LabelButton(this, ASCIIToUTF16("Button2"));
-      checkbox_ = new Checkbox(ASCIIToUTF16("My checkbox"));
-      button_drop_ = new ButtonDropDown(this, mock_menu_model_);
-      contents_->AddChildView(button1_);
-      contents_->AddChildView(button2_);
-      contents_->AddChildView(checkbox_);
-      contents_->AddChildView(button_drop_);
-    }
-    return contents_;
+    GetWidget()->Close();
   }
 
   // Prevent the dialog from really closing (so we can click the OK/Cancel
@@ -1625,13 +1619,6 @@ class TestDialog : public DialogDelegate, public ButtonListener {
   virtual bool Accept() OVERRIDE {
     oked_ = true;
     return closeable_;
-  }
-
-  virtual Widget* GetWidget() OVERRIDE {
-    return widget_;
-  }
-  virtual const Widget* GetWidget() const OVERRIDE {
-    return widget_;
   }
 
   // ButtonListener implementation.
@@ -1655,7 +1642,6 @@ class TestDialog : public DialogDelegate, public ButtonListener {
     }
   }
 
-  View* contents_;
   LabelButton* button1_;
   LabelButton* button2_;
   Checkbox* checkbox_;
@@ -1666,167 +1652,135 @@ class TestDialog : public DialogDelegate, public ButtonListener {
   bool canceled_;
   bool oked_;
   bool closeable_;
-  Widget* widget_;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TestDialog);
 };
 
 class DefaultButtonTest : public ViewTest {
  public:
-  enum ButtonID {
-    OK,
-    CANCEL,
-    BUTTON1,
-    BUTTON2
-  };
+  enum ButtonID { OK, CANCEL, BUTTON1, BUTTON2, };
 
-  DefaultButtonTest()
-      : focus_manager_(NULL),
-        test_dialog_(NULL),
-        client_view_(NULL),
-        ok_button_(NULL),
-        cancel_button_(NULL) {
-  }
+  DefaultButtonTest() : dialog_(NULL) {}
+  virtual ~DefaultButtonTest() {}
 
   virtual void SetUp() OVERRIDE {
     ViewTest::SetUp();
-    test_dialog_ = new TestDialog(NULL);
-
-    Widget* window = new Widget;
-    Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
-    params.delegate = test_dialog_;
-    params.bounds = gfx::Rect(0, 0, 100, 100);
-    window->Init(params);
-
-    test_dialog_->widget_ = window;
-    window->Show();
-    focus_manager_ = test_dialog_->contents_->GetFocusManager();
-    ASSERT_TRUE(focus_manager_ != NULL);
-    client_view_ =
-        static_cast<DialogClientView*>(window->client_view());
-    ok_button_ = client_view_->ok_button();
-    cancel_button_ = client_view_->cancel_button();
+    dialog_ = new TestDialog(NULL);
+    DialogDelegate::CreateDialogWidget(dialog_, GetContext(), NULL)->Show();
   }
 
   virtual void TearDown() OVERRIDE {
-    test_dialog_->TearDown();
+    dialog_->TearDown();
     ViewTest::TearDown();
   }
 
+ protected:
   void SimulatePressingEnterAndCheckDefaultButton(ButtonID button_id) {
     ui::KeyEvent event(ui::ET_KEY_PRESSED, ui::VKEY_RETURN, 0, false);
-    focus_manager_->OnKeyEvent(event);
+    dialog_->GetFocusManager()->OnKeyEvent(event);
     switch (button_id) {
       case OK:
-        EXPECT_TRUE(test_dialog_->oked_);
-        EXPECT_FALSE(test_dialog_->canceled_);
-        EXPECT_FALSE(test_dialog_->last_pressed_button_);
+        EXPECT_TRUE(dialog_->oked_);
+        EXPECT_FALSE(dialog_->canceled_);
+        EXPECT_FALSE(dialog_->last_pressed_button_);
         break;
       case CANCEL:
-        EXPECT_FALSE(test_dialog_->oked_);
-        EXPECT_TRUE(test_dialog_->canceled_);
-        EXPECT_FALSE(test_dialog_->last_pressed_button_);
+        EXPECT_FALSE(dialog_->oked_);
+        EXPECT_TRUE(dialog_->canceled_);
+        EXPECT_FALSE(dialog_->last_pressed_button_);
         break;
       case BUTTON1:
-        EXPECT_FALSE(test_dialog_->oked_);
-        EXPECT_FALSE(test_dialog_->canceled_);
-        EXPECT_TRUE(test_dialog_->last_pressed_button_ ==
-            test_dialog_->button1_);
+        EXPECT_FALSE(dialog_->oked_);
+        EXPECT_FALSE(dialog_->canceled_);
+        EXPECT_TRUE(dialog_->last_pressed_button_ == dialog_->button1_);
         break;
       case BUTTON2:
-        EXPECT_FALSE(test_dialog_->oked_);
-        EXPECT_FALSE(test_dialog_->canceled_);
-        EXPECT_TRUE(test_dialog_->last_pressed_button_ ==
-            test_dialog_->button2_);
+        EXPECT_FALSE(dialog_->oked_);
+        EXPECT_FALSE(dialog_->canceled_);
+        EXPECT_TRUE(dialog_->last_pressed_button_ == dialog_->button2_);
         break;
     }
-    test_dialog_->ResetStates();
+    dialog_->ResetStates();
   }
 
-  FocusManager* focus_manager_;
-  TestDialog* test_dialog_;
-  DialogClientView* client_view_;
-  LabelButton* ok_button_;
-  LabelButton* cancel_button_;
+  TestDialog* dialog_;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(DefaultButtonTest);
 };
 
 TEST_F(DefaultButtonTest, DialogDefaultButtonTest) {
+  DialogClientView* client_view = dialog_->GetDialogClientView();
+  LabelButton* ok_button = client_view->ok_button();
+  LabelButton* cancel_button = client_view->cancel_button();
+
   // Window has just been shown, we expect the default button specified in the
   // DialogDelegate.
-  EXPECT_TRUE(ok_button_->is_default());
+  EXPECT_TRUE(ok_button->is_default());
 
   // Simulate pressing enter, that should trigger the OK button.
   SimulatePressingEnterAndCheckDefaultButton(OK);
 
   // Simulate focusing another button, it should become the default button.
-  client_view_->OnWillChangeFocus(ok_button_, test_dialog_->button1_);
-  EXPECT_FALSE(ok_button_->is_default());
-  EXPECT_TRUE(test_dialog_->button1_->is_default());
+  client_view->OnWillChangeFocus(ok_button, dialog_->button1_);
+  EXPECT_FALSE(ok_button->is_default());
+  EXPECT_TRUE(dialog_->button1_->is_default());
   // Simulate pressing enter, that should trigger button1.
   SimulatePressingEnterAndCheckDefaultButton(BUTTON1);
 
   // Now select something that is not a button, the OK should become the default
   // button again.
-  client_view_->OnWillChangeFocus(test_dialog_->button1_,
-                                  test_dialog_->checkbox_);
-  EXPECT_TRUE(ok_button_->is_default());
-  EXPECT_FALSE(test_dialog_->button1_->is_default());
+  client_view->OnWillChangeFocus(dialog_->button1_, dialog_->checkbox_);
+  EXPECT_TRUE(ok_button->is_default());
+  EXPECT_FALSE(dialog_->button1_->is_default());
   SimulatePressingEnterAndCheckDefaultButton(OK);
 
   // Select yet another button.
-  client_view_->OnWillChangeFocus(test_dialog_->checkbox_,
-                                  test_dialog_->button2_);
-  EXPECT_FALSE(ok_button_->is_default());
-  EXPECT_FALSE(test_dialog_->button1_->is_default());
-  EXPECT_TRUE(test_dialog_->button2_->is_default());
+  client_view->OnWillChangeFocus(dialog_->checkbox_, dialog_->button2_);
+  EXPECT_FALSE(ok_button->is_default());
+  EXPECT_FALSE(dialog_->button1_->is_default());
+  EXPECT_TRUE(dialog_->button2_->is_default());
   SimulatePressingEnterAndCheckDefaultButton(BUTTON2);
 
   // Focus nothing.
-  client_view_->OnWillChangeFocus(test_dialog_->button2_, NULL);
-  EXPECT_TRUE(ok_button_->is_default());
-  EXPECT_FALSE(test_dialog_->button1_->is_default());
-  EXPECT_FALSE(test_dialog_->button2_->is_default());
+  client_view->OnWillChangeFocus(dialog_->button2_, NULL);
+  EXPECT_TRUE(ok_button->is_default());
+  EXPECT_FALSE(dialog_->button1_->is_default());
+  EXPECT_FALSE(dialog_->button2_->is_default());
   SimulatePressingEnterAndCheckDefaultButton(OK);
 
   // Focus the cancel button.
-  client_view_->OnWillChangeFocus(NULL, cancel_button_);
-  EXPECT_FALSE(ok_button_->is_default());
-  EXPECT_TRUE(cancel_button_->is_default());
-  EXPECT_FALSE(test_dialog_->button1_->is_default());
-  EXPECT_FALSE(test_dialog_->button2_->is_default());
+  client_view->OnWillChangeFocus(NULL, cancel_button);
+  EXPECT_FALSE(ok_button->is_default());
+  EXPECT_TRUE(cancel_button->is_default());
+  EXPECT_FALSE(dialog_->button1_->is_default());
+  EXPECT_FALSE(dialog_->button2_->is_default());
   SimulatePressingEnterAndCheckDefaultButton(CANCEL);
 }
 
 class ButtonDropDownTest : public ViewTest {
  public:
-  ButtonDropDownTest()
-      : test_dialog_(NULL),
-        button_as_view_(NULL) {
-  }
+  ButtonDropDownTest() : dialog_(NULL), button_as_view_(NULL) {}
+  virtual ~ButtonDropDownTest() {}
 
   virtual void SetUp() OVERRIDE {
     ViewTest::SetUp();
-    test_dialog_ = new TestDialog(new MockMenuModel());
-
-    Widget* window = new Widget;
-    Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
-    params.delegate = test_dialog_;
-    params.bounds = gfx::Rect(0, 0, 100, 100);
-    window->Init(params);
-
-    test_dialog_->widget_ = window;
-    window->Show();
-    test_dialog_->button_drop_->SetBoundsRect(gfx::Rect(0, 0, 100, 100));
+    dialog_ = new TestDialog(new MockMenuModel());
+    DialogDelegate::CreateDialogWidget(dialog_, GetContext(), NULL)->Show();
+    dialog_->button_drop_->SetBoundsRect(gfx::Rect(0, 0, 100, 100));
     // We have to cast the button back into a View in order to invoke it's
     // OnMouseReleased method.
-    button_as_view_ = static_cast<View*>(test_dialog_->button_drop_);
+    button_as_view_ = static_cast<View*>(dialog_->button_drop_);
   }
 
   virtual void TearDown() OVERRIDE {
-    test_dialog_->TearDown();
+    dialog_->TearDown();
     ViewTest::TearDown();
   }
 
-  TestDialog* test_dialog_;
-  // This is owned by test_dialog_.
+  TestDialog* dialog_;
+  // This is owned by dialog_.
   View* button_as_view_;
 
  private:
@@ -1843,36 +1797,8 @@ TEST_F(ButtonDropDownTest, RegularClickTest) {
                                ui::EF_LEFT_MOUSE_BUTTON);
   button_as_view_->OnMousePressed(press_event);
   button_as_view_->OnMouseReleased(release_event);
-  EXPECT_EQ(test_dialog_->last_pressed_button_, test_dialog_->button_drop_);
+  EXPECT_EQ(dialog_->last_pressed_button_, dialog_->button_drop_);
 }
-
-////////////////////////////////////////////////////////////////////////////////
-// View hierarchy / Visibility changes
-////////////////////////////////////////////////////////////////////////////////
-/*
-TEST_F(ViewTest, ChangeVisibility) {
-#if defined(OS_LINUX)
-  // Make CRITICAL messages fatal
-  // TODO(oshima): we probably should enable this for entire tests on linux.
-  g_log_set_always_fatal(G_LOG_LEVEL_CRITICAL);
-#endif
-  scoped_ptr<Widget> window(CreateWidget());
-  window->Init(NULL, gfx::Rect(0, 0, 500, 300));
-  View* root_view = window->GetRootView();
-  NativeTextButton* native = new NativeTextButton(NULL, ASCIIToUTF16("Native"));
-
-  root_view->SetContentsView(native);
-  native->SetVisible(true);
-
-  root_view->RemoveChildView(native);
-  native->SetVisible(false);
-  // Change visibility to true with no widget.
-  native->SetVisible(true);
-
-  root_view->SetContentsView(native);
-  native->SetVisible(true);
-}
-*/
 
 ////////////////////////////////////////////////////////////////////////////////
 // Native view hierachy
@@ -2500,51 +2426,53 @@ class ObserverView : public View {
 
   void ResetTestState();
 
-  bool child_added() const { return child_added_; }
-  bool child_removed() const { return child_removed_; }
-  const View* parent_view() const { return parent_view_; }
-  const View* child_view() const { return child_view_; }
+  bool has_add_details() const { return has_add_details_; }
+  bool has_remove_details() const { return has_remove_details_; }
+
+  const ViewHierarchyChangedDetails& add_details() const {
+    return add_details_;
+  }
+
+  const ViewHierarchyChangedDetails& remove_details() const {
+    return remove_details_;
+  }
 
  private:
   // View:
-  virtual void ViewHierarchyChanged(bool is_add,
-                                    View* parent,
-                                    View* child) OVERRIDE;
+  virtual void ViewHierarchyChanged(
+      const ViewHierarchyChangedDetails& details) OVERRIDE;
 
-  bool child_added_;
-  bool child_removed_;
-  View* parent_view_;
-  View* child_view_;
+  bool has_add_details_;
+  bool has_remove_details_;
+  ViewHierarchyChangedDetails add_details_;
+  ViewHierarchyChangedDetails remove_details_;
 
   DISALLOW_COPY_AND_ASSIGN(ObserverView);
 };
 
 ObserverView::ObserverView()
-    : child_added_(false),
-      child_removed_(false),
-      parent_view_(NULL),
-      child_view_(NULL) {
+    : has_add_details_(false),
+      has_remove_details_(false) {
 }
 
 ObserverView::~ObserverView() {}
 
 void ObserverView::ResetTestState() {
-  child_added_ = false;
-  child_removed_ = false;
-  parent_view_ = NULL;
-  child_view_ = NULL;
+  has_add_details_ = false;
+  has_remove_details_ = false;
+  add_details_ = ViewHierarchyChangedDetails();
+  remove_details_ = ViewHierarchyChangedDetails();
 }
 
-void ObserverView::ViewHierarchyChanged(bool is_add,
-                                        View* parent,
-                                        View* child) {
-  if (is_add)
-    child_added_ = true;
-  else
-    child_removed_ = true;
-
-  parent_view_ = parent;
-  child_view_ = child;
+void ObserverView::ViewHierarchyChanged(
+    const ViewHierarchyChangedDetails& details) {
+  if (details.is_add) {
+    has_add_details_ = true;
+    add_details_ = details;
+  } else {
+    has_remove_details_ = true;
+    remove_details_ = details;
+  }
 }
 
 // Verifies that the ViewHierarchyChanged() notification is sent correctly when
@@ -2554,6 +2482,7 @@ void ObserverView::ViewHierarchyChanged(bool is_add,
 // v1
 // +-- v2
 //     +-- v3
+//     +-- v4 (starts here, then get reparented to v1)
 TEST_F(ViewTest, ViewHierarchyChanged) {
   ObserverView v1;
 
@@ -2565,15 +2494,17 @@ TEST_F(ViewTest, ViewHierarchyChanged) {
 
   // Make sure both |v2| and |v3| receive the ViewHierarchyChanged()
   // notification.
-  EXPECT_TRUE(v2->child_added());
-  EXPECT_FALSE(v2->child_removed());
-  EXPECT_EQ(v2.get(), v2->parent_view());
-  EXPECT_EQ(v3, v2->child_view());
+  EXPECT_TRUE(v2->has_add_details());
+  EXPECT_FALSE(v2->has_remove_details());
+  EXPECT_EQ(v2.get(), v2->add_details().parent);
+  EXPECT_EQ(v3, v2->add_details().child);
+  EXPECT_EQ(NULL, v2->add_details().move_view);
 
-  EXPECT_TRUE(v3->child_added());
-  EXPECT_FALSE(v3->child_removed());
-  EXPECT_EQ(v2.get(), v3->parent_view());
-  EXPECT_EQ(v3, v3->child_view());
+  EXPECT_TRUE(v3->has_add_details());
+  EXPECT_FALSE(v3->has_remove_details());
+  EXPECT_EQ(v2.get(), v3->add_details().parent);
+  EXPECT_EQ(v3, v3->add_details().child);
+  EXPECT_EQ(NULL, v3->add_details().move_view);
 
   // Reset everything to the initial state.
   v2->ResetTestState();
@@ -2584,20 +2515,23 @@ TEST_F(ViewTest, ViewHierarchyChanged) {
 
   // Verifies that |v2| is the child view *added* and the parent view is |v1|.
   // Make sure all the views (v1, v2, v3) received _that_ information.
-  EXPECT_TRUE(v1.child_added());
-  EXPECT_FALSE(v1.child_removed());
-  EXPECT_EQ(&v1, v1.parent_view());
-  EXPECT_EQ(v2.get(), v1.child_view());
+  EXPECT_TRUE(v1.has_add_details());
+  EXPECT_FALSE(v1.has_remove_details());
+  EXPECT_EQ(&v1, v1.add_details().parent);
+  EXPECT_EQ(v2.get(), v1.add_details().child);
+  EXPECT_EQ(NULL, v1.add_details().move_view);
 
-  EXPECT_TRUE(v2->child_added());
-  EXPECT_FALSE(v2->child_removed());
-  EXPECT_EQ(&v1, v2->parent_view());
-  EXPECT_EQ(v2.get(), v2->child_view());
+  EXPECT_TRUE(v2->has_add_details());
+  EXPECT_FALSE(v2->has_remove_details());
+  EXPECT_EQ(&v1, v2->add_details().parent);
+  EXPECT_EQ(v2.get(), v2->add_details().child);
+  EXPECT_EQ(NULL, v2->add_details().move_view);
 
-  EXPECT_TRUE(v3->child_added());
-  EXPECT_FALSE(v3->child_removed());
-  EXPECT_EQ(&v1, v3->parent_view());
-  EXPECT_EQ(v2.get(), v3->child_view());
+  EXPECT_TRUE(v3->has_add_details());
+  EXPECT_FALSE(v3->has_remove_details());
+  EXPECT_EQ(&v1, v3->add_details().parent);
+  EXPECT_EQ(v2.get(), v3->add_details().child);
+  EXPECT_EQ(NULL, v3->add_details().move_view);
 
   // Reset everything to the initial state.
   v1.ResetTestState();
@@ -2609,20 +2543,70 @@ TEST_F(ViewTest, ViewHierarchyChanged) {
 
   // Verifies that |v2| is the child view *removed* and the parent view is |v1|.
   // Make sure all the views (v1, v2, v3) received _that_ information.
-  EXPECT_FALSE(v1.child_added());
-  EXPECT_TRUE(v1.child_removed());
-  EXPECT_EQ(&v1, v1.parent_view());
-  EXPECT_EQ(v2.get(), v1.child_view());
+  EXPECT_FALSE(v1.has_add_details());
+  EXPECT_TRUE(v1.has_remove_details());
+  EXPECT_EQ(&v1, v1.remove_details().parent);
+  EXPECT_EQ(v2.get(), v1.remove_details().child);
+  EXPECT_EQ(NULL, v1.remove_details().move_view);
 
-  EXPECT_FALSE(v2->child_added());
-  EXPECT_TRUE(v2->child_removed());
-  EXPECT_EQ(&v1, v2->parent_view());
-  EXPECT_EQ(v2.get(), v2->child_view());
+  EXPECT_FALSE(v2->has_add_details());
+  EXPECT_TRUE(v2->has_remove_details());
+  EXPECT_EQ(&v1, v2->remove_details().parent);
+  EXPECT_EQ(v2.get(), v2->remove_details().child);
+  EXPECT_EQ(NULL, v2->remove_details().move_view);
 
-  EXPECT_FALSE(v3->child_added());
-  EXPECT_TRUE(v3->child_removed());
-  EXPECT_EQ(&v1, v3->parent_view());
-  EXPECT_EQ(v3, v3->child_view());
+  EXPECT_FALSE(v3->has_add_details());
+  EXPECT_TRUE(v3->has_remove_details());
+  EXPECT_EQ(&v1, v3->remove_details().parent);
+  EXPECT_EQ(v3, v3->remove_details().child);
+  EXPECT_EQ(NULL, v3->remove_details().move_view);
+
+  // Verifies notifications when reparenting a view.
+  ObserverView* v4 = new ObserverView();
+  // Add |v4| to |v2|.
+  v2->AddChildView(v4);
+
+  // Reset everything to the initial state.
+  v1.ResetTestState();
+  v2->ResetTestState();
+  v3->ResetTestState();
+  v4->ResetTestState();
+
+  // Reparent |v4| to |v1|.
+  v1.AddChildView(v4);
+
+  // Verifies that all views receive the correct information for all the child,
+  // parent and move views.
+
+  // |v1| is the new parent, |v4| is the child for add, |v2| is the old parent.
+  EXPECT_TRUE(v1.has_add_details());
+  EXPECT_FALSE(v1.has_remove_details());
+  EXPECT_EQ(&v1, v1.add_details().parent);
+  EXPECT_EQ(v4, v1.add_details().child);
+  EXPECT_EQ(v2.get(), v1.add_details().move_view);
+
+  // |v2| is the old parent, |v4| is the child for remove, |v1| is the new
+  // parent.
+  EXPECT_FALSE(v2->has_add_details());
+  EXPECT_TRUE(v2->has_remove_details());
+  EXPECT_EQ(v2.get(), v2->remove_details().parent);
+  EXPECT_EQ(v4, v2->remove_details().child);
+  EXPECT_EQ(&v1, v2->remove_details().move_view);
+
+  // |v3| is not impacted by this operation, and hence receives no notification.
+  EXPECT_FALSE(v3->has_add_details());
+  EXPECT_FALSE(v3->has_remove_details());
+
+  // |v4| is the reparented child, so it receives notifications for the remove
+  // and then the add.  |v2| is its old parent, |v1| is its new parent.
+  EXPECT_TRUE(v4->has_remove_details());
+  EXPECT_TRUE(v4->has_add_details());
+  EXPECT_EQ(v2.get(), v4->remove_details().parent);
+  EXPECT_EQ(&v1, v4->add_details().parent);
+  EXPECT_EQ(v4, v4->add_details().child);
+  EXPECT_EQ(v4, v4->remove_details().child);
+  EXPECT_EQ(&v1, v4->remove_details().move_view);
+  EXPECT_EQ(v2.get(), v4->add_details().move_view);
 }
 
 // Verifies if the child views added under the root are all deleted when calling
@@ -2910,9 +2894,7 @@ class ViewLayerTest : public ViewsTestBase {
 
   // Returns the Layer used by the RootView.
   ui::Layer* GetRootLayer() {
-    ui::Layer* root_layer = NULL;
-    widget()->CalculateOffsetToAncestorWithLayer(&root_layer);
-    return root_layer;
+    return widget()->GetLayer();
   }
 
   virtual void SetUp() OVERRIDE {
@@ -2945,8 +2927,7 @@ class ViewLayerTest : public ViewsTestBase {
 TEST_F(ViewLayerTest, LayerToggling) {
   // Because we lazily create textures the calls to DrawTree are necessary to
   // ensure we trigger creation of textures.
-  ui::Layer* root_layer = NULL;
-  widget()->CalculateOffsetToAncestorWithLayer(&root_layer);
+  ui::Layer* root_layer = widget()->GetLayer();
   View* content_view = new View;
   widget()->SetContentsView(content_view);
 
@@ -3256,19 +3237,21 @@ TEST_F(ViewLayerTest, DontPaintChildrenWithLayers) {
   PaintTrackingView* content_view = new PaintTrackingView;
   widget()->SetContentsView(content_view);
   content_view->SetPaintToLayer(true);
-  // TODO(piman): Compositor::Draw() won't work for the threaded compositor.
-  GetRootLayer()->GetCompositor()->Draw(false);
+  GetRootLayer()->GetCompositor()->ScheduleDraw();
+  ui::DrawWaiterForTest::Wait(GetRootLayer()->GetCompositor());
   GetRootLayer()->SchedulePaint(gfx::Rect(0, 0, 10, 10));
   content_view->set_painted(false);
   // content_view no longer has a dirty rect. Paint from the root and make sure
   // PaintTrackingView isn't painted.
-  GetRootLayer()->GetCompositor()->Draw(false);
+  GetRootLayer()->GetCompositor()->ScheduleDraw();
+  ui::DrawWaiterForTest::Wait(GetRootLayer()->GetCompositor());
   EXPECT_FALSE(content_view->painted());
 
   // Make content_view have a dirty rect, paint the layers and make sure
   // PaintTrackingView is painted.
   content_view->layer()->SchedulePaint(gfx::Rect(0, 0, 10, 10));
-  GetRootLayer()->GetCompositor()->Draw(false);
+  GetRootLayer()->GetCompositor()->ScheduleDraw();
+  ui::DrawWaiterForTest::Wait(GetRootLayer()->GetCompositor());
   EXPECT_TRUE(content_view->painted());
 }
 

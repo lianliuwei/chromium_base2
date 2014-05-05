@@ -15,7 +15,7 @@
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/message_loop_proxy.h"
+#include "base/message_loop/message_loop_proxy.h"
 #include "base/scoped_native_library.h"
 #include "base/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
@@ -73,7 +73,7 @@ bool CopyPlane(AcceleratedSurfaceTransformer* gpu_ops,
 class PresentThread : public base::Thread,
                       public base::RefCountedThreadSafe<PresentThread> {
  public:
-  explicit PresentThread(const char* name);
+  PresentThread(const char* name, uint64 adapter_luid);
 
   IDirect3DDevice9Ex* device() { return device_.get(); }
   IDirect3DQuery9* query() { return query_.get(); }
@@ -81,6 +81,7 @@ class PresentThread : public base::Thread,
     return &surface_transformer_;
   }
 
+  void SetAdapterLUID(uint64 adapter_luid);
   void InitDevice();
   void LockAndResetDevice();
   void ResetDevice();
@@ -104,7 +105,9 @@ class PresentThread : public base::Thread,
   base::Lock lock_;
 
   base::ScopedNativeLibrary d3d_module_;
+  uint64 adapter_luid_;
   base::win::ScopedComPtr<IDirect3DDevice9Ex> device_;
+
   // This query is used to wait until a certain amount of progress has been
   // made by the GPU and it is safe for the producer to modify its shared
   // texture again.
@@ -123,9 +126,13 @@ class PresentThreadPool {
   PresentThreadPool();
   PresentThread* NextThread();
 
+  void SetAdapterLUID(uint64 adapter_luid);
+
  private:
+  base::Lock lock_;
   int next_thread_;
   scoped_refptr<PresentThread> present_threads_[kNumPresentThreads];
+  uint64 adapter_luid_;
 
   DISALLOW_COPY_AND_ASSIGN(PresentThreadPool);
 };
@@ -141,7 +148,6 @@ class AcceleratedPresenterMap {
   scoped_refptr<AcceleratedPresenter> GetPresenter(
       gfx::PluginWindowHandle window);
 
-
   // Destroy any D3D resources owned by the given present thread. Called on
   // the given present thread.
   void ResetPresentThread(PresentThread* present_thread);
@@ -150,6 +156,7 @@ class AcceleratedPresenterMap {
   base::Lock lock_;
   typedef std::map<gfx::PluginWindowHandle, AcceleratedPresenter*> PresenterMap;
   PresenterMap presenters_;
+  uint64 adapter_luid_;
   DISALLOW_COPY_AND_ASSIGN(AcceleratedPresenterMap);
 };
 
@@ -159,7 +166,22 @@ base::LazyInstance<PresentThreadPool>
 base::LazyInstance<AcceleratedPresenterMap>
     g_accelerated_presenter_map = LAZY_INSTANCE_INITIALIZER;
 
-PresentThread::PresentThread(const char* name) : base::Thread(name) {
+PresentThread::PresentThread(const char* name, uint64 adapter_luid)
+    : base::Thread(name),
+      adapter_luid_(adapter_luid) {
+}
+
+void PresentThread::SetAdapterLUID(uint64 adapter_luid) {
+  base::AutoLock locked(lock_);
+
+  CHECK(message_loop() == MessageLoop::current());
+
+  if (adapter_luid_ == adapter_luid)
+    return;
+
+  adapter_luid_ = adapter_luid;
+  if (device_)
+    ResetDevice();
 }
 
 void PresentThread::InitDevice() {
@@ -184,7 +206,7 @@ void PresentThread::ResetDevice() {
   lock_.AssertAcquired();
 
   // The D3D device must be created on the present thread.
-  CHECK(message_loop() == MessageLoop::current());
+  CHECK(message_loop() == base::MessageLoop::current());
 
   // This will crash some Intel drivers but we can't render anything without
   // reseting the device, which would be disappointing.
@@ -195,6 +217,7 @@ void PresentThread::ResetDevice() {
   g_accelerated_presenter_map.Pointer()->ResetPresentThread(this);
 
   if (!d3d_utils::CreateDevice(d3d_module_,
+                               adapter_luid_,
                                D3DDEVTYPE_HAL,
                                GetPresentationInterval(),
                                device_.Receive())) {
@@ -243,16 +266,36 @@ PresentThreadPool::PresentThreadPool() : next_thread_(0) {
 }
 
 PresentThread* PresentThreadPool::NextThread() {
+  base::AutoLock locked(lock_);
+
   next_thread_ = (next_thread_ + 1) % kNumPresentThreads;
   PresentThread* thread = present_threads_[next_thread_].get();
   if (!thread) {
     thread = new PresentThread(
-        base::StringPrintf("PresentThread #%d", next_thread_).c_str());
+        base::StringPrintf("PresentThread #%d", next_thread_).c_str(),
+        adapter_luid_);
     thread->Start();
     present_threads_[next_thread_] = thread;
   }
 
   return thread;
+}
+
+void PresentThreadPool::SetAdapterLUID(uint64 adapter_luid) {
+  base::AutoLock locked(lock_);
+
+  adapter_luid_ = adapter_luid;
+
+  for (int i = 0; i < kNumPresentThreads; ++i) {
+    if (!present_threads_[i])
+      continue;
+
+    present_threads_[i]->message_loop()->PostTask(
+        FROM_HERE,
+        base::Bind(&PresentThread::SetAdapterLUID,
+                   present_threads_[i],
+                   adapter_luid));
+  }
 }
 
 AcceleratedPresenterMap::AcceleratedPresenterMap() {
@@ -321,6 +364,12 @@ AcceleratedPresenter::AcceleratedPresenter(gfx::PluginWindowHandle window)
                            DoFirstShowPresentWithGDI()),
       is_session_locked_(false) {
 }
+
+// static
+void AcceleratedPresenter::SetAdapterLUID(uint64 adapter_luid) {
+  return g_present_thread_pool.Pointer()->SetAdapterLUID(adapter_luid);
+}
+
 
 // static
 scoped_refptr<AcceleratedPresenter> AcceleratedPresenter::GetForWindow(
@@ -456,10 +505,9 @@ bool AcceleratedPresenter::DoCopyToARGB(const gfx::Rect& requested_src_subrect,
   src_subrect.Intersect(gfx::Rect(back_buffer_size));
   base::win::ScopedComPtr<IDirect3DSurface9> final_surface;
   {
-    TRACE_EVENT0("gpu", "CreateTemporaryLockableSurface");
-    if (!d3d_utils::CreateTemporaryLockableSurface(present_thread_->device(),
-                                                   dst_size,
-                                                   final_surface.Receive())) {
+    if (!d3d_utils::CreateOrReuseLockableSurface(present_thread_->device(),
+                                                 dst_size,
+                                                 &final_surface)) {
       LOG(ERROR) << "Failed to create temporary lockable surface";
       return false;
     }
@@ -527,17 +575,12 @@ bool AcceleratedPresenter::DoCopyToYUV(
   gfx::Rect src_subrect = requested_src_subrect;
   src_subrect.Intersect(gfx::Rect(back_buffer_size));
 
-  base::win::ScopedComPtr<IDirect3DTexture9> resized_as_texture;
   base::win::ScopedComPtr<IDirect3DSurface9> resized;
-  {
-    TRACE_EVENT0("gpu", "CreateTemporaryRenderTargetTexture");
-    if (!d3d_utils::CreateTemporaryRenderTargetTexture(
-            present_thread_->device(),
-            dst_size,
-            resized_as_texture.Receive(),
-            resized.Receive())) {
-      return false;
-    }
+  base::win::ScopedComPtr<IDirect3DTexture9> resized_as_texture;
+  if (!gpu_ops->GetIntermediateTexture(dst_size,
+                                       resized_as_texture.Receive(),
+                                       resized.Receive())) {
+    return false;
   }
 
   // Shrink the source to fit entirely in the destination while preserving
@@ -626,6 +669,7 @@ void AcceleratedPresenter::ResetPresentThread(
 #if defined(USE_AURA)
 void AcceleratedPresenter::SetNewTargetWindow(gfx::PluginWindowHandle window) {
   window_ = window;
+  swap_chain_ = NULL;
 }
 #endif
 
@@ -708,7 +752,7 @@ void AcceleratedPresenter::DoPresentAndAcknowledge(
     parameters.BackBufferHeight = quantized_size.height();
     parameters.BackBufferCount = 1;
     parameters.BackBufferFormat = D3DFMT_A8R8G8B8;
-    parameters.hDeviceWindow = GetShellWindow();
+    parameters.hDeviceWindow = window_;
     parameters.Windowed = TRUE;
     parameters.Flags = 0;
     parameters.PresentationInterval = GetPresentationInterval();

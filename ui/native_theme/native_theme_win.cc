@@ -45,10 +45,10 @@ const SkColor kDialogBackgroundColor = SkColorSetRGB(251, 251, 251);
 // FocusableBorder:
 const SkColor kFocusedBorderColor = SkColorSetRGB(0x4d, 0x90, 0xfe);
 const SkColor kUnfocusedBorderColor = SkColorSetRGB(0xd9, 0xd9, 0xd9);
-// TextButton:
-const SkColor kTextButtonBackgroundColor = SkColorSetRGB(0xde, 0xde, 0xde);
-const SkColor kTextButtonHighlightColor = SkColorSetARGB(200, 255, 255, 255);
-const SkColor kTextButtonHoverColor = SkColorSetRGB(6, 45, 117);
+// Button:
+const SkColor kButtonBackgroundColor = SkColorSetRGB(0xde, 0xde, 0xde);
+const SkColor kButtonHighlightColor = SkColorSetARGB(200, 255, 255, 255);
+const SkColor kButtonHoverColor = SkColorSetRGB(6, 45, 117);
 // MenuItem:
 const SkColor kEnabledMenuItemForegroundColor = SkColorSetRGB(6, 45, 117);
 const SkColor kDisabledMenuItemForegroundColor = SkColorSetRGB(161, 161, 146);
@@ -228,11 +228,9 @@ NativeThemeWin* NativeThemeWin::instance() {
 gfx::Size NativeThemeWin::GetPartSize(Part part,
                                       State state,
                                       const ExtraParams& extra) const {
-  if (IsNewMenuStyleEnabled()) {
-    gfx::Size size = CommonThemeGetPartSize(part, state, extra);
-    if (!size.IsEmpty())
-      return size;
-  }
+  gfx::Size part_size = CommonThemeGetPartSize(part, state, extra);
+  if (!part_size.IsEmpty())
+    return part_size;
 
   // The GetThemePartSize call below returns the default size without
   // accounting for user customization (crbug/218291).
@@ -288,21 +286,19 @@ void NativeThemeWin::Paint(SkCanvas* canvas,
   if (rect.IsEmpty())
     return;
 
-  if (IsNewMenuStyleEnabled()) {
-    switch (part) {
-      case kMenuPopupGutter:
-        CommonThemePaintMenuGutter(canvas, rect);
-        return;
-      case kMenuPopupSeparator:
-        CommonThemePaintMenuSeparator(canvas, rect, extra.menu_separator);
-        return;
-      case kMenuPopupBackground:
-        CommonThemePaintMenuBackground(canvas, rect);
-        return;
-      case kMenuItemBackground:
-        CommonThemePaintMenuItemBackground(canvas, state, rect);
-        return;
-    }
+  switch (part) {
+    case kMenuPopupGutter:
+      CommonThemePaintMenuGutter(canvas, rect);
+      return;
+    case kMenuPopupSeparator:
+      CommonThemePaintMenuSeparator(canvas, rect, extra.menu_separator);
+      return;
+    case kMenuPopupBackground:
+      CommonThemePaintMenuBackground(canvas, rect);
+      return;
+    case kMenuItemBackground:
+      CommonThemePaintMenuItemBackground(canvas, state, rect);
+      return;
   }
 
   bool needs_paint_indirect = false;
@@ -310,18 +306,25 @@ void NativeThemeWin::Paint(SkCanvas* canvas,
     // This block will only get hit with --enable-accelerated-drawing flag.
     needs_paint_indirect = true;
   } else {
-    // Scrollbars on Windows XP and the Windows Classic theme have particularly
-    // problematic alpha values, so always draw them indirectly.
+    // Scrollbar components on Windows Classic theme (on all Windows versions)
+    // have particularly problematic alpha values, so always draw them
+    // indirectly. In addition, scrollbar thumbs and grippers for the Windows XP
+    // theme (available only on Windows XP) also need their alpha values
+    // fixed.
     switch (part) {
       case kScrollbarDownArrow:
       case kScrollbarUpArrow:
       case kScrollbarLeftArrow:
       case kScrollbarRightArrow:
+        if (!GetThemeHandle(SCROLLBAR))
+          needs_paint_indirect = true;
+        break;
       case kScrollbarHorizontalThumb:
       case kScrollbarVerticalThumb:
       case kScrollbarHorizontalGripper:
       case kScrollbarVerticalGripper:
-        if (!GetThemeHandle(SCROLLBAR))
+        if (!GetThemeHandle(SCROLLBAR) ||
+            base::win::GetVersion() == base::win::VERSION_XP)
           needs_paint_indirect = true;
         break;
       default:
@@ -347,7 +350,7 @@ NativeThemeWin::NativeThemeWin()
       set_theme_properties_(NULL),
       is_theme_active_(NULL),
       get_theme_int_(NULL),
-      ALLOW_THIS_IN_INITIALIZER_LIST(color_change_listener_(this)) {
+      color_change_listener_(this) {
   if (theme_dll_) {
     draw_theme_ = reinterpret_cast<DrawThemeBackgroundPtr>(
         GetProcAddress(theme_dll_, "DrawThemeBackground"));
@@ -486,7 +489,7 @@ void NativeThemeWin::PaintDirect(SkCanvas* canvas,
 
 SkColor NativeThemeWin::GetSystemColor(ColorId color_id) const {
   SkColor color;
-  if (IsNewMenuStyleEnabled() && CommonThemeGetSystemColor(color_id, &color))
+  if (CommonThemeGetSystemColor(color_id, &color))
     return color;
 
   switch (color_id) {
@@ -504,17 +507,17 @@ SkColor NativeThemeWin::GetSystemColor(ColorId color_id) const {
     case kColorId_UnfocusedBorderColor:
       return kUnfocusedBorderColor;
 
-    // TextButton
-    case kColorId_TextButtonBackgroundColor:
-      return kTextButtonBackgroundColor;
-    case kColorId_TextButtonEnabledColor:
+    // Button
+    case kColorId_ButtonBackgroundColor:
+      return kButtonBackgroundColor;
+    case kColorId_ButtonEnabledColor:
       return system_colors_[COLOR_BTNTEXT];
-    case kColorId_TextButtonDisabledColor:
+    case kColorId_ButtonDisabledColor:
       return system_colors_[COLOR_GRAYTEXT];
-    case kColorId_TextButtonHighlightColor:
-      return kTextButtonHighlightColor;
-    case kColorId_TextButtonHoverColor:
-      return kTextButtonHoverColor;
+    case kColorId_ButtonHighlightColor:
+      return kButtonHighlightColor;
+    case kColorId_ButtonHoverColor:
+      return kButtonHoverColor;
 
     // MenuItem
     case kColorId_EnabledMenuItemForegroundColor:
@@ -756,6 +759,17 @@ HRESULT NativeThemeWin::PaintButton(HDC hdc,
                   -GetSystemMetrics(SM_CYEDGE));
     }
     DrawFocusRect(hdc, rect);
+  }
+
+  // Classic theme doesn't support indeterminate checkboxes.  We draw
+  // a recangle inside a checkbox like IE10 does.
+  if (part_id == BP_CHECKBOX && extra.indeterminate) {
+    RECT inner_rect = *rect;
+    // "4 / 13" is same as IE10 in classic theme.
+    int padding = (inner_rect.right - inner_rect.left) * 4 / 13;
+    InflateRect(&inner_rect, -padding, -padding);
+    int color_index = state == kDisabled ? COLOR_GRAYTEXT : COLOR_WINDOWTEXT;
+    FillRect(hdc, &inner_rect, GetSysColorBrush(color_index));
   }
 
   return S_OK;

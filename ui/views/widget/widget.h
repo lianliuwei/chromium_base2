@@ -12,7 +12,6 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
-#include "ui/base/accessibility/accessibility_types.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/compositor/layer_type.h"
 #include "ui/gfx/native_widget_types.h"
@@ -44,6 +43,7 @@ class Rect;
 namespace ui {
 class Accelerator;
 class Compositor;
+class DefaultThemeProvider;
 class Layer;
 class NativeTheme;
 class OSExchangeData;
@@ -52,7 +52,6 @@ class ThemeProvider;
 
 namespace views {
 
-class DefaultThemeProvider;
 class DesktopRootWindowHost;
 class InputMethod;
 class NativeWidget;
@@ -313,7 +312,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   virtual bool GetAccelerator(int cmd_id, ui::Accelerator* accelerator);
 
   // Forwarded from the RootView so that the widget can do any cleanup.
-  void ViewHierarchyChanged(bool is_add, View* parent, View* child);
+  void ViewHierarchyChanged(const View::ViewHierarchyChangedDetails& details);
 
   // Performs any necessary cleanup and forwards to RootView.
   void NotifyNativeViewHierarchyChanged(bool attached,
@@ -503,12 +502,6 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // before the current is restored.
   void SetCursor(gfx::NativeCursor cursor);
 
-  // Resets the last move flag so that we can go around the optimization
-  // that disregards duplicate mouse moves when ending animation requires
-  // a new hit-test to do some highlighting as in TabStrip::RemoveTabAnimation
-  // to cause the close button to highlight.
-  void ResetLastMouseMoveFlag();
-
   // Sets/Gets a native window property on the underlying native window object.
   // Returns NULL if the property does not exist. Setting the property value to
   // NULL removes the property.
@@ -577,27 +570,12 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   const ui::Compositor* GetCompositor() const;
   ui::Compositor* GetCompositor();
 
-  // Invokes method of same name on the NativeWidget.
-  gfx::Vector2d CalculateOffsetToAncestorWithLayer(
-      ui::Layer** layer_parent);
-
-  // Invokes method of same name on the NativeWidget.
-  void ReorderLayers();
+  // Returns the widget's layer, if any.
+  ui::Layer* GetLayer();
 
   // Schedules an update to the root layers. The actual processing occurs when
   // GetRootLayers() is invoked.
   void UpdateRootLayers();
-
-  // Notifies assistive technology that an accessibility event has
-  // occurred on |view|, such as when the view is focused or when its
-  // value changes. Pass true for |send_native_event| except for rare
-  // cases where the view is a native control that's already sending a
-  // native accessibility event and the duplicate event would cause
-  // problems.
-  void NotifyAccessibilityEvent(
-      View* view,
-      ui::AccessibilityTypes::Event event_type,
-      bool send_native_event);
 
   const NativeWidget* native_widget() const;
   NativeWidget* native_widget();
@@ -655,6 +633,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   // Returns the work area bounds of the screen the Widget belongs to.
   gfx::Rect GetWorkAreaBoundsInScreen() const;
+
+  // Creates and dispatches synthesized mouse move event using the current
+  // mouse location to refresh hovering status in the widget.
+  void SynthesizeMouseMoveEvent();
 
   // Notification that our owner is closing.
   // NOTE: this is not invoked for aura as it's currently not needed there.
@@ -774,7 +756,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   scoped_ptr<FocusManager> focus_manager_;
 
   // A theme provider to use when no other theme provider is specified.
-  scoped_ptr<DefaultThemeProvider> default_theme_provider_;
+  scoped_ptr<ui::DefaultThemeProvider> default_theme_provider_;
 
   // Valid for the lifetime of RunShellDrag(), indicates the view the drag
   // started from.

@@ -343,7 +343,7 @@ class VIEWS_EXPORT MenuItemView : public View {
 
   virtual void ChildPreferredSizeChanged(View* child) OVERRIDE;
 
-  virtual std::string GetClassName() const OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
 
   // Returns the preferred size (and padding) of any children.
   virtual gfx::Size GetChildPreferredSize();
@@ -396,25 +396,8 @@ class VIEWS_EXPORT MenuItemView : public View {
   // are not rendered.
   void PaintButton(gfx::Canvas* canvas, PaintButtonMode mode);
 
-  // Paints menu item using skia (platform independent).
-  void PaintButtonCommon(gfx::Canvas* canvas, PaintButtonMode mode);
-
-#if defined(OS_WIN)
-  enum SelectionState { SELECTED, UNSELECTED };
-
-  // Paints the check/radio button indicator.
-  void PaintCheck(gfx::Canvas* canvas,
-                  ui::NativeTheme::State state,
-                  SelectionState selection_state,
-                  const MenuConfig& config);
-#endif
-
-#if defined(USE_AURA)
-  void PaintButtonAura(gfx::Canvas* canvas, PaintButtonMode mode);
-#endif
-
   // Paints the accelerator.
-  void PaintAccelerator(gfx::Canvas* canvas);
+  void PaintAccelerator(gfx::Canvas* canvas, bool render_selection);
 
   // Destroys the window used to display this menu and recursively destroys
   // the windows used to display all descendants.
@@ -425,6 +408,9 @@ class VIEWS_EXPORT MenuItemView : public View {
 
   // Calculates and returns the MenuItemDimensions.
   MenuItemDimensions CalculateDimensions();
+
+  // Get the horizontal position at which to draw the menu item's label.
+  int GetLabelStartForThisItem();
 
   // Used by MenuController to cache the menu position in use by the
   // active menu.

@@ -359,6 +359,12 @@ need to be translated for each locale.-->
       <message name="IDS_APP_RIGHT_ARROW_KEY" desc="Right arrow key">
         Right Arrow
       </message>
+      <message name="IDS_APP_UP_ARROW_KEY" desc="Up arrow key">
+        Up Arrow
+      </message>
+      <message name="IDS_APP_DOWN_ARROW_KEY" desc="Down arrow key">
+        Down Arrow
+      </message>
       <message name="IDS_APP_ENTER_KEY" desc="Enter key">
         Enter
       </message>
@@ -370,6 +376,12 @@ need to be translated for each locale.-->
       </message>
       <message name="IDS_APP_BACKSPACE_KEY" desc="Backspace key">
         Backspace
+      </message>
+      <message name="IDS_APP_COMMA_KEY" desc="Comma key">
+        Comma
+      </message>
+      <message name="IDS_APP_PERIOD_KEY" desc="Period key">
+        Period
       </message>
 
       <!-- Shortcut Modifiers -->
@@ -429,7 +441,7 @@ need to be translated for each locale.-->
         Notification Center
       </message>
       <message name="IDS_MESSAGE_CENTER_EXTENSIONS_DISABLE" desc="The menu entry for disabling extensions from a notification.">
-        Disable extension
+        Disable notifications from <ph name="extension_name">$1<ex>Notification Galore!</ex></ph>
       </message>
       <message name="IDS_MESSAGE_CENTER_SITE_DISABLE" desc="The menu entry for disabling notification from a site.">
         Disable notifications from <ph name="site">$1<ex>mail.google.com</ex></ph>
@@ -441,7 +453,7 @@ need to be translated for each locale.-->
         Settings
       </message>
       <message name="IDS_MESSAGE_CENTER_SETTINGS_DIALOG_DESCRIPTION" desc="The label to describe the settings dialog.">
-        Manage notification permissions for apps, extensions and websites.
+        Allow notifications from the following:
       </message>
       <message name="IDS_MESSAGE_CENTER_SETTINGS" desc="The menu entry or button for visiting the appropriate settings page.">
         Settings...
@@ -449,8 +461,14 @@ need to be translated for each locale.-->
       <message name="IDS_MESSAGE_CENTER_CLEAR_ALL" desc="The button for clearing all notifications.">
         Clear All
       </message>
+      <message name="IDS_MESSAGE_CENTER_QUIET_MODE_BUTTON_TOOLTIP" desc="The tooltip text for the quiet mode button.">
+        Pause notifications for 1 day
+      </message>
+      <message name="IDS_MESSAGE_CENTER_QUIET_MODE_BUTTON_TOGGLED_TOOLTIP" desc="The tooltip text for the quiet mode button, when toggled.">
+        Resume notifications
+      </message>
       <message name="IDS_MESSAGE_CENTER_NO_MESSAGES" desc="The message displayed in the message center when there are no notifications.">
-        You have no notifications. Relax!
+        Nothing to see here, move along.
       </message>
       <message name="IDS_MESSAGE_CENTER_QUIET_MODE" desc="The button label for quiet mode.">
         Quiet mode
@@ -461,11 +479,20 @@ need to be translated for each locale.-->
       <message name="IDS_MESSAGE_CENTER_QUIET_MODE_1DAY" desc="The button label to enter quiet mode in one day.">
         Quiet mode for one day
       </message>
+      <message name="IDS_MESSAGE_CENTER_CLOSE_NOTIFICATION_BUTTON_ACCESSIBLE_NAME" desc="The spoken feedback text for the close button in a notification. Usually 'button' is suffixed to this text automatically.">
+	Notification close
+      </message>
+      <message name="IDS_MESSAGE_CENTER_EXPAND_NOTIFICATION_BUTTON_ACCESSIBLE_NAME" desc="The spoken feedback text for the expand button in a notification. Usually 'button' is suffixed to this text automatically.">
+	Notification expand
+      </message>
       <message name="IDS_MESSAGE_CENTER_TOOLTIP" desc="Tooltip for notification tray icon without unread notifications">
         <ph name="product">$1<ex>Chrome</ex></ph> - Notifications
       </message>
       <message name="IDS_MESSAGE_CENTER_TOOLTIP_UNREAD" desc="Tooltip for notification tray icon with unread notifications">
         <ph name="product">$1<ex>Chrome</ex></ph> - Notifications (<ph name="QUANTITY">$2<ex>3</ex></ph> unread)
+      </message>
+      <message name="IDS_MESSAGE_CENTER_NOTIFIER_SCREENSHOT_NAME" desc="The name of screenshot notifier that is a system componet">
+        Screenshot
       </message>
 
       <!-- App list -->

@@ -8,6 +8,7 @@
 
 #include "ui/aura/client/activation_change_observer.h"
 #include "ui/aura/client/activation_client.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/default_capture_client.h"
 #include "ui/aura/client/focus_change_observer.h"
 #include "ui/aura/root_window.h"
@@ -28,20 +29,38 @@ class FocusNotificationObserver : public aura::client::ActivationChangeObserver,
  public:
   FocusNotificationObserver()
       : activation_changed_count_(0),
-        focus_changed_count_(0) {}
+        focus_changed_count_(0),
+        reactivation_count_(0),
+        reactivation_requested_window_(NULL),
+        reactivation_actual_window_(NULL) {}
   virtual ~FocusNotificationObserver() {}
 
   void ExpectCounts(int activation_changed_count, int focus_changed_count) {
     EXPECT_EQ(activation_changed_count, activation_changed_count_);
     EXPECT_EQ(focus_changed_count, focus_changed_count_);
   }
-
+  int reactivation_count() const {
+    return reactivation_count_;
+  }
+  aura::Window* reactivation_requested_window() const {
+    return reactivation_requested_window_;
+  }
+  aura::Window* reactivation_actual_window() const {
+    return reactivation_actual_window_;
+  }
 
  private:
   // Overridden from aura::client::ActivationChangeObserver:
   virtual void OnWindowActivated(aura::Window* gained_active,
                                  aura::Window* lost_active) OVERRIDE {
     ++activation_changed_count_;
+  }
+  virtual void OnAttemptToReactivateWindow(
+      aura::Window* request_active,
+      aura::Window* actual_active) OVERRIDE {
+    ++reactivation_count_;
+    reactivation_requested_window_ = request_active;
+    reactivation_actual_window_ = actual_active;
   }
 
   // Overridden from aura::client::FocusChangeObserver:
@@ -52,6 +71,9 @@ class FocusNotificationObserver : public aura::client::ActivationChangeObserver,
 
   int activation_changed_count_;
   int focus_changed_count_;
+  int reactivation_count_;
+  aura::Window* reactivation_requested_window_;
+  aura::Window* reactivation_actual_window_;
 
   DISALLOW_COPY_AND_ASSIGN(FocusNotificationObserver);
 };
@@ -270,6 +292,7 @@ class FocusControllerTestBase : public aura::test::AuraTestBase {
   virtual void FocusEvents() = 0;
   virtual void DuplicateFocusEvents() {}
   virtual void ActivationEvents() = 0;
+  virtual void ReactivationEvents() {}
   virtual void DuplicateActivationEvents() {}
   virtual void ShiftFocusWithinActiveWindow() {}
   virtual void ShiftFocusToChildOfInactiveWindow() {}
@@ -277,6 +300,7 @@ class FocusControllerTestBase : public aura::test::AuraTestBase {
   virtual void FocusRulesOverride() = 0;
   virtual void ActivationRulesOverride() = 0;
   virtual void ShiftFocusOnActivation() {}
+  virtual void ShiftFocusOnActivationDueToHide() {}
   virtual void NoShiftActiveOnActivation() {}
   virtual void NoFocusChangeOnClickOnCaptureWindow() {}
 
@@ -296,6 +320,9 @@ class FocusControllerDirectTestBase : public FocusControllerTestBase {
   virtual void FocusWindowDirect(aura::Window* window) = 0;
   virtual void ActivateWindowDirect(aura::Window* window) = 0;
   virtual void DeactivateWindowDirect(aura::Window* window) = 0;
+
+  // Input events do not change focus if the window can not be focused.
+  virtual bool IsInputEvent() = 0;
 
   void FocusWindowById(int id) {
     aura::Window* window = root_window()->GetChildById(id);
@@ -380,6 +407,20 @@ class FocusControllerDirectTestBase : public FocusControllerTestBase {
     observer1.ExpectCounts(1, 1);
     observer2.ExpectCounts(1, 1);
   }
+  virtual void ReactivationEvents() OVERRIDE {
+    ActivateWindowById(1);
+    ScopedFocusNotificationObserver root_observer(root_window());
+    EXPECT_EQ(0, root_observer.reactivation_count());
+    root_window()->GetChildById(2)->Hide();
+    // When we attempt to activate "2", which cannot be activated because it
+    // is not visible, "1" will be reactivated.
+    ActivateWindowById(2);
+    EXPECT_EQ(1, root_observer.reactivation_count());
+    EXPECT_EQ(root_window()->GetChildById(2),
+              root_observer.reactivation_requested_window());
+    EXPECT_EQ(root_window()->GetChildById(1),
+              root_observer.reactivation_actual_window());
+  }
   virtual void DuplicateActivationEvents() OVERRIDE {
     // Activating an existing active window should not resend activation events.
     ActivateWindowById(1);
@@ -435,7 +476,10 @@ class FocusControllerDirectTestBase : public FocusControllerTestBase {
 
     test_focus_rules()->set_focus_restriction(root_window()->GetChildById(211));
     FocusWindowById(12);
-    EXPECT_EQ(211, GetFocusedWindowId());
+    // Input events leave focus unchanged; direct API calls will change focus
+    // to the restricted window.
+    int focused_window = IsInputEvent() ? 11 : 211;
+    EXPECT_EQ(focused_window, GetFocusedWindowId());
 
     test_focus_rules()->set_focus_restriction(NULL);
     FocusWindowById(12);
@@ -450,9 +494,11 @@ class FocusControllerDirectTestBase : public FocusControllerTestBase {
     test_focus_rules()->set_focus_restriction(w3);
 
     ActivateWindowById(2);
-    // FocusRules restricts focus and activation to 3.
-    EXPECT_EQ(3, GetActiveWindowId());
-    EXPECT_EQ(3, GetFocusedWindowId());
+    // Input events leave activation unchanged; direct API calls will activate
+    // the restricted window.
+    int active_window = IsInputEvent() ? 1 : 3;
+    EXPECT_EQ(active_window, GetActiveWindowId());
+    EXPECT_EQ(active_window, GetFocusedWindowId());
 
     test_focus_rules()->set_focus_restriction(NULL);
     ActivateWindowById(2);
@@ -501,6 +547,32 @@ class FocusControllerDirectTestBase : public FocusControllerTestBase {
     ActivateWindowById(1);
     EXPECT_EQ(1, GetFocusedWindowId());
   }
+  virtual void ShiftFocusOnActivationDueToHide() OVERRIDE {
+    // Similar to ShiftFocusOnActivation except the activation change is
+    // triggered by hiding the active window.
+    ActivateWindowById(1);
+    EXPECT_EQ(1, GetFocusedWindowId());
+
+    // Removes window 3 as candidate for next activatable window.
+    root_window()->GetChildById(3)->Hide();
+    EXPECT_EQ(1, GetFocusedWindowId());
+
+    aura::Window* target = root_window()->GetChildById(2);
+    aura::client::ActivationClient* client =
+        aura::client::GetActivationClient(root_window());
+
+    scoped_ptr<FocusShiftingActivationObserver> observer(
+        new FocusShiftingActivationObserver(target));
+    observer->set_shift_focus_to(target->GetChildById(21));
+    client->AddObserver(observer.get());
+
+    // Hide the active window.
+    root_window()->GetChildById(1)->Hide();
+
+    EXPECT_EQ(21, GetFocusedWindowId());
+
+    client->RemoveObserver(observer.get());
+  }
   virtual void NoShiftActiveOnActivation() OVERRIDE {
     // When a window is activated, we need to prevent any change to activation
     // from being made in response to an activation change notification.
@@ -546,6 +618,7 @@ class FocusControllerApiTest : public FocusControllerDirectTestBase {
   virtual void DeactivateWindowDirect(aura::Window* window) OVERRIDE {
     DeactivateWindow(window);
   }
+  virtual bool IsInputEvent() OVERRIDE { return false; }
 
   DISALLOW_COPY_AND_ASSIGN(FocusControllerApiTest);
 };
@@ -571,6 +644,7 @@ class FocusControllerMouseEventTest : public FocusControllerDirectTestBase {
     aura::test::EventGenerator generator(root_window(), next_activatable);
     generator.ClickLeftButton();
   }
+  virtual bool IsInputEvent() OVERRIDE { return true; }
 
   DISALLOW_COPY_AND_ASSIGN(FocusControllerMouseEventTest);
 };
@@ -595,6 +669,7 @@ class FocusControllerGestureEventTest : public FocusControllerDirectTestBase {
     aura::test::EventGenerator generator(root_window(), next_activatable);
     generator.GestureTapAt(window->bounds().CenterPoint());
   }
+  virtual bool IsInputEvent() OVERRIDE { return true; }
 
   DISALLOW_COPY_AND_ASSIGN(FocusControllerGestureEventTest);
 };
@@ -890,6 +965,10 @@ DIRECT_FOCUS_CHANGE_TESTS(DuplicateActivationEvents);
 // - Activates a window, verifies that activation events were dispatched.
 TARGET_FOCUS_TESTS(ActivationEvents);
 
+// - Attempts to active a hidden window, verifies that current window is
+//   attempted to be reactivated and the appropriate event dispatched.
+FOCUS_CONTROLLER_TEST(FocusControllerApiTest, ReactivationEvents);
+
 // - Input events/API calls shift focus between focusable windows within the
 //   active window.
 DIRECT_FOCUS_CHANGE_TESTS(ShiftFocusWithinActiveWindow);
@@ -911,6 +990,7 @@ TARGET_FOCUS_TESTS(ActivationRulesOverride);
 // - Verifies that attempts to change focus or activation from a focus or
 //   activation change observer are ignored.
 DIRECT_FOCUS_CHANGE_TESTS(ShiftFocusOnActivation);
+DIRECT_FOCUS_CHANGE_TESTS(ShiftFocusOnActivationDueToHide);
 DIRECT_FOCUS_CHANGE_TESTS(NoShiftActiveOnActivation);
 
 // Clicking on a window which has capture should not result in a focus change.
