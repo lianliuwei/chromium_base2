@@ -659,7 +659,7 @@
         '../../third_party/icu/icu.gyp:icuuc',
         '../base/strings/ui_strings.gyp:ui_strings',
         '../compositor/compositor.gyp:compositor',
-        '../compositor/compositor.gyp:compositor_test_support',
+#        '../compositor/compositor.gyp:compositor_test_support',
         '../ui.gyp:ui',
         '../ui.gyp:ui_resources',
         '../ui.gyp:ui_test_support',
@@ -992,7 +992,7 @@
             },
           },
           'dependencies': [
-            '../../sandbox/sandbox.gyp:sandbox',
+#            '../../sandbox/sandbox.gyp:sandbox',
           ],
         }],
         ['use_aura==1', {
