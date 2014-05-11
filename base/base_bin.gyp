@@ -2,9 +2,9 @@
 {
   'variables': {
     'chromium_code': 1,
-    'bin_path': '..\\build\\$(ConfigurationName)',
-    'lib_path': '<(bin_path)\\lib',
-    'dest_lib_path': '$(OutDir)\\lib\\',
+    'bin_path': '../build/$(ConfigurationName)',
+    'lib_path': '<(bin_path)/lib',
+    'dest_lib_path': '$(OutDir)/lib/',
   },
   
   'includes': [
@@ -41,14 +41,14 @@
         {
           'destination': '<(PRODUCT_DIR)',
           'files': [
-            '<(bin_path)\\base.dll',
-            '<(bin_path)\\base.dll.pdb',
+            '<(bin_path)/base.dll',
+            '<(bin_path)/base.dll.pdb',
           ],
         },
         {
           'destination': '<(dest_lib_path)',
           'files': [
-            '<(lib_path)\\base.lib'
+            '<(lib_path)/base.lib'
           ],
         },
       ],
@@ -112,14 +112,14 @@
         {
           'destination': '<(PRODUCT_DIR)',
           'files': [
-            '<(bin_path)\\base_i18n.dll',
-            '<(bin_path)\\base_i18n.dll.pdb',
+            '<(bin_path)/base_i18n.dll',
+            '<(bin_path)/base_i18n.dll.pdb',
           ],
         },
         {
           'destination': '<(dest_lib_path)',
           'files': [
-            '<(lib_path)\\base_i18n.lib'
+            '<(lib_path)/base_i18n.lib'
           ],
         },
       ],
@@ -173,14 +173,14 @@
         {
           'destination': '<(PRODUCT_DIR)',
           'files': [
-            '<(bin_path)\\base_prefs.dll',
-            '<(bin_path)\\base_prefs.dll.pdb',
+            '<(bin_path)/base_prefs.dll',
+            '<(bin_path)/base_prefs.dll.pdb',
           ],
         },
         {
           'destination': '<(dest_lib_path)',
           'files': [
-            '<(lib_path)\\base_prefs.lib'
+            '<(lib_path)/base_prefs.lib'
           ],
         },
       ],
@@ -244,7 +244,7 @@
         {
           'destination': '<(dest_lib_path)',
           'files': [
-            '<(lib_path)\\base_prefs_test_support.lib'
+            '<(lib_path)/base_prefs_test_support.lib'
           ],
         },
       ],
@@ -282,7 +282,7 @@
         {
           'destination': '<(dest_lib_path)',
           'files': [
-            '<(lib_path)\\test_support_base.lib'
+            '<(lib_path)/test_support_base.lib'
           ],
         },
       ],
@@ -382,7 +382,7 @@
         {
           'destination': '<(dest_lib_path)',
           'files': [
-            '<(lib_path)\\test_support_perf.lib'
+            '<(lib_path)/test_support_perf.lib'
           ],
         },
       ],
@@ -411,7 +411,7 @@
         {
           'destination': '<(dest_lib_path)',
           'files': [
-            '<(lib_path)\\base_static.lib',
+            '<(lib_path)/base_static.lib',
           ],
         },
       ],
@@ -441,7 +441,7 @@
         {
           'destination': '<(dest_lib_path)',
           'files': [
-            '<(lib_path)\\run_all_unittests.lib'
+            '<(lib_path)/run_all_unittests.lib'
           ],
         },
       ],
